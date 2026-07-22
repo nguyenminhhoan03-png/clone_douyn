@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Downloads & Processed videos
+downloads/
+processed/
+logs/
+
+# Database
+database/*.db
+
+# Cookies (SENSITIVE - do not commit!)
+config/cookies/*.txt
+config/cookies/*.json
+
+# Music files (large)
+music/*.mp3
+music/*.m4a
+music/*.wav
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

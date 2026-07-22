@@ -1,0 +1,14 @@
+# Danh sách URLs Douyin để crawl
+# Mỗi dòng 1 URL, dòng bắt đầu bằng # sẽ bị bỏ qua
+#
+# Hỗ trợ 2 loại URL:
+# 1. Profile URL - crawl nhiều video từ 1 user:
+#    https://www.douyin.com/user/MS4wLjABxxxx
+#
+# 2. Video URL - crawl từng video cụ thể:
+#    https://v.douyin.com/xxxxxx
+#    https://www.douyin.com/video/7234567890123456789
+#
+# === PASTE YOUR DOUYIN URLS BELOW ===
+
+2.00 09/24 Yzt:/ B@G.ic :7pm # 青苹果摇2# 浅扭系列 # 简单易学 # 卡点摇 # 慢摇  https://v.douyin.com/w44Uv1d1z_g/ 复制此链接，打开Dou音搜索，直接观看视频！
