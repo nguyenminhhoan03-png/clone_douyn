@@ -141,12 +141,27 @@ async def _async_generate_voiceover(
         try:
             seg_audio = AudioSegment.from_mp3(temp_file)
 
-            # Ép tốc độ nếu đoạn đọc quá dài so với sub (tối đa 1.35x để không bị quéo giọng)
+            # Ép tốc độ bằng FFmpeg atempo (giữ nguyên tone giọng, không bị méo tiếng như pydub frame_rate)
             if len(seg_audio) > segment_duration_ms and segment_duration_ms > 200:
                 speed_factor = len(seg_audio) / segment_duration_ms
-                if speed_factor > 1.35:
-                    speed_factor = 1.35
-                seg_audio = _speed_up_audio(seg_audio, speed_factor)
+                if speed_factor > 1.5:
+                    speed_factor = 1.5 # Giới hạn tối đa 1.5x để vẫn nghe rõ lời
+                
+                # Gọi FFmpeg để xử lý
+                import subprocess
+                fast_file = temp_file.replace(".mp3", "_fast.mp3")
+                cmd = [
+                    "ffmpeg", "-y", "-i", temp_file,
+                    "-filter:a", f"atempo={speed_factor:.3f}",
+                    fast_file
+                ]
+                try:
+                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                    seg_audio = AudioSegment.from_mp3(fast_file)
+                    try: os.remove(fast_file)
+                    except: pass
+                except Exception as e:
+                    logger.warning(f"FFmpeg atempo failed for {temp_file}: {e}")
 
             # Nếu đoạn sub này bắt đầu sau khi câu trước đã đọc xong -> Chèn khoảng lặng
             if start_ms > current_ms:
@@ -154,7 +169,7 @@ async def _async_generate_voiceover(
                 final_audio += AudioSegment.silent(duration=silence_gap)
                 current_ms = start_ms
 
-            # Nối tiếp đoạn audio vào (TUYỆT ĐỐI KHÔNG DÙNG OVERLAY)
+            # Nối tiếp đoạn audio vào
             final_audio += seg_audio
             current_ms += len(seg_audio)
             
@@ -189,20 +204,6 @@ async def _async_generate_voiceover(
         f"✅ TTS voiceover created: {segments_created} segments → {output_audio_path}"
     )
     return output_audio_path
-
-
-def _speed_up_audio(audio_segment, factor: float):
-    """Tăng tốc audio bằng cách thay đổi frame_rate rồi convert lại.
-    Cách này giữ pitch tương đối ổn cho factor nhỏ (1.0-1.5x)."""
-    from pydub import AudioSegment
-
-    # Tăng frame_rate → audio nhanh hơn + pitch cao hơn
-    sound_with_altered_frame_rate = audio_segment._spawn(
-        audio_segment.raw_data,
-        overrides={"frame_rate": int(audio_segment.frame_rate * factor)},
-    )
-    # Convert lại về frame_rate chuẩn
-    return sound_with_altered_frame_rate.set_frame_rate(audio_segment.frame_rate)
 
 
 def mix_audio_tracks(
