@@ -560,10 +560,6 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         row2 = ctk.CTkFrame(config_frame, fg_color="transparent")
         row2.pack(fill="x", pady=(0, 12))
 
-        self._sw_text = ctk.CTkSwitch(row2, text="Chèn Text (Gắn Tiêu đề trên video)", font=("Segoe UI", 12), text_color=TEXT_MAIN)
-        self._sw_text.select()
-        self._sw_text.pack(side="left", padx=(0, 20))
-
         self._sw_subtitle = ctk.CTkSwitch(row2, text="Auto-Vietsub (Tự động dịch & gắn sub Việt)", font=("Segoe UI", 12), text_color=TEXT_MAIN)
         self._sw_subtitle.select()
         self._sw_subtitle.pack(side="left", padx=(0, 20))
@@ -774,7 +770,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         # Cập nhật config từ UI
         PROCESSOR_CONFIG["mirror"] = self._sw_mirror.get() == 1
         PROCESSOR_CONFIG["replace_audio"] = self._sw_music.get() == 1
-        PROCESSOR_CONFIG["add_text"] = self._sw_text.get() == 1
+        PROCESSOR_CONFIG["add_text"] = False
         PROCESSOR_CONFIG["specific_music_path"] = getattr(self, "_selected_music_path", None)
         PROCESSOR_CONFIG["auto_subtitle"] = self._sw_subtitle.get() == 1
         PROCESSOR_CONFIG["ai_dubbing"] = self._sw_dubbing.get() == 1
@@ -793,7 +789,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         db        = DatabaseManager()
         processor = VideoProcessor(db=db)
         titles    = {}
-        if title and self._sw_text.get() == 1:
+        if title:
             videos = db.get_downloaded_videos(limit=limit)
             for v in videos:
                 titles[v["video_id"]] = title

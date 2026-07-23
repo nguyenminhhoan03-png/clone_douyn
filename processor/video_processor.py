@@ -10,6 +10,7 @@ Mục đích: Biến đổi video đủ để TikTok không detect trùng lặp.
 """
 import os
 import random
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -21,7 +22,7 @@ from processor.subtitle_generator import SubtitleGenerator
 
 
 class VideoProcessor:
-    """Xử lý video dance Douyin: mirror + speed + text overlay + nhạc Việt."""
+    """Xử lý video dance Douyin bằng Native FFmpeg (Siêu tốc)."""
 
     def __init__(self, db: DatabaseManager = None):
         self.db = db or DatabaseManager()
@@ -38,24 +39,20 @@ class VideoProcessor:
 
     @staticmethod
     def _get_font_path(font_name: str = "arial") -> str:
-        """Lấy đường dẫn font đầy đủ trên Windows (Pillow cần full path)."""
+        """Lấy đường dẫn font đầy đủ trên Windows cho FFmpeg."""
         import sys
         if sys.platform == "win32":
             fonts_dir = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
-            # Thử các tên file font phổ biến
-            candidates = [
-                f"{font_name}.ttf",
-                f"{font_name}b.ttf",   # bold
-                f"{font_name}bd.ttf",  # bold
-            ]
+            candidates = [f"{font_name}.ttf", f"{font_name}b.ttf", f"{font_name}bd.ttf"]
             for candidate in candidates:
                 font_path = fonts_dir / candidate
                 if font_path.exists():
-                    return str(font_path)
-        return font_name  # Fallback: trả tên font (Linux/Mac tự resolve)
+                    # FFmpeg filter cần forward slash và CẦN ESCAPE dấu hai chấm (:) ở tên ổ đĩa (vd C\:/Windows)
+                    font_str = str(font_path).replace("\\", "/")
+                    return font_str.replace(":", "\\:")
+        return font_name
 
     def _get_random_music(self) -> Optional[str]:
-        """Lấy file nhạc cụ thể (nếu có) hoặc random một file nhạc Việt từ thư mục music."""
         specific_music = self.config.get("specific_music_path")
         if specific_music and Path(specific_music).exists():
             logger.info(f"Using specific music: {Path(specific_music).name}")
@@ -63,444 +60,235 @@ class VideoProcessor:
 
         music_files = list(MUSIC_DIR.glob("*.mp3")) + list(MUSIC_DIR.glob("*.m4a"))
         if not music_files:
-            logger.warning(
-                f"Không có file nhạc nào trong: {MUSIC_DIR}\n"
-                f"Hãy bỏ file nhạc (.mp3/.m4a) vào thư mục này để ghép nhạc Việt!"
-            )
             return None
         selected = random.choice(music_files)
         logger.info(f"Selected music: {selected.name}")
         return str(selected)
 
+    def _get_video_duration(self, input_path: str) -> float:
+        """Lấy thời lượng video bằng ffprobe."""
+        cmd = [
+            "ffprobe", "-v", "error", "-show_entries",
+            "format=duration", "-of",
+            "default=noprint_wrappers=1:nokey=1", input_path
+        ]
+        try:
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            return float(result.stdout.strip())
+        except Exception:
+            return 0.0
+
     def process_video(self, input_path: str, title: str = None,
                       output_path: str = None) -> Optional[str]:
-        """
-        Pipeline xử lý video tổng hợp:
-        1. Load video
-        2. Mirror (lật ngang)
-        3. Speed change nhẹ
-        4. Thêm text overlay tiếng Việt
-        5. Ghép nhạc Việt (nếu có)
-        6. Adjust brightness
-        7. Export video đã xử lý
-
-        Args:
-            input_path: Đường dẫn video gốc
-            title: Text tiếng Việt để overlay lên video
-            output_path: Đường dẫn output (tự tạo nếu không cung cấp)
-
-        Returns:
-            Đường dẫn file video đã xử lý, hoặc None nếu lỗi
-        """
-        try:
-            # Lazy import moviepy (nặng, chỉ import khi cần)
-            from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
-        except ImportError:
-            logger.error(
-                "moviepy chưa được cài! Chạy: pip install moviepy"
-            )
-            return None
-
         input_path = Path(input_path)
         if not input_path.exists():
             logger.error(f"Video file not found: {input_path}")
             return None
 
-        # Tạo output path
         if not output_path:
             output_path = PROCESSED_DIR / f"processed_{input_path.name}"
         output_path = Path(output_path)
 
-        logger.info(f"Processing video: {input_path.name}")
-        video = None
+        logger.info(f"Processing video: {input_path.name} (Native FFmpeg)")
+        
+        video_duration = self._get_video_duration(str(input_path))
+        if video_duration <= 0:
+            logger.error("Could not read video duration.")
+            return None
 
-        try:
-            # 1. Load video
-            video = VideoFileClip(str(input_path))
-            processed = video
-            logger.debug(f"  Original: {video.duration:.1f}s, {video.size}")
+        filters = []
+        audio_filters = []
+        inputs = ["-y", "-i", str(input_path)] # Input 0 là video gốc
+        
+        # 1. Mirror
+        if self.config.get("mirror", True):
+            filters.append("hflip")
+            logger.debug("  ✓ Mirrored")
 
-            # 2. Mirror (lật ngang)
-            if self.config.get("mirror", True):
-                processed = processed.with_effects([
-                    self._mirror_effect()
-                ])
-                logger.debug("  ✓ Mirrored")
+        # 2. Brightness
+        brightness = self.config.get("brightness_adjust", 1.0)
+        if brightness != 1.0:
+            # eq=contrast=1.05 hoặc eq=brightness=0.05
+            filters.append(f"eq=brightness={brightness - 1.0:.2f}")
+            logger.debug(f"  ✓ Brightness: {brightness}x")
+            
+        # 3. Speed
+        speed_range = self.config.get("speed_range", (0.97, 1.03))
+        speed_factor = random.uniform(*speed_range)
+        if speed_factor != 1.0:
+            filters.append(f"setpts={1.0/speed_factor:.4f}*PTS")
+            audio_filters.append(f"atempo={speed_factor:.4f}")
+            logger.debug(f"  ✓ Speed: {speed_factor:.3f}x")
 
-            # 3. Speed change nhẹ
-            speed_range = self.config.get("speed_range", (0.97, 1.03))
-            speed_factor = random.uniform(*speed_range)
-            if speed_factor != 1.0:
-                processed = processed.with_speed_scaled(speed_factor)
-                logger.debug(f"  ✓ Speed: {speed_factor:.3f}x")
+        # 5. Phụ đề (Auto Subtitle + Black bar)
+        has_subtitles = False
+        srt_path = None
+        if self.config.get("auto_subtitle") and self.subtitle_generator:
+            srt_path = PROCESSED_DIR / f"{input_path.stem}.srt"
+            logger.info(f"  Running AI to transcribe & translate subtitles...")
+            generated_srt = self.subtitle_generator.generate_srt(
+                str(input_path), str(srt_path), src_lang="zh", target_lang="vi"
+            )
+            if generated_srt:
+                # Subtitles chèn lên phần đã làm mờ
+                srt_path_unix = str(srt_path).replace("\\", "\\\\").replace(":", "\\:")
+                filters.append(f"subtitles='{srt_path_unix}':force_style='FontSize=16,Alignment=2,MarginV=10,BorderStyle=1,Outline=1.5,Shadow=1'")
+                has_subtitles = True
+                logger.debug("  ✓ Subtitles applied")
 
-            # 4. Thêm text overlay tiếng Việt (Tiêu đề trên cùng)
-            if title and self.config.get("add_text", True):
-                processed = self._add_text_overlay(processed, title)
-                logger.debug(f"  ✓ Text overlay: {title[:30]}...")
-
-            # 4.5. Phụ đề tiếng Việt tự động (Auto-Subtitle) dưới đáy video
-            has_subtitles = False
-            srt_path = None
-            if self.config.get("auto_subtitle") and self.subtitle_generator:
-                import pysrt
-                srt_path = PROCESSED_DIR / f"{input_path.stem}.srt"
+        # 6. Audio / Dubbing / Music
+        final_audio_input_idx = 0
+        has_dubbing = False
+        mixed_audio_path = None
+        
+        if self.config.get("ai_dubbing") and has_subtitles and srt_path and srt_path.exists():
+            from utils.tts_engine import generate_voiceover_from_srt, mix_audio_tracks
+            logger.info("  🎙️ Generating AI Vietnamese voiceover...")
+            voiceover_path = PROCESSED_DIR / f"{input_path.stem}_voiceover.mp3"
+            
+            tts_voice = self.config.get("tts_voice", "vi-VN-HoaiMyNeural")
+            tts_rate = self.config.get("tts_rate", "+0%")
+            
+            vo_result = generate_voiceover_from_srt(
+                str(srt_path), str(voiceover_path),
+                video_duration=video_duration,
+                voice=tts_voice, rate=tts_rate,
+            )
+            
+            if vo_result:
+                # Kiểm tra xem người dùng có chọn Ghép nhạc không
+                bg_music_path = self._get_random_music() if self.config.get("replace_audio") else None
+                mixed_audio_path = PROCESSED_DIR / f"{input_path.stem}_mixed.mp3"
+                orig_vol = self.config.get("original_audio_volume", 0.15) # Mặc định nhạc nền 15%
                 
-                logger.info(f"  Running AI to transcribe & translate subtitles...")
-                generated_srt = self.subtitle_generator.generate_srt(
-                    str(input_path), str(srt_path), src_lang="zh", target_lang="vi"
-                )
-                
-                if generated_srt:
-                    processed = self._add_subtitles(processed, generated_srt)
-                    has_subtitles = True
-                    logger.debug("  ✓ Subtitles applied (Chinese text covered)")
-
-            # 4.6. Thuyết minh AI tiếng Việt (AI Dubbing)
-            has_dubbing = False
-            if self.config.get("ai_dubbing") and has_subtitles and srt_path and srt_path.exists():
-                from utils.tts_engine import generate_voiceover_from_srt, mix_audio_tracks
-                
-                logger.info("  🎙️ Generating AI Vietnamese voiceover...")
-                voiceover_path = PROCESSED_DIR / f"{input_path.stem}_voiceover.mp3"
-                
-                tts_voice = self.config.get("tts_voice", "vi-VN-HoaiMyNeural")
-                tts_rate = self.config.get("tts_rate", "+0%")
-                
-                vo_result = generate_voiceover_from_srt(
-                    str(srt_path), str(voiceover_path),
-                    video_duration=processed.duration,
-                    voice=tts_voice, rate=tts_rate,
-                )
-                
-                if vo_result:
-                    # Trích xuất audio gốc → mix với voiceover
-                    original_audio_path = PROCESSED_DIR / f"{input_path.stem}_orig_audio.mp3"
-                    mixed_audio_path = PROCESSED_DIR / f"{input_path.stem}_mixed.mp3"
+                if bg_music_path:
+                    logger.info("  🎵 Mixing AI voiceover with background music (Original voice muted)...")
+                    from utils.tts_engine import mix_audio_tracks
+                    mixed = mix_audio_tracks(
+                        str(bg_music_path), str(voiceover_path),
+                        str(mixed_audio_path), original_volume=orig_vol,
+                    )
+                else:
+                    # Nếu KHÔNG ghép nhạc, chỉ dùng giọng đọc AI (tắt toàn bộ âm thanh và nhạc gốc)
+                    logger.info("  🎙️ Using AI voiceover only (Background muted)...")
+                    import shutil
+                    shutil.copy(str(voiceover_path), str(mixed_audio_path))
+                    mixed = True
                     
-                    try:
-                        # Export audio gốc ra file tạm
-                        if processed.audio:
-                            processed.audio.write_audiofile(
-                                str(original_audio_path), logger=None
-                            )
-                            
-                            orig_vol = self.config.get("original_audio_volume", 0.2)
-                            mixed = mix_audio_tracks(
-                                str(original_audio_path), str(voiceover_path),
-                                str(mixed_audio_path), original_volume=orig_vol,
-                            )
-                            
-                            if mixed:
-                                from moviepy import AudioFileClip
-                                mixed_clip = AudioFileClip(str(mixed_audio_path))
-                                processed = processed.with_audio(mixed_clip)
-                                has_dubbing = True
-                                logger.debug(f"  ✓ AI Dubbing applied (voice={tts_voice}, orig@{orig_vol*100:.0f}%)")
-                        else:
-                            # Video không có audio gốc → dùng voiceover trực tiếp
-                            from moviepy import AudioFileClip
-                            vo_clip = AudioFileClip(str(voiceover_path))
-                            processed = processed.with_audio(vo_clip)
-                            has_dubbing = True
-                            logger.debug("  ✓ AI Dubbing applied (no original audio)")
-                    except Exception as e:
-                        logger.warning(f"  ⚠ Mix audio failed: {e}")
-                    finally:
-                        # Cleanup temp audio files
-                        for tmp in [original_audio_path, mixed_audio_path, voiceover_path]:
-                            try:
-                                if Path(tmp).exists():
-                                    Path(tmp).unlink()
-                            except Exception:
-                                pass
-
-            # Cleanup SRT file
-            if srt_path and srt_path.exists():
+                if mixed:
+                    inputs.extend(["-i", str(mixed_audio_path)])
+                    final_audio_input_idx = len(inputs) // 2 - 1
+                    has_dubbing = True
+                    logger.debug(f"  ✓ AI Dubbing applied")
+                    
+                # Cleanup temp audios
                 try:
-                    srt_path.unlink()
-                except Exception:
-                    pass
+                    if voiceover_path.exists(): voiceover_path.unlink()
+                except: pass
 
-            # 5. Ghép nhạc Việt (Chỉ ghép nếu không có subtitle/dubbing)
-            if self.config.get("replace_audio", True) and not has_subtitles and not has_dubbing:
-                music_path = self._get_random_music()
-                if music_path:
-                    processed = self._replace_audio(processed, music_path)
-                    logger.debug("  ✓ Audio replaced with Vietnamese music")
-            elif has_dubbing:
-                logger.debug("  ✓ Using AI dubbed audio")
-            elif has_subtitles:
-                logger.debug("  ✓ Kept original audio because subtitles are present")
+        if self.config.get("replace_audio", True) and not has_dubbing:
+            music_path = self._get_random_music()
+            if music_path:
+                inputs.extend(["-stream_loop", "-1", "-i", music_path])
+                final_audio_input_idx = len(inputs) // 2 - 1
+                logger.debug("  ✓ Audio replaced with Vietnamese music")
+                
+        # Xây dựng lệnh FFmpeg cuối cùng
+        cmd = ["ffmpeg"] + inputs
+        
+        # Build filter complex
+        filter_complex = ""
+        last_vid_pad = "0:v"
+        
+        if has_subtitles:
+            # Tách luồng, cắt 15% dưới cùng, làm mờ, rồi chèn đè lại lên luồng chính
+            filter_complex += f"[{last_vid_pad}]split=2[vmain][vtmp];"
+            filter_complex += f"[vtmp]crop=iw:ih*0.15:0:ih*0.85,boxblur=20:5[vblur];"
+            filter_complex += f"[vmain][vblur]overlay=0:H-h[vwithblur];"
+            last_vid_pad = "vwithblur"
 
-            # 6. Brightness adjustment
-            brightness = self.config.get("brightness_adjust", 1.0)
-            if brightness != 1.0:
-                processed = processed.image_transform(
-                    lambda frame: self._adjust_brightness(frame, brightness)
-                )
-                logger.debug(f"  ✓ Brightness: {brightness}x")
+        if filters:
+            filter_complex += f"[{last_vid_pad}]{','.join(filters)}[vout];"
+        else:
+            filter_complex += f"[{last_vid_pad}]copy[vout];"
+            
+        if audio_filters:
+            filter_complex += f"[{final_audio_input_idx}:a]{','.join(audio_filters)}[aout]"
+        else:
+            filter_complex += f"[{final_audio_input_idx}:a]anull[aout]"
 
-            # 7. Export
-            logger.info(f"  Exporting: {output_path.name}...")
-            processed.write_videofile(
-                str(output_path),
-                codec=self.config.get("output_codec", "libx264"),
-                audio_codec=self.config.get("output_audio_codec", "aac"),
-                bitrate=self.config.get("output_bitrate", "5000k"),
-                fps=self.config.get("output_fps", 30),
-                logger=None,  # Tắt moviepy progress bar (dùng loguru thay)
-                threads=4,
-            )
+        cmd.extend(["-filter_complex", filter_complex])
+        cmd.extend(["-map", "[vout]", "-map", "[aout]"])
+        
+        # Cắt thời lượng
+        cmd.extend(["-t", str(video_duration / speed_factor)])
+        
+        # Encode settings
+        cmd.extend([
+            "-c:v", self.config.get("output_codec", "libx264"),
+            "-preset", "fast",
+            "-b:v", self.config.get("output_bitrate", "5000k"),
+            "-c:a", self.config.get("output_audio_codec", "aac"),
+            "-b:a", "192k",
+            str(output_path)
+        ])
 
+        logger.info(f"  Exporting with FFmpeg: {output_path.name}...")
+        try:
+            # Chạy FFmpeg ẩn đi output, nếu lỗi thì bắt output
+            result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             file_size = output_path.stat().st_size / 1024 / 1024
-            logger.info(
-                f"  ✅ Done: {output_path.name} ({file_size:.1f} MB)"
-            )
-            return str(output_path)
-
-        except Exception as e:
-            logger.error(f"Error processing video {input_path.name}: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
+            logger.info(f"  ✅ Done: {output_path.name} ({file_size:.1f} MB)")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg failed: {e.stderr.decode('utf-8', errors='ignore')}")
             return None
         finally:
-            if video:
-                try:
-                    video.close()
-                except Exception:
-                    pass
+            if srt_path and srt_path.exists():
+                try: srt_path.unlink()
+                except: pass
+            if has_dubbing and mixed_audio_path:
+                try: Path(mixed_audio_path).unlink()
+                except: pass
 
-    def _mirror_effect(self):
-        """Tạo mirror effect cho moviepy v2."""
-        from moviepy import vfx
-        return vfx.MirrorX()
-
-    def _add_text_overlay(self, video, text: str):
-        """Thêm text overlay tiếng Việt lên video."""
-        try:
-            from moviepy import TextClip, CompositeVideoClip
-
-            text_config = self.config.get("text_overlay", {})
-            font_size = text_config.get("font_size", 45)
-            font_color = text_config.get("font_color", "white")
-            position = text_config.get("position", "top")
-            margin = text_config.get("margin", 30)
-
-            # Xác định vị trí
-            if position == "top":
-                pos = ("center", margin)
-            elif position == "bottom":
-                pos = ("center", video.h - margin - font_size - 20)
-            else:
-                pos = ("center", "center")
-
-            # Tạo text clip
-            txt_clip = (
-                TextClip(
-                    text=text,
-                    font_size=font_size,
-                    color=font_color,
-                    font=self._get_font_path("arial"),
-                    stroke_color="black",
-                    stroke_width=2,
-                    text_align="center",
-                    size=(video.w - 60, None),
-                    method="caption",
-                )
-                .with_position(pos)
-                .with_duration(video.duration)
-            )
-
-            # Tạo background cho text (nền đen trong suốt)
-            bg_color = text_config.get("bg_color", (0, 0, 0, 160))
-            # Composite
-            result = CompositeVideoClip([video, txt_clip])
-            return result
-
-        except Exception as e:
-            logger.warning(f"Could not add text overlay: {e}")
-            return video
-
-    def _add_subtitles(self, video, srt_path: str):
-        """Đọc file SRT, che kín chữ gốc tiếng Trung bằng thanh đen,
-        rồi đè phụ đề tiếng Việt lên trên."""
-        try:
-            import pysrt
-            from moviepy import TextClip, CompositeVideoClip, ColorClip
-            
-            subs = pysrt.open(srt_path)
-            overlay_clips = []
-            
-            # ── BƯỚC 1: Tạo thanh đen đặc che kín vùng chữ gốc Trung Quốc ──
-            # Thanh đen phủ kín 1/5 dưới đáy video, chạy suốt video
-            cover_height = max(int(video.h * 0.18), 120)  # ~18% chiều cao, tối thiểu 120px
-            black_bar = (
-                ColorClip(
-                    size=(video.w, cover_height),
-                    color=(0, 0, 0),  # Đen đặc 100%
-                )
-                .with_position((0, video.h - cover_height))
-                .with_duration(video.duration)
-                .with_opacity(0.92)  # Gần đen hoàn toàn, nhẹ nhàng
-            )
-            overlay_clips.append(black_bar)
-            
-            # ── BƯỚC 2: Chèn phụ đề tiếng Việt lên thanh đen ──
-            font_size = 42
-            # Vị trí chữ: căn giữa thanh đen (cách đáy video ~40-60px)
-            text_y = video.h - cover_height + (cover_height // 2) - (font_size // 2) - 5
-            
-            for sub in subs:
-                start_time = sub.start.ordinal / 1000.0
-                end_time = sub.end.ordinal / 1000.0
-                
-                txt_clip = (
-                    TextClip(
-                        text=sub.text,
-                        font_size=font_size,
-                        color="white",
-                        font=self._get_font_path("arial"),
-                        stroke_color="black",
-                        stroke_width=2,
-                        text_align="center",
-                        size=(video.w - 40, None),
-                        method="caption",
-                    )
-                    .with_position(("center", text_y))
-                    .with_start(start_time)
-                    .with_end(end_time)
-                )
-                overlay_clips.append(txt_clip)
-                
-            if overlay_clips:
-                return CompositeVideoClip([video] + overlay_clips)
-                
-            return video
-            
-        except Exception as e:
-            logger.error(f"Lỗi khi ghép subtitles: {e}")
-            return video
-
-    def _replace_audio(self, video, music_path: str):
-        """Thay thế audio của video bằng nhạc Việt."""
-        try:
-            from moviepy import AudioFileClip
-
-            music = AudioFileClip(music_path)
-
-            # Cắt nhạc cho vừa với video duration
-            if music.duration > video.duration:
-                # Random start point trong nhạc
-                max_start = music.duration - video.duration
-                start = random.uniform(0, max_start) if max_start > 0 else 0
-                music = music.subclipped(start, start + video.duration)
-            else:
-                # Nếu nhạc ngắn hơn video, loop nhạc
-                from moviepy import concatenate_audioclips
-                loops_needed = int(video.duration / music.duration) + 1
-                music = concatenate_audioclips([music] * loops_needed)
-                music = music.subclipped(0, video.duration)
-
-            # Fade in/out
-            music = music.with_effects([])
-
-            return video.with_audio(music)
-
-        except Exception as e:
-            logger.warning(f"Could not replace audio: {e}")
-            return video
-
-    def _adjust_brightness(self, frame, factor: float):
-        """Điều chỉnh brightness của frame."""
-        import numpy as np
-        adjusted = frame.astype(np.float64) * factor
-        return np.clip(adjusted, 0, 255).astype(np.uint8)
+        return str(output_path)
 
     def process_downloaded_videos(self, titles: dict = None, limit: int = 10, video_ids: list = None) -> list:
-        """
-        Xử lý tất cả video đã download chưa processed.
-
-        Args:
-            titles: Dict mapping video_id → title tiếng Việt.
-                    Nếu None, sẽ tạo title generic.
-            limit: Số lượng video tối đa xử lý
-            video_ids: Danh sách ID các video cụ thể muốn xử lý (nếu có)
-
-        Returns:
-            List các đường dẫn video đã xử lý
-        """
         videos = self.db.get_downloaded_videos(limit=limit)
-        
-        # Lọc danh sách theo video_ids nếu người dùng chọn
         if video_ids is not None:
             videos = [v for v in videos if v["video_id"] in video_ids]
-            
         if not videos:
             logger.info("No downloaded videos to process")
             return []
 
         results = []
         titles = titles or {}
-
         for video in videos:
             video_id = video["video_id"]
-
-            # Lấy title từ mapping hoặc tạo title generic
             title = titles.get(video_id) or self._generate_title(video)
-
-            # Process video
-            processed_path = self.process_video(
-                input_path=video["download_path"],
-                title=title,
-            )
-
+            processed_path = self.process_video(input_path=video["download_path"], title=title)
             if processed_path:
-                # Lưu title đã dịch vào DB để uploader dùng
                 self.db.update_translated_title(video_id, title)
-                self.db.update_video_status(
-                    video_id=video_id,
-                    status="processed",
-                    processed_path=processed_path,
-                )
+                self.db.update_video_status(video_id=video_id, status="processed", processed_path=processed_path)
                 results.append(processed_path)
             else:
-                self.db.update_video_status(
-                    video_id=video_id,
-                    status="failed",
-                    error_message="Processing failed",
-                )
+                self.db.update_video_status(video_id=video_id, status="failed", error_message="Processing failed")
 
         logger.info(f"Processed {len(results)}/{len(videos)} videos")
         return results
 
     def _generate_title(self, video: dict) -> str:
-        """Dịch title gốc (tiếng Trung) sang tiếng Việt.
-        Fallback: dùng template tiếng Việt ngẫu nhiên."""
         from utils.translator import translate_description
-
         original_title = video.get("title", "")
-
-        # Thử dịch title gốc sang tiếng Việt
         if original_title and len(original_title) > 3:
             translated = translate_description(original_title)
             if translated and len(translated) > 2:
                 logger.info(f"  🇻🇳 Dịch title: {translated[:60]}")
                 return translated
 
-        # Fallback: template tiếng Việt ngẫu nhiên
         templates = [
-            "Nhảy đẹp quá 😍🔥",
-            "Dance cover cực đỉnh 💃✨",
-            "Ai nhảy đẹp hơn? 🤔🔥",
-            "Trend mới cực hot 🔥💃",
-            "Xinh quá nhảy quá đẹp 😍",
-            "Bước nhảy gây sốt 💥✨",
-            "Nhảy siêu cuốn 🎵💃",
-            "Có ai nhảy được như này? 🤩",
-            "Hot girl nhảy siêu đỉnh 🔥",
-            "Chill cùng điệu nhảy 🎶💃",
-            "Nhảy cùng xu hướng mới 🌟",
-            "Cover dance viral 💫🔥",
+            "Nhảy đẹp quá 😍🔥", "Dance cover cực đỉnh 💃✨", "Ai nhảy đẹp hơn? 🤔🔥",
+            "Trend mới cực hot 🔥💃", "Xinh quá nhảy quá đẹp 😍", "Bước nhảy gây sốt 💥✨",
+            "Nhảy siêu cuốn 🎵💃", "Có ai nhảy được như này? 🤩", "Hot girl nhảy siêu đỉnh 🔥",
+            "Chill cùng điệu nhảy 🎶💃", "Nhảy cùng xu hướng mới 🌟", "Cover dance viral 💫🔥"
         ]
         return random.choice(templates)

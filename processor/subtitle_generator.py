@@ -50,39 +50,54 @@ class SubtitleGenerator:
             )
             logger.info(f"Detected language '{info.language}' with probability {info.language_probability:.2f}")
 
+            import concurrent.futures
+
+            segment_data = []
+            for segment in segments:
+                original_text = segment.text.strip()
+                if original_text:
+                    segment_data.append({
+                        "start_time": self._format_time(segment.start),
+                        "end_time": self._format_time(segment.end),
+                        "original_text": original_text,
+                    })
+                    
+            if not segment_data:
+                logger.warning("Không nhận diện được giọng nói trong video.")
+                return None
+                
+            # Dịch song song với 10 threads
+            def _translate_task(data):
+                translated_text = translate_text(data["original_text"], src=src_lang, dest=target_lang)
+                return data, translated_text
+
             srt_content = []
             segment_idx = 1
             
-            for segment in segments:
-                start_time = self._format_time(segment.start)
-                end_time = self._format_time(segment.end)
+            logger.info(f"Translating {len(segment_data)} segments concurrently...")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                # Dùng map để giữ nguyên thứ tự (rất quan trọng đối với phụ đề)
+                results = executor.map(_translate_task, segment_data)
                 
-                # Dịch câu này
-                original_text = segment.text.strip()
-                if not original_text:
-                    continue
+                for data, translated_text in results:
+                    # Chống ảo giác (anti-hallucination filter)
+                    if len(translated_text) > 40:
+                        words = translated_text.split()
+                        if len(words) > 8 and len(set(words)) < len(words) * 0.3:
+                            logger.warning(f"Đã bỏ qua câu bị AI ảo giác: {translated_text[:30]}...")
+                            continue
                     
-                translated_text = translate_text(original_text, src=src_lang, dest=target_lang)
-                
-                # Chống ảo giác (anti-hallucination filter): 
-                # Nếu chuỗi dịch ra dài bất thường và chứa mẫu lặp đi lặp lại nhiều lần
-                if len(translated_text) > 40:
-                    words = translated_text.split()
-                    if len(words) > 8 and len(set(words)) < len(words) * 0.3:
-                        logger.warning(f"Đã bỏ qua câu bị AI ảo giác: {translated_text[:30]}...")
-                        continue
-                
-                logger.debug(f"[{start_time} -> {end_time}] {original_text} => {translated_text}")
-                
-                srt_content.append(str(segment_idx))
-                srt_content.append(f"{start_time} --> {end_time}")
-                srt_content.append(translated_text)
-                srt_content.append("")
-                
-                segment_idx += 1
+                    logger.debug(f"[{data['start_time']} -> {data['end_time']}] {data['original_text']} => {translated_text}")
+                    
+                    srt_content.append(str(segment_idx))
+                    srt_content.append(f"{data['start_time']} --> {data['end_time']}")
+                    srt_content.append(translated_text)
+                    srt_content.append("")
+                    
+                    segment_idx += 1
 
             if not srt_content:
-                logger.warning("Không nhận diện được giọng nói trong video.")
+                logger.warning("Không có nội dung SRT nào được tạo ra sau khi lọc.")
                 return None
                 
             with open(output_srt_path, "w", encoding="utf-8") as f:

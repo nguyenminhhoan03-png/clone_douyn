@@ -66,87 +66,109 @@ async def _async_generate_voiceover(
         logger.warning("File SRT trống, không tạo được voiceover.")
         return None
 
-    # Tạo audio track im lặng dài bằng video
     total_ms = int(video_duration * 1000)
-    final_audio = AudioSegment.silent(duration=total_ms)
-
     temp_dir = tempfile.mkdtemp(prefix="tts_")
-    segments_created = 0
+    
+    # 1. Chuẩn bị danh sách các task cần tải
+    tasks = []
+    sem = asyncio.Semaphore(3) # Giảm xuống 3 để tránh bị Microsoft Rate Limit chặn "No audio was received"
+    
+    async def fetch_tts(i, clean_text, temp_file):
+        import random
+        
+        async with sem:
+            for attempt in range(5): # Thử lại tối đa 5 lần thay vì 3
+                try:
+                    communicate = edge_tts.Communicate(clean_text, voice, rate=rate)
+                    await communicate.save(temp_file)
+                    if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
+                        return True
+                except Exception as e:
+                    if attempt == 4:
+                        logger.warning(f"TTS segment {i} failed after 5 attempts ({clean_text[:30]}): {e}")
+                
+                # Exponential backoff + Jitter: Đợi lâu hơn ở các lần thất bại tiếp theo để tránh spam server
+                delay = (1.5 ** attempt) + random.uniform(0.5, 1.5)
+                await asyncio.sleep(delay)
+            return False
 
+    sub_data = []
     for i, sub in enumerate(subs):
         text = sub.text.strip()
         if not text or len(text) < 2:
             continue
 
-        start_ms = sub.start.ordinal  # Thời điểm bắt đầu (ms)
-        end_ms = sub.end.ordinal      # Thời điểm kết thúc (ms)
+        start_ms = sub.start.ordinal
+        end_ms = sub.end.ordinal
         segment_duration_ms = end_ms - start_ms
 
         if segment_duration_ms <= 0:
             continue
 
-        # Dọn dẹp text: xóa dấu chấm lửng, ký tự lạ để tránh lỗi TTS server
-        clean_text = text.replace("...", ",").replace("..", ",").replace("~", "").strip()
+        import re
+        # Loại bỏ emoji và các ký tự đặc biệt không đọc được để tránh AI đổi giọng tiếng Anh
+        clean_text = re.sub(r'[^\w\s\.,!\?àáãạảăắằẳẵặâấầẩẫậèéẹẻẽêềếểễệđìíĩỉịòóõọỏôốồổỗộơớờởỡợùúũụủưứừửữựỳỵỷỹýÀÁÃẠẢĂẮẰẲẴẶÂẤẦẨẪẬÈÉẸẺẼÊỀẾỂỄỆĐÌÍĨỈỊÒÓÕỌỎÔỐỒỔỖỘƠỚỜỞỠỢÙÚŨỤỦƯỨỪỬỮỰỲỴỶỸÝ]', '', text)
+        clean_text = clean_text.replace("...", ",").replace("..", ",").strip()
+        
         if not clean_text:
             continue
 
         temp_file = os.path.join(temp_dir, f"seg_{i:04d}.mp3")
-        success = False
-        
-        # Thử lại tối đa 3 lần nếu server Microsoft trả lỗi (rate limit / no audio)
-        for attempt in range(3):
-            try:
-                communicate = edge_tts.Communicate(clean_text, voice, rate=rate)
-                await communicate.save(temp_file)
-                if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
-                    success = True
-                    break
-            except Exception as e:
-                if attempt == 2:
-                    logger.warning(f"TTS segment {i} failed after 3 attempts ({clean_text[:30]}): {e}")
-            await asyncio.sleep(0.5) # Nghỉ nửa giây trước khi thử lại
-            
+        tasks.append(fetch_tts(i, clean_text, temp_file))
+        sub_data.append({
+            "index": i,
+            "start_ms": start_ms,
+            "segment_duration_ms": segment_duration_ms,
+            "temp_file": temp_file
+        })
+
+    # 2. Tải tất cả audio segments đồng thời
+    results = await asyncio.gather(*tasks)
+    
+    # 3. Ghép audio tuần tự (chống đè giọng / multiple voices)
+    final_audio = AudioSegment.silent(duration=0)
+    current_ms = 0
+    segments_created = 0
+
+    for data, success in zip(sub_data, results):
         if not success:
             continue
-
+            
+        start_ms = data["start_ms"]
+        segment_duration_ms = data["segment_duration_ms"]
+        temp_file = data["temp_file"]
+        
         try:
-            # Load audio segment
             seg_audio = AudioSegment.from_mp3(temp_file)
 
-            # Nếu audio dài hơn khoảng thời gian sub → tăng tốc nhẹ (tối đa 1.25x) để nghe tự nhiên
+            # Ép tốc độ nếu đoạn đọc quá dài so với sub (tối đa 1.35x để không bị quéo giọng)
             if len(seg_audio) > segment_duration_ms and segment_duration_ms > 200:
                 speed_factor = len(seg_audio) / segment_duration_ms
-                if speed_factor > 1.25:
-                    speed_factor = 1.25 # Khóa tốc độ tối đa là 1.25x để không bị líu lưỡi
-                
+                if speed_factor > 1.35:
+                    speed_factor = 1.35
                 seg_audio = _speed_up_audio(seg_audio, speed_factor)
-                # Chú ý: Không cắt bớt (truncate) audio nữa, cứ để nó đọc tràn ra tự nhiên
-                # Việc này sẽ giúp giọng đọc hoàn chỉnh câu thay vì bị ngắt giữa chừng hoặc quá nhanh.
 
-            # Overlay vào đúng vị trí timeline
-            if start_ms < total_ms:
-                # Đảm bảo final_audio đủ dài để chứa đoạn audio bị tràn
-                end_pos = start_ms + len(seg_audio)
-                if end_pos > len(final_audio):
-                    # Thêm khoảng lặng vào cuối để kéo dài final_audio
-                    silence_needed = end_pos - len(final_audio)
-                    final_audio += AudioSegment.silent(duration=silence_needed)
-                    
-                final_audio = final_audio.overlay(seg_audio, position=start_ms)
-                segments_created += 1
+            # Nếu đoạn sub này bắt đầu sau khi câu trước đã đọc xong -> Chèn khoảng lặng
+            if start_ms > current_ms:
+                silence_gap = start_ms - current_ms
+                final_audio += AudioSegment.silent(duration=silence_gap)
+                current_ms = start_ms
+
+            # Nối tiếp đoạn audio vào (TUYỆT ĐỐI KHÔNG DÙNG OVERLAY)
+            final_audio += seg_audio
+            current_ms += len(seg_audio)
+            
+            segments_created += 1
 
         except Exception as e:
-            logger.warning(f"TTS segment {i} processing failed: {e}")
-            continue
+            logger.warning(f"TTS segment {data['index']} processing failed: {e}")
         finally:
-            # Cleanup temp file
             if os.path.exists(temp_file):
                 try:
                     os.remove(temp_file)
                 except OSError:
                     pass
 
-    # Cleanup temp dir
     try:
         os.rmdir(temp_dir)
     except OSError:
@@ -156,7 +178,12 @@ async def _async_generate_voiceover(
         logger.warning("Không tạo được segment TTS nào.")
         return None
 
-    # Export file audio cuối cùng
+    # Đảm bảo audio dài bằng video_duration
+    if len(final_audio) < total_ms:
+        final_audio += AudioSegment.silent(duration=total_ms - len(final_audio))
+    elif len(final_audio) > total_ms:
+        final_audio = final_audio[:total_ms]
+
     final_audio.export(output_audio_path, format="mp3", bitrate="192k")
     logger.info(
         f"✅ TTS voiceover created: {segments_created} segments → {output_audio_path}"
@@ -202,13 +229,13 @@ def mix_audio_tracks(
         original = AudioSegment.from_file(original_audio_path)
         voiceover = AudioSegment.from_mp3(voiceover_audio_path)
 
-        # Đảm bảo cùng độ dài
-        if len(voiceover) < len(original):
-            voiceover = voiceover + AudioSegment.silent(
-                duration=len(original) - len(voiceover)
-            )
-        elif len(voiceover) > len(original):
-            voiceover = voiceover[: len(original)]
+        # Lặp nhạc nền (original) nếu nó ngắn hơn voiceover
+        if len(original) < len(voiceover):
+            loops_needed = (len(voiceover) // len(original)) + 1
+            original = original * loops_needed
+
+        # Sau đó cắt original cho bằng chính xác độ dài voiceover
+        original = original[: len(voiceover)]
 
         # Giảm volume audio gốc
         # Công thức: dB = 20 * log10(volume_ratio)
