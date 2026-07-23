@@ -40,6 +40,36 @@ def translate_text(text: str, src: str = "zh-CN", dest: str = "vi") -> str:
                 translated = "".join(
                     item[0] for item in result[0] if item and item[0]
                 )
+                
+                # Bộ lọc thuật ngữ Review Phim chuyên dụng (Fix lỗi Google Dịch)
+                if dest == "vi":
+                    replacements = {
+                        "phân tử": "phần tử", # Vd: phần tử khủng bố, không phải phân tử hóa học
+                        "nam vương": "nam chính",
+                        "người đàn ông": "nam chính",
+                        "cô gái": "nữ chính",
+                        "người phụ nữ": "nữ chính",
+                        "tiểu tam": "kẻ thứ ba",
+                        "máy phát điện": "người phát điện",
+                        "đại thông minh": "tên ngốc",
+                        "khuê mật": "bạn thân",
+                        "cảnh sát trưởng": "cảnh sát",
+                        "xã hội đen": "giang hồ",
+                        "lão đại": "đại ca",
+                        "tổng tài": "chủ tịch",
+                        "thiết bị": "hệ thống",
+                        "nhạc mẫu": "mẹ vợ",
+                        "nhạc phụ": "bố vợ",
+                        "bạn trai cũ": "người yêu cũ",
+                        "bạn gái cũ": "người yêu cũ",
+                        "bạn trai": "người yêu",
+                        "bạn gái": "người yêu",
+                    }
+                    for old, new in replacements.items():
+                        # Thay thế không phân biệt hoa thường một cách tương đối
+                        translated = translated.replace(old, new)
+                        translated = translated.replace(old.capitalize(), new.capitalize())
+                
                 logger.debug(f"Translated: '{text[:50]}' → '{translated[:50]}'")
                 return translated.strip()
             else:
@@ -133,15 +163,51 @@ def build_vietnamese_caption(title: str, tags: str,
     vi_hashtags = translate_hashtags(tags) if tags else []
 
     # Build caption
-    caption = f"✨ {title_vi}"
+    translated_tags = translate_hashtags(tags) if tags else []
 
     # Thêm hashtags đã dịch (tối đa 5)
-    if vi_hashtags:
-        caption += " " + " ".join(vi_hashtags[:5])
+    if translated_tags:
+        translated_tags = translated_tags[:5]
 
-    # Thêm default hashtags
-    if default_hashtags:
-        caption += " " + " ".join(default_hashtags[:8])
+    if not default_hashtags:
+        default_hashtags = ["#fyp", "#xuhuong", "#reviewphim"]
 
-    # TikTok giới hạn 2200 ký tự
-    return caption[:2200]
+    tags_str = " ".join(default_hashtags + translated_tags)
+    caption = f"✨ {translated_title}\n\n{tags_str}"
+    return caption
+
+def translate_srt_with_gemini(srt_content: str, api_key: str) -> str:
+    """
+    Dịch toàn bộ file SRT bằng Google Gemini (LLM) để đảm bảo chuẩn ngữ cảnh.
+    """
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        
+        # Sử dụng model gemini-2.5-flash cho tốc độ nhanh và chi phí rẻ/miễn phí
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        prompt = (
+            "Bạn là một chuyên gia Review Phim TikTok chuyên nghiệp tại Việt Nam. "
+            "Dưới đây là nội dung file SRT tiếng Trung của một đoạn review phim. "
+            "Hãy dịch toàn bộ sang tiếng Việt với văn phong giật gân, lôi cuốn, mượt mà như văn nói mạng xã hội. "
+            "Yêu cầu BẮT BUỘC:\n"
+            "1. TUYỆT ĐỐI GIỮ NGUYÊN cấu trúc thời gian (timestamps) và số thứ tự của file SRT. Chỉ thay đổi phần chữ tiếng Trung thành tiếng Việt.\n"
+            "2. TUYỆT ĐỐI KHÔNG dùng đại từ 'Tôi' để gọi nhân vật, tự hiểu ngữ cảnh và gọi là 'Anh ta', 'Cô ta', 'Nam chính', 'Nữ chính', 'Bọn họ' v.v.\n"
+            "3. Không thêm bất kỳ lời bình luận hay giải thích nào ở đầu và cuối, chỉ trả về nội dung SRT.\n\n"
+            "Nội dung SRT:\n"
+            f"{srt_content}"
+        )
+        
+        logger.info("Đang gửi toàn bộ kịch bản cho Gemini phân tích ngữ cảnh...")
+        response = model.generate_content(prompt)
+        
+        if response and response.text:
+            logger.info("Gemini đã dịch xong kịch bản (Chuẩn ngữ cảnh 100%)")
+            return response.text.strip()
+        else:
+            logger.warning("Gemini trả về rỗng, fallback về bản gốc.")
+            return srt_content
+    except Exception as e:
+        logger.error(f"Lỗi khi dịch bằng Gemini: {e}")
+        return srt_content

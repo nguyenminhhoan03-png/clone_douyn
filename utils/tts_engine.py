@@ -125,31 +125,42 @@ async def _async_generate_voiceover(
     # 2. Tải tất cả audio segments đồng thời
     results = await asyncio.gather(*tasks)
     
-    # 3. Ghép audio tuần tự (chống đè giọng / multiple voices)
+    # 3. Ghép audio tuần tự (chống đè giọng / multiple voices) và Ép khớp thời gian (Anti-Drifting)
     final_audio = AudioSegment.silent(duration=0)
     current_ms = 0
     segments_created = 0
 
-    for data, success in zip(sub_data, results):
+    for idx, (data, success) in enumerate(zip(sub_data, results)):
         if not success:
             continue
             
         start_ms = data["start_ms"]
-        segment_duration_ms = data["segment_duration_ms"]
         temp_file = data["temp_file"]
         
+        # Tính toán thời gian tối đa cho phép trước khi câu tiếp theo bắt đầu
+        next_start_ms = total_ms
+        for next_idx in range(idx + 1, len(sub_data)):
+            if results[next_idx]: # Nếu câu tiếp theo có audio
+                next_start_ms = sub_data[next_idx]["start_ms"]
+                break
+                
+        # Khoảng trống tối đa để đọc câu này (tính bằng ms)
+        available_time_ms = next_start_ms - start_ms
+        if available_time_ms <= 0:
+            available_time_ms = 100 # Safe fallback
+            
         try:
             seg_audio = AudioSegment.from_mp3(temp_file)
 
-            # Ép tốc độ bằng FFmpeg atempo (giữ nguyên tone giọng, không bị méo tiếng như pydub frame_rate)
-            if len(seg_audio) > segment_duration_ms and segment_duration_ms > 200:
-                speed_factor = len(seg_audio) / segment_duration_ms
-                if speed_factor > 1.5:
-                    speed_factor = 1.5 # Giới hạn tối đa 1.5x để vẫn nghe rõ lời
+            # Nếu Audio dài hơn Khoảng trống cho phép -> Bắt buộc phải ép tốc độ (để không bị trễ nhịp / đè giọng)
+            if len(seg_audio) > available_time_ms:
+                speed_factor = len(seg_audio) / available_time_ms
                 
-                # Gọi FFmpeg để xử lý
+                # Gọi FFmpeg atempo để nén tốc độ mà không bị méo giọng (Chipmunk)
                 import subprocess
                 fast_file = temp_file.replace(".mp3", "_fast.mp3")
+                
+                # FFmpeg atempo hỗ trợ từ 0.5 đến 100.0, có thể dùng nhiều filter nếu cần nhưng bản mới đã hỗ trợ > 2.0
                 cmd = [
                     "ffmpeg", "-y", "-i", temp_file,
                     "-filter:a", f"atempo={speed_factor:.3f}",
@@ -162,11 +173,19 @@ async def _async_generate_voiceover(
                     except: pass
                 except Exception as e:
                     logger.warning(f"FFmpeg atempo failed for {temp_file}: {e}")
+                    
+                # Cắt gọt chuẩn xác 100% lỡ FFmpeg bị lệch vài mili-giây
+                if len(seg_audio) > available_time_ms:
+                    seg_audio = seg_audio[:available_time_ms]
 
-            # Nếu đoạn sub này bắt đầu sau khi câu trước đã đọc xong -> Chèn khoảng lặng
+            # Nếu đoạn sub này bắt đầu sau khi câu trước đã kết thúc (có khoảng lặng) -> Chèn khoảng lặng
             if start_ms > current_ms:
                 silence_gap = start_ms - current_ms
                 final_audio += AudioSegment.silent(duration=silence_gap)
+                current_ms = start_ms
+            elif start_ms < current_ms:
+                # Nếu bị trễ vài ms do sai số float, cắt bỏ phần thừa để ép đúng start_ms
+                final_audio = final_audio[:start_ms]
                 current_ms = start_ms
 
             # Nối tiếp đoạn audio vào

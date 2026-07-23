@@ -130,9 +130,9 @@ class VideoProcessor:
                 str(input_path), str(srt_path), src_lang="zh", target_lang="vi"
             )
             if generated_srt:
-                # Subtitles chèn lên phần đã làm mờ
-                srt_path_unix = str(srt_path).replace("\\", "\\\\").replace(":", "\\:")
-                filters.append(f"subtitles='{srt_path_unix}':force_style='FontSize=16,Alignment=2,MarginV=10,BorderStyle=1,Outline=1.5,Shadow=1'")
+                # Subtitles chèn lên phần đã làm mờ, nâng MarginV=40 để tránh bị che bởi UI TikTok
+                srt_path_unix = str(srt_path).replace("\\", "/").replace(":", "\\:")
+                filters.append(f"subtitles='{srt_path_unix}':force_style='FontSize=16,Alignment=2,MarginV=40,BorderStyle=1,Outline=1.5,Shadow=1'")
                 has_subtitles = True
                 logger.debug("  ✓ Subtitles applied")
 

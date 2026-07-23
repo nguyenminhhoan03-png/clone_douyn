@@ -51,6 +51,8 @@ class SubtitleGenerator:
             logger.info(f"Detected language '{info.language}' with probability {info.language_probability:.2f}")
 
             import concurrent.futures
+            from config.settings import PROCESSOR_CONFIG
+            from utils.translator import translate_srt_with_gemini
 
             segment_data = []
             for segment in segments:
@@ -66,42 +68,62 @@ class SubtitleGenerator:
                 logger.warning("Không nhận diện được giọng nói trong video.")
                 return None
                 
-            # Dịch song song với 10 threads
-            def _translate_task(data):
-                translated_text = translate_text(data["original_text"], src=src_lang, dest=target_lang)
-                return data, translated_text
-
-            srt_content = []
-            segment_idx = 1
+            gemini_key = PROCESSOR_CONFIG.get("gemini_api_key", "")
             
-            logger.info(f"Translating {len(segment_data)} segments concurrently...")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                # Dùng map để giữ nguyên thứ tự (rất quan trọng đối với phụ đề)
-                results = executor.map(_translate_task, segment_data)
+            if gemini_key:
+                # ─── Cách 1: Dịch toàn bộ ngữ cảnh bằng Gemini LLM ───
+                logger.info("Đã tìm thấy Gemini API Key. Đang tạo SRT gốc và gửi cho AI dịch ngữ cảnh...")
+                raw_srt_lines = []
+                for idx, data in enumerate(segment_data, 1):
+                    raw_srt_lines.append(str(idx))
+                    raw_srt_lines.append(f"{data['start_time']} --> {data['end_time']}")
+                    raw_srt_lines.append(data['original_text'])
+                    raw_srt_lines.append("")
                 
-                for data, translated_text in results:
-                    # Chống ảo giác (anti-hallucination filter)
-                    if len(translated_text) > 40:
-                        words = translated_text.split()
-                        if len(words) > 8 and len(set(words)) < len(words) * 0.3:
-                            logger.warning(f"Đã bỏ qua câu bị AI ảo giác: {translated_text[:30]}...")
-                            continue
+                raw_srt = "\n".join(raw_srt_lines)
+                translated_srt = translate_srt_with_gemini(raw_srt, gemini_key)
+                
+                if not translated_srt:
+                    logger.warning("Lỗi khi dùng Gemini, SRT rỗng!")
+                    return None
                     
-                    logger.debug(f"[{data['start_time']} -> {data['end_time']}] {data['original_text']} => {translated_text}")
+                with open(output_srt_path, "w", encoding="utf-8") as f:
+                    f.write(translated_srt)
                     
-                    srt_content.append(str(segment_idx))
-                    srt_content.append(f"{data['start_time']} --> {data['end_time']}")
-                    srt_content.append(translated_text)
-                    srt_content.append("")
-                    
-                    segment_idx += 1
+            else:
+                # ─── Cách 2: Dịch từng câu bằng Google Dịch (Fallback) ───
+                def _translate_task(data):
+                    translated_text = translate_text(data["original_text"], src=src_lang, dest=target_lang)
+                    return data, translated_text
 
-            if not srt_content:
-                logger.warning("Không có nội dung SRT nào được tạo ra sau khi lọc.")
-                return None
+                srt_content = []
+                segment_idx = 1
                 
-            with open(output_srt_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(srt_content))
+                logger.info(f"Translating {len(segment_data)} segments concurrently with Google Translate...")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                    results = executor.map(_translate_task, segment_data)
+                    
+                    for data, translated_text in results:
+                        if len(translated_text) > 40:
+                            words = translated_text.split()
+                            if len(words) > 8 and len(set(words)) < len(words) * 0.3:
+                                logger.warning(f"Đã bỏ qua câu bị AI ảo giác: {translated_text[:30]}...")
+                                continue
+                        
+                        logger.debug(f"[{data['start_time']} -> {data['end_time']}] {data['original_text']} => {translated_text}")
+                        
+                        srt_content.append(str(segment_idx))
+                        srt_content.append(f"{data['start_time']} --> {data['end_time']}")
+                        srt_content.append(translated_text)
+                        srt_content.append("")
+                        segment_idx += 1
+
+                if not srt_content:
+                    logger.warning("Không có nội dung SRT nào được tạo ra sau khi lọc.")
+                    return None
+                    
+                with open(output_srt_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(srt_content))
                 
             logger.info(f"Đã tạo file SRT: {output_srt_path}")
             return output_srt_path

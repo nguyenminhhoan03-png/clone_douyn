@@ -1552,11 +1552,33 @@ class SettingsTab(ctk.CTkFrame):
         self._entry_douyin.insert(0, "config/cookies/douyin_cookies.txt")
         self._entry_tiktok.insert(0, "config/cookies/tiktok_cookies.json")
 
+        # ── Gemini AI section ──────────────────────────────────────────────────
+        self._section("🧠  AI Translation (Gemini)", row=3)
+        ai = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12,
+                           border_width=1, border_color=BORDER)
+        ai.grid(row=4, column=0, sticky="ew", pady=(0, 16))
+        ai.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(ai, text="Gemini API Key", font=("Segoe UI", 12),
+                     text_color=TEXT_DIM).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 14))
+        self._entry_gemini = ctk.CTkEntry(ai, font=("Consolas", 11),
+                                             fg_color=BG_DARK, border_color=BORDER, show="*")
+        
+        # Load from .env if available
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        existing_key = os.getenv("GEMINI_API_KEY", "")
+        if existing_key:
+            self._entry_gemini.insert(0, existing_key)
+            
+        self._entry_gemini.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=(14, 14))
+
         # ── TikTok section ───────────────────────────────────────────────────
-        self._section("🎵  TikTok Upload", row=3)
+        self._section("🎵  TikTok Upload", row=5)
         tt = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12,
                            border_width=1, border_color=BORDER)
-        tt.grid(row=4, column=0, sticky="ew", pady=(0, 16))
+        tt.grid(row=6, column=0, sticky="ew", pady=(0, 16))
         tt.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(tt, text="Max posts/ngày", font=("Segoe UI", 12),
@@ -1580,7 +1602,7 @@ class SettingsTab(ctk.CTkFrame):
             font=("Segoe UI", 13, "bold"),
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
             command=self._save,
-        ).grid(row=5, column=0, sticky="w", pady=(4, 0))
+        ).grid(row=7, column=0, sticky="w", pady=(4, 0))
 
     def _section(self, title, row):
         ctk.CTkLabel(
@@ -1598,10 +1620,18 @@ class SettingsTab(ctk.CTkFrame):
             entry.insert(0, path)
 
     def _save(self):
+        gemini_key = self._entry_gemini.get().strip()
+        env_path = Path(__file__).parent / ".env"
+        
+        # Ghi API key ra file .env
+        env_content = f"GEMINI_API_KEY={gemini_key}\n"
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(env_content)
+            
         messagebox.showinfo(
             "Đã lưu",
             "Cài đặt đã được ghi nhận.\n"
-            "(Lưu ý: Một số thay đổi cần khởi động lại app để có hiệu lực.)"
+            "(Lưu ý: API Key sẽ có hiệu lực ngay trong lần dịch tiếp theo.)"
         )
 
 

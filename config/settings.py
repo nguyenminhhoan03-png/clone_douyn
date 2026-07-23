@@ -3,6 +3,10 @@ Settings module - Cấu hình chung cho toàn bộ hệ thống
 """
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load biến môi trường từ file .env
+load_dotenv()
 
 # ============================================================
 # BASE PATHS
@@ -98,6 +102,8 @@ PROCESSOR_CONFIG = {
     "tts_voice": "vi-VN-HoaiMyNeural",  # Giọng nữ VN (hoặc vi-VN-NamMinhNeural cho nam)
     "tts_rate": "+0%",  # Tốc độ đọc TTS (vd: "+10%", "-10%")
     "original_audio_volume": 0.2,  # Giữ 20% âm lượng gốc khi dubbing
+    # Gemini AI Translation
+    "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
     # Output settings
     "output_fps": 30,
     "output_codec": "libx264",
