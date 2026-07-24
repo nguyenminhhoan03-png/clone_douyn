@@ -112,15 +112,7 @@ class VideoProcessor:
             filters.append(f"eq=brightness={brightness - 1.0:.2f}")
             logger.debug(f"  ✓ Brightness: {brightness}x")
             
-        # 3. Speed
-        speed_range = self.config.get("speed_range", (0.97, 1.03))
-        speed_factor = random.uniform(*speed_range)
-        if speed_factor != 1.0:
-            filters.append(f"setpts={1.0/speed_factor:.4f}*PTS")
-            audio_filters.append(f"atempo={speed_factor:.4f}")
-            logger.debug(f"  ✓ Speed: {speed_factor:.3f}x")
-
-        # 5. Phụ đề (Auto Subtitle + Black bar)
+        # 3. Phụ đề (Auto Subtitle + Black bar)
         has_subtitles = False
         srt_path = None
         if self.config.get("auto_subtitle") and self.subtitle_generator:
@@ -135,6 +127,14 @@ class VideoProcessor:
                 filters.append(f"subtitles='{srt_path_unix}':force_style='FontSize=16,Alignment=2,MarginV=40,BorderStyle=1,Outline=1.5,Shadow=1'")
                 has_subtitles = True
                 logger.debug("  ✓ Subtitles applied")
+
+        # 4. Speed (Phải áp dụng sau subtitles để sub được scale đúng tốc độ cùng với video)
+        speed_range = self.config.get("speed_range", (0.97, 1.03))
+        speed_factor = random.uniform(*speed_range)
+        if speed_factor != 1.0:
+            filters.append(f"setpts={1.0/speed_factor:.4f}*PTS")
+            audio_filters.append(f"atempo={speed_factor:.4f}")
+            logger.debug(f"  ✓ Speed: {speed_factor:.3f}x")
 
         # 6. Audio / Dubbing / Music
         final_audio_input_idx = 0

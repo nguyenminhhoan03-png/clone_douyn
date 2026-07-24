@@ -219,6 +219,20 @@ class DouyinCrawler:
             logger.error(f"yt-dlp download failed: {e}")
             return False
 
+    async def _fetch_douyin_title(self, video_url: str) -> str:
+        """Fetch title directly from Douyin page if API doesn't provide it."""
+        try:
+            async with httpx.AsyncClient(headers=self.headers, timeout=10.0, follow_redirects=True) as client:
+                resp = await client.get(video_url)
+                if resp.status_code == 200:
+                    match = re.search(r'<title>(.*?)</title>', resp.text)
+                    if match:
+                        t = match.group(1).replace(" - 抖音", "").replace("抖音", "").strip()
+                        return t
+        except Exception as e:
+            logger.debug(f"Failed to fetch title from Douyin directly: {e}")
+        return ""
+
     async def get_video_info(self, video_url: str) -> Optional[dict]:
         """
         Lấy thông tin video từ Douyin URL dùng yt-dlp.
@@ -249,6 +263,10 @@ class DouyinCrawler:
         if self.db.is_duplicate(video_id):
             logger.info(f"Video already crawled: {video_id}")
             return None
+
+        # Lấy sẵn title nếu có thể
+        real_title = await self._fetch_douyin_title(video_url)
+        default_title = real_title if real_title else f"Video {video_id}"
 
         # URL ngắn gọn nhất để truyền vào API
         api_url = original_url if "v.douyin.com" in original_url else video_url
@@ -295,7 +313,7 @@ class DouyinCrawler:
                             return {
                                 "video_id": video_id,
                                 "source_url": video_url,
-                                "title": f"Video {video_id}",
+                                "title": default_title,
                                 "author": "unknown",
                                 "music_title": "",
                                 "tags": "",
@@ -335,7 +353,7 @@ class DouyinCrawler:
                         if m:
                             dl_url = m.group(1)
                             m_title = re.search(r'<h3[^>]*>(.*?)</h3>', html, re.DOTALL)
-                            title = re.sub(r'<[^>]+>', '', m_title.group(1)).strip() if m_title else f"Video {video_id}"
+                            title = re.sub(r'<[^>]+>', '', m_title.group(1)).strip() if m_title else default_title
                             logger.info("✅ savetik.co success!")
                             return {
                                 "video_id": video_id,
@@ -376,7 +394,7 @@ class DouyinCrawler:
                         return {
                             "video_id": video_id,
                             "source_url": video_url,
-                            "title": data.get("title", f"Video {video_id}")[:200],
+                            "title": data.get("title", default_title)[:200],
                             "author": "unknown",
                             "music_title": "",
                             "tags": "",
@@ -414,7 +432,7 @@ class DouyinCrawler:
                         return {
                             "video_id": video_id,
                             "source_url": video_url,
-                            "title": data.get("title", f"Video {video_id}")[:200],
+                            "title": data.get("title", default_title)[:200],
                             "author": "unknown",
                             "music_title": "",
                             "tags": "",

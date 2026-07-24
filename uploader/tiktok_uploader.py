@@ -370,8 +370,20 @@ class TikTokUploader:
                     continue
 
             if caption_element:
+                # Bấm ra ngoài một cái để mất các toast thông báo che màn hình (như "Xem trước video")
+                try:
+                    await self.page.mouse.click(10, 10)
+                    await asyncio.sleep(0.5)
+                    
+                    got_it_btn = await self.page.query_selector('button:has-text("Đã hiểu"), button:has-text("Got it")')
+                    if got_it_btn:
+                        await got_it_btn.click(force=True)
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+
                 # Clear existing text
-                await caption_element.click()
+                await caption_element.click(force=True)
                 await self._random_delay(0.5, 1)
 
                 # Select all và xóa
@@ -400,8 +412,55 @@ class TikTokUploader:
         except Exception as e:
             logger.error(f"Error filling caption: {e}")
 
+    async def _handle_post_anyway_modal(self, post_btn):
+        """Xử lý popup 'Tiếp tục đăng?' (Post anyway) hoặc cảnh báo 'Nội dung bị hạn chế'."""
+        try:
+            # Đợi nhẹ 1.5s xem có popup xuất hiện không, giúp tối ưu hiệu năng không phải đợi lâu
+            await asyncio.sleep(1.5)
+            
+            # Case 1: Popup "Tiếp tục đăng?" (Chưa check xong bản quyền)
+            post_anyway_btn = await self.page.query_selector(
+                'button:has-text("Đăng ngay"), button:has-text("Post anyway"), button:has-text("Continue posting")'
+            )
+            if post_anyway_btn:
+                await post_anyway_btn.click(force=True)
+                logger.info("  ✓ Clicked 'Đăng ngay' (Bypassed copyright check delay)")
+                await asyncio.sleep(1)
+                return
+                
+            # Case 2: Popup "Nội dung có thể sẽ bị hạn chế" (Cảnh báo vi phạm)
+            restricted_modal = await self.page.query_selector(
+                'text="Nội dung có thể sẽ bị hạn chế", text="Content may be restricted"'
+            )
+            if restricted_modal:
+                logger.info("  ⚠️ Detected restriction warning. Dismissing and posting anyway...")
+                # Bấm ra ngoài để tắt modal
+                await self.page.mouse.click(10, 10)
+                await asyncio.sleep(1)
+                # Bấm Đăng lại lần nữa
+                await post_btn.click(force=True)
+                logger.info("  ✓ Clicked Post button AGAIN")
+                await asyncio.sleep(1)
+                
+        except Exception:
+            pass
+
     async def _click_post_button(self):
         """Click nút Post/Đăng."""
+        # Dismiss blocking modals like "Xem trước video của bạn trên điện thoại" -> "Đã hiểu"
+        try:
+            got_it_btn = await self.page.query_selector('button:has-text("Đã hiểu"), button:has-text("Got it")')
+            if got_it_btn:
+                await got_it_btn.click(force=True)
+                await asyncio.sleep(1)
+                logger.info("  ✓ Dismissed blocking modal/toast")
+            else:
+                # Try clicking somewhere safe to close any other dismissable popups
+                await self.page.mouse.click(0, 0)
+                await asyncio.sleep(1)
+        except Exception as e:
+            logger.debug(f"Error dismissing modal: {e}")
+
         post_selectors = [
             '[data-e2e="post_video_button"]',
             'button:has-text("Post")',
@@ -417,8 +476,9 @@ class TikTokUploader:
                     is_disabled = await btn.get_attribute("disabled")
                     aria_disabled = await btn.get_attribute("aria-disabled")
                     if is_disabled is None and aria_disabled != "true":
-                        await btn.click()
+                        await btn.click(force=True)
                         logger.info(f"  ✓ Post button clicked via {selector}")
+                        await self._handle_post_anyway_modal(btn)
                         return True
             except Exception:
                 continue
@@ -432,8 +492,9 @@ class TikTokUploader:
                     is_disabled = await btn.get_attribute("disabled")
                     aria_disabled = await btn.get_attribute("aria-disabled")
                     if is_disabled is None and aria_disabled != "true":
-                        await btn.click()
+                        await btn.click(force=True)
                         logger.info(f"  ✓ Clicked fallback button: {text}")
+                        await self._handle_post_anyway_modal(btn)
                         return True
         except Exception:
             pass
@@ -616,12 +677,9 @@ class TikTokUploader:
 
             # Delay giữa các lần post
             if i < len(videos) - 1:
-                wait_minutes = random.randint(
-                    int(interval[0] * 60),
-                    int(interval[1] * 60)
-                )
-                logger.info(f"  ⏳ Waiting {wait_minutes} minutes before next post...")
-                await asyncio.sleep(wait_minutes * 60)
+                wait_seconds = random.randint(15, 30)
+                logger.info(f"  ⏳ Waiting {wait_seconds} seconds before next post...")
+                await asyncio.sleep(wait_seconds)
 
         logger.info(f"\n📊 Upload summary: {len(uploaded_ids)}/{len(videos)} successful")
         return uploaded_ids

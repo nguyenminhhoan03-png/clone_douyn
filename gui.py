@@ -1131,6 +1131,11 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             
             ctk.CTkLabel(info_frame, text=f"ID: {vid}", font=("Consolas", 11, "bold"), text_color=ACCENT).pack(anchor="w")
             
+            # Display title
+            display_title = video.get("title_vi") or video.get("title") or "No title"
+            ctk.CTkLabel(info_frame, text=display_title[:80] + ("..." if len(display_title) > 80 else ""), 
+                         font=("Segoe UI", 13), text_color=TEXT_MAIN).pack(anchor="w", pady=(2, 0))
+
             # Editable caption
             title = uploader_dummy._generate_caption(video)
             caption_var = ctk.StringVar(value=title)
