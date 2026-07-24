@@ -176,38 +176,53 @@ def build_vietnamese_caption(title: str, tags: str,
     caption = f"✨ {translated_title}\n\n{tags_str}"
     return caption
 
-def translate_srt_with_gemini(srt_content: str, api_key: str) -> str:
+def translate_srt_with_gemini(payload_text: str, api_key: str) -> str:
     """
-    Dịch toàn bộ file SRT bằng Google Gemini (LLM) để đảm bảo chuẩn ngữ cảnh.
+    Dịch text payload (dạng ID|text) bằng Google Gemini để đảm bảo chuẩn ngữ cảnh.
+    Tránh tuyệt đối việc Gemini làm hỏng timestamp của file SRT gốc.
     """
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        
-        # Sử dụng model gemini-2.5-flash cho tốc độ nhanh và chi phí rẻ/miễn phí
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        
         prompt = (
-            "Bạn là một chuyên gia Review Phim TikTok chuyên nghiệp tại Việt Nam. "
-            "Dưới đây là nội dung file SRT tiếng Trung của một đoạn review phim. "
-            "Hãy dịch toàn bộ sang tiếng Việt với văn phong giật gân, lôi cuốn, mượt mà như văn nói mạng xã hội. "
-            "Yêu cầu BẮT BUỘC:\n"
-            "1. TUYỆT ĐỐI GIỮ NGUYÊN cấu trúc thời gian (timestamps) và số thứ tự của file SRT. Chỉ thay đổi phần chữ tiếng Trung thành tiếng Việt.\n"
-            "2. TUYỆT ĐỐI KHÔNG dùng đại từ 'Tôi' để gọi nhân vật, tự hiểu ngữ cảnh và gọi là 'Anh ta', 'Cô ta', 'Nam chính', 'Nữ chính', 'Bọn họ' v.v.\n"
-            "3. Không thêm bất kỳ lời bình luận hay giải thích nào ở đầu và cuối, chỉ trả về nội dung SRT.\n\n"
-            "Nội dung SRT:\n"
-            f"{srt_content}"
+            "Bạn là chuyên gia Review Phim/Video ngắn TikTok chuyên nghiệp tại Việt Nam.\n"
+            "Hãy dịch các câu tiếng Trung sau sang tiếng Việt. Yêu cầu dịch thoát ý, mượt mà, đúng ngữ cảnh mạng xã hội Việt Nam.\n"
+            "YÊU CẦU BẮT BUỘC (Nếu vi phạm sẽ gây lỗi hệ thống):\n"
+            "1. TUYỆT ĐỐI giữ nguyên cấu trúc 'ID|nội dung dịch'. Không thêm bớt bất kỳ dòng nào.\n"
+            "2. TUYỆT ĐỐI không gộp các dòng lại với nhau.\n"
+            "3. KHÔNG dịch sát nghĩa (word-for-word) hay dịch thô máy móc. Hãy chuyển đổi từ lóng Douyin sang ngôn ngữ GenZ/TikTok Việt Nam (VD: 'tổng tài', 'trà xanh', 'cẩu lương', 'tiểu tam', 'khuê mật' -> 'bạn thân').\n"
+            "4. Câu văn phải ngắn gọn, súc tích, giật gân, nhịp điệu nhanh để làm giọng đọc AI.\n"
+            "5. Không dùng đại từ 'Tôi' để gọi nhân vật trừ khi đó là góc nhìn thứ nhất.\n"
+            "6. Không giải thích, không bình luận, CHỈ trả về danh sách đã dịch.\n\n"
+            "Nội dung cần dịch:\n"
+            f"{payload_text}"
         )
         
-        logger.info("Đang gửi toàn bộ kịch bản cho Gemini phân tích ngữ cảnh...")
-        response = model.generate_content(prompt)
+        logger.info("Đang gửi danh sách text cho Gemini phân tích ngữ cảnh...")
+        
+        try:
+            # Thử dùng thư viện mới nhất của Google (google-genai)
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+        except ImportError:
+            # Fallback về thư viện cũ (google-generativeai) và ẩn cảnh báo FutureWarning
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=FutureWarning)
+                import google.generativeai as gen_ai
+                
+            gen_ai.configure(api_key=api_key)
+            model = gen_ai.GenerativeModel('gemini-2.5-flash')
+            response = model.generate_content(prompt)
         
         if response and response.text:
             logger.info("Gemini đã dịch xong kịch bản (Chuẩn ngữ cảnh 100%)")
             return response.text.strip()
         else:
             logger.warning("Gemini trả về rỗng, fallback về bản gốc.")
-            return srt_content
+            return payload_text
     except Exception as e:
         logger.error(f"Lỗi khi dịch bằng Gemini: {e}")
-        return srt_content
+        return None

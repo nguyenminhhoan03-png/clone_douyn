@@ -102,8 +102,8 @@ PROCESSOR_CONFIG = {
     "tts_voice": "vi-VN-HoaiMyNeural",  # Giọng nữ VN (hoặc vi-VN-NamMinhNeural cho nam)
     "tts_rate": "+0%",  # Tốc độ đọc TTS (vd: "+10%", "-10%")
     "original_audio_volume": 0.2,  # Giữ 20% âm lượng gốc khi dubbing
-    # Gemini AI Translation
-    "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
+    # Gemini AI Translation (Hỗ trợ xoay tua nhiều key, cách nhau dấu phẩy)
+    "gemini_api_keys": [k.strip() for k in os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", "")).split(",") if k.strip()],
     # Output settings
     "output_fps": 30,
     "output_codec": "libx264",

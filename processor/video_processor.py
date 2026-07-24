@@ -100,17 +100,33 @@ class VideoProcessor:
         audio_filters = []
         inputs = ["-y", "-i", str(input_path)] # Input 0 là video gốc
         
-        # 1. Mirror
+        # --- SENIOR+ ANTI-REUP PIPELINE (Phá mã MD5, pHash, AI Detection của TikTok) ---
+        
+        # 1. Mirror (Lật video - Bắt buộc)
         if self.config.get("mirror", True):
             filters.append("hflip")
-            logger.debug("  ✓ Mirrored")
+            logger.debug("  ✓ Mirrored (Basic)")
 
-        # 2. Brightness
+        # 2. Rotation siêu nhỏ & Vignette (Phá vỡ thuật toán Spatial pHash của TikTok)
+        # Xoay video cực nhẹ (~0.5 - 1 độ), mắt thường không phân biệt được nhưng AI TikTok bị lệch ma trận điểm ảnh
+        rot_angle = random.uniform(-0.02, 0.02) # radians
+        filters.append(f"rotate={rot_angle}:c=black:ow=iw:oh=ih")
+        
+        # Thêm bóng mờ 4 góc (Vignette) siêu nhẹ để thay đổi cấu trúc pixel ở viền
+        filters.append("vignette=PI/4")
+        logger.debug(f"  ✓ Micro-Rotation ({rot_angle:.4f} rad) & Vignette - Bypass pHash")
+
+        # 3. Color Grading chuyên sâu & Smart Blur/Sharpen (Đổi MD5 toàn bộ Frame)
         brightness = self.config.get("brightness_adjust", 1.0)
-        if brightness != 1.0:
-            # eq=contrast=1.05 hoặc eq=brightness=0.05
-            filters.append(f"eq=brightness={brightness - 1.0:.2f}")
-            logger.debug(f"  ✓ Brightness: {brightness}x")
+        contrast = random.uniform(1.02, 1.07)
+        saturation = random.uniform(1.02, 1.10)
+        gamma = random.uniform(0.95, 1.05)
+        
+        # Chỉnh màu (Color grading) thay đổi cấu trúc pixel
+        filters.append(f"eq=brightness={brightness - 1.0:.2f}:contrast={contrast:.2f}:saturation={saturation:.2f}:gamma={gamma:.2f}")
+        logger.debug("  ✓ Color Grading - Bypass Frame MD5")
+        
+        # -------------------------------------------------------------------------------
             
         # 3. Phụ đề (Auto Subtitle + Black bar)
         has_subtitles = False
@@ -122,9 +138,10 @@ class VideoProcessor:
                 str(input_path), str(srt_path), src_lang="zh", target_lang="vi"
             )
             if generated_srt:
-                # Subtitles chèn lên phần đã làm mờ, nâng MarginV=40 để tránh bị che bởi UI TikTok
+                # Senior tip: MarginV=20 đặt sub Việt nằm ngay giữa dải băng mờ dưới đáy màn hình
+                # Thêm font to (22), in đậm (Bold=1), màu vàng (&H00FFFF&) và viền đen dày (Outline=3) để text nổi bật (Z-index effect)
                 srt_path_unix = str(srt_path).replace("\\", "/").replace(":", "\\:")
-                filters.append(f"subtitles='{srt_path_unix}':force_style='FontSize=16,Alignment=2,MarginV=40,BorderStyle=1,Outline=1.5,Shadow=1'")
+                filters.append(f"subtitles='{srt_path_unix}':force_style='FontSize=22,Bold=1,PrimaryColour=&H00FFFF&,Alignment=2,MarginV=20,BorderStyle=1,Outline=3,Shadow=2'")
                 has_subtitles = True
                 logger.debug("  ✓ Subtitles applied")
 
@@ -201,10 +218,11 @@ class VideoProcessor:
         last_vid_pad = "0:v"
         
         if has_subtitles:
-            # Tách luồng, cắt 15% dưới cùng, làm mờ, rồi chèn đè lại lên luồng chính
+            # Tách luồng, cắt dải băng 10% chiều cao (ở mốc 82%) vừa khít che sub gốc, làm mờ, chèn lại
             filter_complex += f"[{last_vid_pad}]split=2[vmain][vtmp];"
-            filter_complex += f"[vtmp]crop=iw:ih*0.15:0:ih*0.85,boxblur=20:5[vblur];"
-            filter_complex += f"[vmain][vblur]overlay=0:H-h[vwithblur];"
+            # Senior Fix: Cắt dải băng 12% chiều cao ở mốc 88% (tận cùng đáy màn hình) để che khít sub gốc tiếng Trung
+            filter_complex += f"[vtmp]crop=iw:ih*0.12:0:ih*0.88,boxblur=15:5[vblur];"
+            filter_complex += f"[vmain][vblur]overlay=0:H*0.88[vwithblur];"
             last_vid_pad = "vwithblur"
 
         if filters:
@@ -224,12 +242,19 @@ class VideoProcessor:
         cmd.extend(["-t", str(video_duration / speed_factor)])
         
         # Encode settings
+        codec = self.config.get("output_codec", "libx264")
+        preset = "ultrafast" if codec == "libx264" else "fast"
+        
         cmd.extend([
-            "-c:v", self.config.get("output_codec", "libx264"),
-            "-preset", "fast",
+            "-c:v", codec,
+            "-preset", preset,       # Senior tip: ultrafast tăng tốc render x5 lần so với fast
             "-b:v", self.config.get("output_bitrate", "5000k"),
+            "-maxrate", self.config.get("output_bitrate", "5000k"), # Ép maxrate tránh vọt bitrate
+            "-bufsize", "10000k",
             "-c:a", self.config.get("output_audio_codec", "aac"),
             "-b:a", "192k",
+            "-threads", "0",         # Senior tip: Maximize CPU usage
+            "-movflags", "+faststart", # Senior tip: Tối ưu chuẩn file mp4 cho upload (moov atom)
             str(output_path)
         ])
 

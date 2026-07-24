@@ -21,10 +21,14 @@ class SubtitleGenerator:
                 raise ImportError("Vui lòng cài đặt: pip install faster-whisper")
             
             logger.info(f"Loading Whisper model '{self.model_size}'...")
-            # Dùng cpu mặc định vì gpu cần setup CUDA (nếu máy có sẵn CUDA thì tự cấu hình 'cuda')
-            # Thêm device="cuda" nếu máy bạn có card Nvidia và đã cài CUDA
-            self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8")
-            logger.info("Whisper model loaded!")
+            # Senior tip: Tự động detect và ưu tiên dùng GPU (CUDA) nếu có, fallback về CPU
+            try:
+                self.model = WhisperModel(self.model_size, device="cuda", compute_type="float16")
+                logger.info("Whisper model loaded on CUDA (GPU) - Xử lý siêu tốc!")
+            except Exception as e:
+                logger.warning("Không tìm thấy GPU CUDA, đang dùng CPU (Sẽ chậm hơn) ...")
+                self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8")
+                logger.info("Whisper model loaded on CPU!")
 
     def generate_srt(self, video_path: str, output_srt_path: str, src_lang: str = "zh", target_lang: str = "vi") -> Optional[str]:
         """
@@ -40,13 +44,15 @@ class SubtitleGenerator:
             logger.info(f"Transcribing audio from: {video_path_obj.name}")
             
             # Whisper tự trích xuất audio nếu đưa file video vào
-            # condition_on_previous_text=False giúp giảm thiểu tình trạng AI bị ảo giác (lặp từ vô nghĩa)
+            # Senior tip: Dùng VAD (Voice Activity Detection) để bỏ qua khoảng lặng, giảm beam_size xuống 2 để x2 tốc độ
             segments, info = self.model.transcribe(
                 str(video_path), 
-                beam_size=5, 
+                beam_size=2, 
                 language=src_lang,
                 condition_on_previous_text=False,
-                compression_ratio_threshold=2.0
+                compression_ratio_threshold=2.0,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500)
             )
             logger.info(f"Detected language '{info.language}' with probability {info.language_probability:.2f}")
 
@@ -68,29 +74,96 @@ class SubtitleGenerator:
                 logger.warning("Không nhận diện được giọng nói trong video.")
                 return None
                 
-            gemini_key = PROCESSOR_CONFIG.get("gemini_api_key", "")
+            gemini_keys = PROCESSOR_CONFIG.get("gemini_api_keys", [])
+            # Fallback tương thích ngược với file config cũ
+            if not gemini_keys and PROCESSOR_CONFIG.get("gemini_api_key"):
+                gemini_keys = [PROCESSOR_CONFIG.get("gemini_api_key")]
+                
+            use_google_fallback = True
             
-            if gemini_key:
-                # ─── Cách 1: Dịch toàn bộ ngữ cảnh bằng Gemini LLM ───
-                logger.info("Đã tìm thấy Gemini API Key. Đang tạo SRT gốc và gửi cho AI dịch ngữ cảnh...")
-                raw_srt_lines = []
-                for idx, data in enumerate(segment_data, 1):
-                    raw_srt_lines.append(str(idx))
-                    raw_srt_lines.append(f"{data['start_time']} --> {data['end_time']}")
-                    raw_srt_lines.append(data['original_text'])
-                    raw_srt_lines.append("")
+            if gemini_keys:
+                # ─── Cách 1: Dịch ngữ cảnh bằng Gemini LLM (Senior Tip: Xoay tua API Keys chống Quota) ───
+                logger.info(f"Đã tìm thấy {len(gemini_keys)} Gemini API Keys. Đang gửi dữ liệu text cho AI dịch ngữ cảnh...")
                 
-                raw_srt = "\n".join(raw_srt_lines)
-                translated_srt = translate_srt_with_gemini(raw_srt, gemini_key)
+                # Senior tip: Chia nhỏ kịch bản (Chunking) để tránh AI Gemini bị ảo giác hoặc cắt xén (Truncate) khi video quá dài
+                CHUNK_SIZE = 100
+                payload_lines = []
+                for idx, data in enumerate(segment_data):
+                    # Định dạng: ID|text
+                    payload_lines.append(f"{idx}|{data['original_text']}")
                 
-                if not translated_srt:
-                    logger.warning("Lỗi khi dùng Gemini, SRT rỗng!")
-                    return None
+                translated_text = ""
+                total_chunks = (len(payload_lines) - 1) // CHUNK_SIZE + 1
+                gemini_success = True
+                current_key_idx = 0
+                
+                for i in range(0, len(payload_lines), CHUNK_SIZE):
+                    chunk = payload_lines[i:i + CHUNK_SIZE]
+                    chunk_text = "\n".join(chunk)
                     
-                with open(output_srt_path, "w", encoding="utf-8") as f:
-                    f.write(translated_srt)
+                    import time
+                    chunk_success = False
                     
-            else:
+                    # Thử lần lượt các keys nếu bị lỗi Quota (429)
+                    for attempt in range(len(gemini_keys)):
+                        gemini_key = gemini_keys[current_key_idx]
+                        logger.info(f"Đang gửi lô {i//CHUNK_SIZE + 1}/{total_chunks} cho Gemini (Bằng Key {current_key_idx + 1}/{len(gemini_keys)})...")
+                        
+                        chunk_result = translate_srt_with_gemini(chunk_text, gemini_key)
+                        
+                        if chunk_result:
+                            translated_text += chunk_result + "\n"
+                            chunk_success = True
+                            break
+                        else:
+                            logger.warning(f"Key {current_key_idx + 1} bị lỗi hoặc hết lượt (Quota Limit)! Đang đổi sang Key khác...")
+                            current_key_idx = (current_key_idx + 1) % len(gemini_keys)
+                            time.sleep(2)  # Nghỉ một chút trước khi thử key mới
+                            
+                    if not chunk_success:
+                        logger.warning(f"Tất cả {len(gemini_keys)} Gemini Keys đều đã hết lượt hoặc lỗi! Hủy Gemini, chuyển sang Google Translate!")
+                        gemini_success = False
+                        break
+                        
+                    # Nghỉ 2s giữa các request thành công để tránh spam Rate Limit
+                    time.sleep(2)
+                
+                if gemini_success and translated_text.strip():
+                    # Phân tích cú pháp (Parse) kết quả từ AI và ghép vào Timestamp GỐC
+                    trans_dict = {}
+                    for line in translated_text.split('\n'):
+                        if "|" in line:
+                            parts = line.split("|", 1)
+                            idx_str = parts[0].strip()
+                            if idx_str.isdigit():
+                                trans_dict[int(idx_str)] = parts[1].strip()
+                    
+                    srt_content = []
+                    segment_idx = 1
+                    for idx, data in enumerate(segment_data):
+                        t_text = trans_dict.get(idx, data['original_text'])
+                        
+                        # Bộ lọc AI ảo giác lặp từ (Senior tip)
+                        if len(t_text) > 40:
+                            words = t_text.split()
+                            if len(words) > 8 and len(set(words)) < len(words) * 0.3:
+                                logger.warning(f"Đã bỏ qua câu AI ảo giác: {t_text[:30]}...")
+                                continue
+                                
+                        srt_content.append(str(segment_idx))
+                        srt_content.append(f"{data['start_time']} --> {data['end_time']}")
+                        srt_content.append(t_text)
+                        srt_content.append("")
+                        segment_idx += 1
+                    
+                    if srt_content:
+                        with open(output_srt_path, "w", encoding="utf-8") as f:
+                            f.write("\n".join(srt_content))
+                        use_google_fallback = False
+                    else:
+                        logger.warning("Không có nội dung SRT nào được tạo ra từ Gemini sau khi lọc. Fallback Google Translate.")
+                        
+            if use_google_fallback:
                 # ─── Cách 2: Dịch từng câu bằng Google Dịch (Fallback) ───
                 def _translate_task(data):
                     translated_text = translate_text(data["original_text"], src=src_lang, dest=target_lang)

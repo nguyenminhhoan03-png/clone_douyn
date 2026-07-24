@@ -433,13 +433,38 @@ class TikTokUploader:
                 'text="Nội dung có thể sẽ bị hạn chế", text="Content may be restricted"'
             )
             if restricted_modal:
-                logger.info("  ⚠️ Detected restriction warning. Dismissing and posting anyway...")
-                # Bấm ra ngoài để tắt modal
-                await self.page.mouse.click(10, 10)
+                logger.info("  ⚠️ Detected restriction warning. Clicking X and posting anyway...")
+                
+                # Cố gắng tìm và click nút X (Close)
+                close_selectors = [
+                    '[aria-label="Đóng"]', 
+                    '[aria-label="Close"]',
+                    'div[class*="close-icon"]',
+                    'svg[class*="close"]'
+                ]
+                
+                closed = False
+                for selector in close_selectors:
+                    try:
+                        close_btn = await self.page.query_selector(selector)
+                        if close_btn:
+                            await close_btn.click(force=True)
+                            closed = True
+                            logger.info(f"  ✓ Clicked X (Close) via {selector}")
+                            break
+                    except Exception:
+                        pass
+                
+                if not closed:
+                    # Fallback: Bấm phím ESC (cách Senior nhất để đóng hầu hết modal trên web)
+                    await self.page.keyboard.press("Escape")
+                    logger.info("  ✓ Pressed ESC to close modal")
+                
                 await asyncio.sleep(1)
-                # Bấm Đăng lại lần nữa
+                
+                # Bấm Đăng lại lần nữa sau khi đóng modal
                 await post_btn.click(force=True)
-                logger.info("  ✓ Clicked Post button AGAIN")
+                logger.info("  ✓ Clicked Post button AGAIN after dismissing warning")
                 await asyncio.sleep(1)
                 
         except Exception:

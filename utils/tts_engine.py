@@ -71,25 +71,54 @@ async def _async_generate_voiceover(
     
     # 1. Chuẩn bị danh sách các task cần tải
     tasks = []
-    sem = asyncio.Semaphore(3) # Giảm xuống 3 để tránh bị Microsoft Rate Limit chặn "No audio was received"
+    # Senior tip: Giảm Concurrency xuống 2 để an toàn tuyệt đối với Microsoft Edge TTS
+    sem = asyncio.Semaphore(2) 
     
     async def fetch_tts(i, clean_text, temp_file):
         import random
         
         async with sem:
-            for attempt in range(5): # Thử lại tối đa 5 lần thay vì 3
-                try:
-                    communicate = edge_tts.Communicate(clean_text, voice, rate=rate)
-                    await communicate.save(temp_file)
-                    if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
-                        return True
-                except Exception as e:
-                    if attempt == 4:
-                        logger.warning(f"TTS segment {i} failed after 5 attempts ({clean_text[:30]}): {e}")
+            # Jitter: Khởi động lệch nhịp TRONG LÚC ĐÃ GIỮ SEMAPHORE để tránh Burst Connection
+            await asyncio.sleep(random.uniform(0.1, 0.7))
+            
+            # Khắc phục bug chí mạng của edge-tts: Text kết thúc bằng dấu câu (,) sẽ bị lỗi No audio was received
+            clean_text = clean_text.rstrip(",.!?;:- ")
+            if not clean_text:
+                return False
                 
-                # Exponential backoff + Jitter: Đợi lâu hơn ở các lần thất bại tiếp theo để tránh spam server
-                delay = (1.5 ** attempt) + random.uniform(0.5, 1.5)
-                await asyncio.sleep(delay)
+            # Senior tip: Tăng retry lên 3, dùng Timeout để chống treo, và "thay đổi nhẹ text" nếu bị lỗi ảo
+            for attempt in range(3): 
+                try:
+                    # Đổi text bằng ký tự ngắt dòng vô hình để ép Edge TTS không lấy cache cũ bị hỏng
+                    text_to_send = clean_text if attempt == 0 else clean_text + ("\r" if attempt == 1 else "\r\n")
+                    
+                    communicate = edge_tts.Communicate(text_to_send, voice, rate=rate)
+                    
+                    # CỰC KỲ QUAN TRỌNG: Chống treo vô thời hạn bằng Circuit Breaker (Timeout = 30s để hỗ trợ các câu cực dài)
+                    await asyncio.wait_for(communicate.save(temp_file), timeout=30.0)
+                    
+                    if os.path.exists(temp_file) and os.path.getsize(temp_file) > 0:
+                        # Throttling: Ngủ 0.5s trước khi nhả Semaphore để hãm tốc độ tải toàn hệ thống
+                        await asyncio.sleep(0.5)
+                        return True
+                        
+                except asyncio.TimeoutError:
+                    # Nếu bị treo quá 12s, ép ngắt và thử lại ngay lập tức
+                    if attempt == 2:
+                        logger.warning(f"TTS segment {i} timeout ({clean_text[:30]}). Bỏ qua!")
+                    await asyncio.sleep(1.0)
+                    
+                except Exception as e:
+                    err_msg = str(e)
+                    if attempt == 2:
+                        logger.warning(f"TTS segment {i} failed ({clean_text[:30]}): {err_msg}")
+                    
+                    if "No audio was received" in err_msg:
+                        # Lỗi do rate limit hoặc text có vấn đề. Nghỉ vài giây rồi retry
+                        await asyncio.sleep(random.uniform(2.0, 4.0))
+                    else:
+                        await asyncio.sleep(random.uniform(1.0, 2.0))
+            
             return False
 
     sub_data = []
