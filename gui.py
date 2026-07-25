@@ -546,15 +546,20 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         self._sw_mirror.select()
         self._sw_mirror.pack(side="left", padx=(0, 20))
 
-        self._sw_music = ctk.CTkSwitch(row1, text="Ghép nhạc (Tránh bản quyền âm thanh)", font=("Segoe UI", 12), text_color=TEXT_MAIN)
+        self._sw_music = ctk.CTkSwitch(row1, text="Ghép nhạc", font=("Segoe UI", 12), text_color=TEXT_MAIN)
         self._sw_music.select()
         self._sw_music.pack(side="left", padx=(0, 10))
 
-        self._btn_open_music = ctk.CTkButton(row1, text="🎵 Chọn file nhạc...", width=110, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._select_music_file)
+        self._btn_open_music = ctk.CTkButton(row1, text="🎵 Chọn file...", width=90, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._select_music_file)
         self._btn_open_music.pack(side="left", padx=(0, 10))
         
-        self._lbl_music_file = ctk.CTkLabel(row1, text="(Đang dùng nhạc Tóp Tóp mặc định)", font=("Segoe UI", 11), text_color=TEXT_DIM)
-        self._lbl_music_file.pack(side="left")
+        self._lbl_music_file = ctk.CTkLabel(row1, text="(Mặc định)", font=("Segoe UI", 11), text_color=TEXT_DIM)
+        self._lbl_music_file.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(row1, text="Âm lượng nhạc nền:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(5, 5))
+        self._entry_bg_vol = ctk.CTkEntry(row1, width=45, placeholder_text="15%", font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_bg_vol.insert(0, "15%")
+        self._entry_bg_vol.pack(side="left")
 
         # --- Dòng 2: Xử lý Chữ & Vietsub ---
         row2 = ctk.CTkFrame(config_frame, fg_color="transparent")
@@ -566,7 +571,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
 
         # --- Dòng 3: Thuyết minh AI ---
         row3 = ctk.CTkFrame(config_frame, fg_color="transparent")
-        row3.pack(fill="x")
+        row3.pack(fill="x", pady=(0, 12))
 
         self._sw_dubbing = ctk.CTkSwitch(row3, text="🎙️ Thuyết minh AI (Đọc Vietsub tự động)", font=("Segoe UI", 12), text_color=TEXT_MAIN)
         self._sw_dubbing.select()
@@ -581,6 +586,47 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         self._entry_tts_rate = ctk.CTkEntry(row3, width=65, placeholder_text="0%", font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
         self._entry_tts_rate.insert(0, "0%")
         self._entry_tts_rate.pack(side="left")
+
+        # --- Dòng 4: Nền tảng xuất & Lách YouTube Content ID ---
+        row4 = ctk.CTkFrame(config_frame, fg_color="transparent")
+        row4.pack(fill="x")
+
+        ctk.CTkLabel(row4, text="🎯 Nền tảng:", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(side="left", padx=(0, 5))
+        self._opt_platform = ctk.CTkOptionMenu(
+            row4, values=["TikTok (Normal)", "YouTube (Bypass Content ID)"],
+            width=180, font=("Segoe UI", 11, "bold"), fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD,
+            command=self._on_platform_change
+        )
+        self._opt_platform.set("TikTok (Normal)")
+        self._opt_platform.pack(side="left", padx=(0, 15))
+
+        # Khung chứa các nút nâng cao dành cho YouTube Mode
+        self._yt_frame = ctk.CTkFrame(row4, fg_color="transparent")
+        
+        self._btn_open_logo = ctk.CTkButton(
+            self._yt_frame, text="🖼️ Chọn Logo PNG...", width=120, height=24,
+            fg_color=BORDER, hover_color=BG_CARD, command=self._select_logo_file
+        )
+        self._btn_open_logo.pack(side="left", padx=(0, 8))
+
+        self._lbl_logo_file = ctk.CTkLabel(self._yt_frame, text="(Chưa chọn logo)", font=("Segoe UI", 11), text_color=TEXT_DIM)
+        self._lbl_logo_file.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(self._yt_frame, text="Vị trí Logo:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(0, 5))
+        self._opt_logo_pos = ctk.CTkOptionMenu(
+            self._yt_frame, values=["Góc trên phải", "Góc trên trái", "Góc dưới trái", "Góc dưới phải", "Di chuyển (Floating)"],
+            width=130, font=("Segoe UI", 11), fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
+        )
+        self._opt_logo_pos.set("Góc trên phải")
+        self._opt_logo_pos.pack(side="left", padx=(0, 15))
+
+        self._sw_yt_crop = ctk.CTkSwitch(self._yt_frame, text="Crop Zoom 15%", font=("Segoe UI", 11), text_color=TEXT_MAIN)
+        self._sw_yt_crop.select()
+        self._sw_yt_crop.pack(side="left", padx=(0, 10))
+
+        self._sw_yt_noise = ctk.CTkSwitch(self._yt_frame, text="Nhiễu hạt (Noise)", font=("Segoe UI", 11), text_color=TEXT_MAIN)
+        self._sw_yt_noise.select()
+        self._sw_yt_noise.pack(side="left")
         
         # Danh sách chọn video
         list_header = ctk.CTkFrame(self, fg_color="transparent")
@@ -725,6 +771,25 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             self._selected_music_path = None
             self._lbl_music_file.configure(text="")
 
+    def _select_logo_file(self):
+        file_path = filedialog.askopenfilename(
+            title="Chọn file Logo PNG/JPG",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp"), ("All files", "*.*")]
+        )
+        if file_path:
+            self._selected_logo_path = file_path
+            name = Path(file_path).name
+            self._lbl_logo_file.configure(text=name[:15] + "...")
+        else:
+            self._selected_logo_path = None
+            self._lbl_logo_file.configure(text="(Chưa chọn logo)")
+
+    def _on_platform_change(self, choice=None):
+        if "YouTube" in self._opt_platform.get():
+            self._yt_frame.pack(side="left")
+        else:
+            self._yt_frame.pack_forget()
+
     def _bypass_process(self):
         selected_ids = [vid for vid, var in self._checkboxes.items() if var.get()]
         if not selected_ids:
@@ -774,6 +839,38 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         PROCESSOR_CONFIG["specific_music_path"] = getattr(self, "_selected_music_path", None)
         PROCESSOR_CONFIG["auto_subtitle"] = self._sw_subtitle.get() == 1
         PROCESSOR_CONFIG["ai_dubbing"] = self._sw_dubbing.get() == 1
+        
+        # Parse Platform & YouTube Options
+        platform_choice = "youtube" if "YouTube" in self._opt_platform.get() else "tiktok"
+        PROCESSOR_CONFIG["platform"] = platform_choice
+        
+        # Map Logo Position
+        pos_map = {
+            "Góc trên phải": "top_right",
+            "Góc trên trái": "top_left",
+            "Góc dưới trái": "bottom_left",
+            "Góc dưới phải": "bottom_right",
+            "Di chuyển (Floating)": "floating",
+        }
+        logo_pos_key = pos_map.get(self._opt_logo_pos.get(), "top_right")
+        
+        PROCESSOR_CONFIG["youtube_bypass"] = {
+            "crop_zoom": 1.15 if self._sw_yt_crop.get() == 1 else 1.0,
+            "add_noise": self._sw_yt_noise.get() == 1,
+            "logo_path": getattr(self, "_selected_logo_path", None),
+            "logo_position": logo_pos_key,
+            "logo_scale": 0.15,
+        }
+        
+        # Parse Bg Volume Options
+        bg_vol_str = self._entry_bg_vol.get().strip().replace("%", "")
+        try:
+            vol_float = float(bg_vol_str) / 100.0
+            if vol_float < 0: vol_float = 0.0
+            if vol_float > 1: vol_float = 1.0
+            PROCESSOR_CONFIG["original_audio_volume"] = vol_float
+        except Exception:
+            PROCESSOR_CONFIG["original_audio_volume"] = 0.15 # fallback
         
         # Parse TTS Options
         voice_sel = self._opt_voice.get()

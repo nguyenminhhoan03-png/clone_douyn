@@ -104,6 +104,16 @@ PROCESSOR_CONFIG = {
     "original_audio_volume": 0.2,  # Giữ 20% âm lượng gốc khi dubbing
     # Gemini AI Translation (Hỗ trợ xoay tua nhiều key, cách nhau dấu phẩy)
     "gemini_api_keys": [k.strip() for k in os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", "")).split(",") if k.strip()],
+    # Platform Mode: "tiktok" hoặc "youtube"
+    "platform": "tiktok",
+    # YouTube Bypass (Anti-Content ID)
+    "youtube_bypass": {
+        "crop_zoom": 1.15,         # Zoom & crop 15% viền
+        "add_noise": True,         # Thêm nhiễu hạt nhẹ
+        "logo_path": None,         # Đường dẫn file logo PNG
+        "logo_position": "top_right", # top_left, top_right, bottom_left, bottom_right, floating
+        "logo_scale": 0.15,        # Tỉ lệ logo so với chiều rộng video (15%)
+    },
     # Output settings
     "output_fps": 30,
     "output_codec": "libx264",
