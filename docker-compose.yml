@@ -4,6 +4,7 @@ services:
   # Chạy server Backend API
   backend:
     build: .
+    image: douyin-app-image:latest
     container_name: douyin_backend
     restart: always
     ports:
@@ -15,7 +16,7 @@ services:
 
   # Chạy Tool Auto Crawl & Upload ngầm
   worker:
-    build: .
+    image: douyin-app-image:latest
     container_name: douyin_worker
     restart: always
     # Lệnh dưới đây sẽ chạy auto theo logic trong file main.py auto
