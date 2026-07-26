@@ -65,6 +65,7 @@ class DatabaseManager:
                     status TEXT DEFAULT 'posted',
                     tiktok_video_id TEXT,
                     error_message TEXT,
+                    platform TEXT DEFAULT 'tiktok',
                     FOREIGN KEY (crawled_video_id) REFERENCES crawled_videos(id)
                 )
             """)
@@ -89,6 +90,14 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE crawled_videos ADD COLUMN title_vi TEXT")
                 conn.commit()
                 logger.info("Migration: Added title_vi column")
+                
+            # Migration: thêm cột platform vào posted_videos
+            try:
+                cursor.execute("SELECT platform FROM posted_videos LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE posted_videos ADD COLUMN platform TEXT DEFAULT 'tiktok'")
+                conn.commit()
+                logger.info("Migration: Added platform column to posted_videos")
 
             logger.info(f"Database initialized at: {self.db_path}")
         finally:
@@ -229,15 +238,15 @@ class DatabaseManager:
     # ============================================================
 
     def add_posted_video(self, crawled_video_id: int, caption: str,
-                         hashtags: str, tiktok_video_id: str = None) -> int:
-        """Ghi nhận video đã post lên TikTok."""
+                         hashtags: str, tiktok_video_id: str = None, platform: str = "tiktok") -> int:
+        """Ghi nhận video đã post lên TikTok/YouTube."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO posted_videos (crawled_video_id, caption, hashtags, tiktok_video_id)
-                VALUES (?, ?, ?, ?)
-            """, (crawled_video_id, caption, hashtags, tiktok_video_id))
+                INSERT INTO posted_videos (crawled_video_id, caption, hashtags, tiktok_video_id, platform)
+                VALUES (?, ?, ?, ?, ?)
+            """, (crawled_video_id, caption, hashtags, tiktok_video_id, platform))
             conn.commit()
             self._update_daily_stats("videos_posted")
             logger.info(f"Recorded posted video: crawled_id={crawled_video_id}")
@@ -245,7 +254,7 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_today_post_count(self) -> int:
+    def get_today_post_count(self, platform: str = "tiktok") -> int:
         """Đếm số video đã post hôm nay."""
         conn = self._get_connection()
         try:
@@ -253,8 +262,8 @@ class DatabaseManager:
             today = datetime.now().strftime("%Y-%m-%d")
             cursor.execute("""
                 SELECT COUNT(*) FROM posted_videos 
-                WHERE DATE(posted_at) = ? AND status = 'posted'
-            """, (today,))
+                WHERE DATE(posted_at) = ? AND status = 'posted' AND platform = ?
+            """, (today, platform))
             return cursor.fetchone()[0]
         finally:
             conn.close()

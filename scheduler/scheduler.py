@@ -24,23 +24,30 @@ from uploader.tiktok_uploader import TikTokUploader
 class AutoScheduler:
     """Tự động lập lịch crawl → process → upload video."""
 
-    def __init__(self, douyin_urls: list = None, account_file: str = None):
+    def __init__(self, douyin_urls: list = None, tt_account_file: str = None, yt_account_file: str = None):
         """
         Args:
             douyin_urls: Danh sách URL Douyin để crawl
-                         (profile URLs hoặc video URLs)
-            account_file: Tên file cookies của tài khoản TikTok
+            tt_account_file: Tên file cookies của tài khoản TikTok
+            yt_account_file: Tên file token của tài khoản YouTube
         """
         self.db = DatabaseManager()
         self.crawler = DouyinCrawler(db=self.db)
         self.processor = VideoProcessor(db=self.db)
         
-        if account_file:
-            from config.settings import COOKIES_DIR
-            cookies_path = str(COOKIES_DIR / account_file)
-            self.uploader = TikTokUploader(db=self.db, cookies_file=cookies_path)
-        else:
-            self.uploader = TikTokUploader(db=self.db)
+        self.uploader_tt = None
+        self.uploader_yt = None
+        
+        from config.settings import COOKIES_DIR
+        
+        if tt_account_file:
+            cookies_path = str(COOKIES_DIR / tt_account_file)
+            self.uploader_tt = TikTokUploader(db=self.db, cookies_file=cookies_path)
+            
+        if yt_account_file:
+            from uploader.youtube_uploader import YouTubeUploader
+            token_path = str(COOKIES_DIR / yt_account_file)
+            self.uploader_yt = YouTubeUploader(db=self.db, token_file=token_path)
             
         self.douyin_urls = douyin_urls or []
         self.scheduler = AsyncIOScheduler(
@@ -115,14 +122,20 @@ class AutoScheduler:
             logger.error(f"Process job error: {e}")
 
     async def upload_job(self):
-        """Job upload video lên TikTok."""
+        """Job upload video lên TikTok và YouTube."""
         logger.info("=" * 50)
         logger.info("📤 UPLOAD JOB STARTED")
         logger.info("=" * 50)
 
         try:
-            uploaded = await self.uploader.upload_pending_videos(limit=1)
-            logger.info(f"Uploaded {uploaded} videos")
+            if self.uploader_tt:
+                uploaded_tt = await self.uploader_tt.upload_pending_videos(limit=1)
+                logger.info(f"Uploaded {len(uploaded_tt)} videos to TikTok")
+                
+            if self.uploader_yt:
+                uploaded_yt = await self.uploader_yt.upload_pending_videos(limit=1)
+                logger.info(f"Uploaded {len(uploaded_yt)} videos to YouTube")
+                
         except Exception as e:
             logger.error(f"Upload job error: {e}")
 
@@ -216,10 +229,16 @@ class AutoScheduler:
         logger.info("\n🛑 Stopping scheduler...")
         self._running = False
         self.scheduler.shutdown(wait=False)
-        await self.uploader.close()
+        if self.uploader_tt:
+            await self.uploader_tt.close()
+        if self.uploader_yt:
+            await self.uploader_yt.close()
         logger.info("Scheduler stopped.")
 
     async def run_once(self):
         """Chạy pipeline một lần (không schedule)."""
         await self.full_pipeline_job()
-        await self.uploader.close()
+        if self.uploader_tt:
+            await self.uploader_tt.close()
+        if self.uploader_yt:
+            await self.uploader_yt.close()

@@ -1053,6 +1053,155 @@ class AccountManagerWindow(ctk.CTkToplevel):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  YouTubeAccountManagerWindow
+# ═══════════════════════════════════════════════════════════════════════════════
+class YouTubeAccountManagerWindow(ctk.CTkToplevel):
+    def __init__(self, master, on_close_callback=None):
+        super().__init__(master)
+        self.title("Quản lý Tài khoản (YouTube)")
+        self.geometry("550x550")
+        self.on_close_callback = on_close_callback
+        
+        self.transient(master)
+        self.grab_set()
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(self, text="Danh sách tài khoản YouTube (Token):", font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 8))
+        
+        self._list_frame = ctk.CTkScrollableFrame(self, fg_color=BG_DARK, border_color=BORDER, border_width=1)
+        self._list_frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        
+        # Secret Key input frame (File)
+        secret_frame = ctk.CTkFrame(self, fg_color="transparent")
+        secret_frame.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 8))
+        
+        ctk.CTkLabel(secret_frame, text="Client Secret (File):", font=("Segoe UI", 12)).pack(side="left")
+        self._secret_entry = ctk.CTkEntry(secret_frame, font=("Segoe UI", 11), width=250)
+        from config.settings import COOKIES_DIR
+        self._secret_entry.insert(0, str(COOKIES_DIR / "client_secret.json"))
+        self._secret_entry.pack(side="left", padx=10)
+        ctk.CTkButton(secret_frame, text="📁", width=36, height=28, fg_color=BORDER, hover_color=BG_CARD, command=self._pick_secret).pack(side="left")
+        ctk.CTkButton(secret_frame, text="Đăng nhập", fg_color=SUCCESS, hover_color="#27ae60", command=self._add_account).pack(side="left", padx=(10, 0))
+        
+        # Secret Key input frame (Paste JSON)
+        paste_frame = ctk.CTkFrame(self, fg_color="transparent")
+        paste_frame.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 8))
+        
+        ctk.CTkLabel(paste_frame, text="Hoặc dán trực tiếp code JSON:", font=("Segoe UI", 12)).pack(anchor="w")
+        self._json_textbox = ctk.CTkTextbox(paste_frame, height=80, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER, border_width=1)
+        self._json_textbox.pack(fill="x", pady=4)
+        ctk.CTkButton(paste_frame, text="Lưu JSON & Đăng nhập", fg_color=SUCCESS, hover_color="#27ae60", command=self._add_account_from_json).pack(anchor="w")
+        
+        # Bottom Buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.grid(row=4, column=0, sticky="ew", padx=16, pady=(16, 16))
+        
+        ctk.CTkButton(btn_frame, text="Đóng", fg_color=BORDER, hover_color=BG_CARD, command=self._on_close).pack(side="right")
+        
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._load_accounts()
+
+    def _pick_secret(self):
+        import os
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="Chọn file client_secret.json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if path:
+            self._secret_entry.delete(0, "end")
+            self._secret_entry.insert(0, path)
+
+    def _load_accounts(self):
+        for widget in self._list_frame.winfo_children():
+            widget.destroy()
+            
+        from config.settings import COOKIES_DIR
+        accounts = [f.name for f in COOKIES_DIR.glob("youtube_*.json")]
+            
+        for acc in accounts:
+            item = ctk.CTkFrame(self._list_frame, fg_color=BG_CARD, corner_radius=6)
+            item.pack(fill="x", pady=4, padx=4)
+            ctk.CTkLabel(item, text=acc, font=("Consolas", 12)).pack(side="left", padx=10, pady=8)
+            ctk.CTkButton(item, text="Xóa", width=50, fg_color=DANGER, hover_color="#c0392b", command=lambda a=acc: self._delete_account(a)).pack(side="right", padx=10, pady=8)
+
+    def _add_account_from_json(self):
+        json_text = self._json_textbox.get("1.0", "end").strip()
+        if not json_text:
+            from tkinter import messagebox
+            messagebox.showerror("Lỗi", "Vui lòng dán nội dung file client_secret.json vào ô trống.")
+            return
+            
+        import json
+        try:
+            json.loads(json_text)
+        except json.JSONDecodeError:
+            from tkinter import messagebox
+            messagebox.showerror("Lỗi", "Nội dung JSON không hợp lệ.")
+            return
+            
+        from config.settings import COOKIES_DIR
+        secret_path = str(COOKIES_DIR / "client_secret.json")
+        with open(secret_path, "w", encoding="utf-8") as f:
+            f.write(json_text)
+            
+        self._secret_entry.delete(0, "end")
+        self._secret_entry.insert(0, secret_path)
+        
+        # Clear textbox sau khi dùng
+        self._json_textbox.delete("1.0", "end")
+        self._add_account()
+
+    def _add_account(self):
+        secret_path = self._secret_entry.get().strip()
+        import os
+        if not os.path.exists(secret_path):
+            from tkinter import messagebox
+            messagebox.showerror("Lỗi", "Không tìm thấy file client_secret.json! Vui lòng tải từ Google Cloud Console hoặc dán code JSON vào ô bên dưới.")
+            return
+            
+        from config.settings import COOKIES_DIR
+        # Find next available youtube_X.json
+        idx = 1
+        while (COOKIES_DIR / f"youtube_{idx}.json").exists():
+            idx += 1
+        
+        new_token_name = f"youtube_{idx}.json"
+        token_path = str(COOKIES_DIR / new_token_name)
+        
+        import threading
+        
+        def _auth_thread():
+            from uploader.youtube_uploader import YouTubeUploader
+            if YouTubeUploader.authorize_new_account(secret_path, token_path):
+                self.after(0, lambda: _on_auth_success(new_token_name))
+                
+        def _on_auth_success(name):
+            from tkinter import messagebox
+            messagebox.showinfo("Thành công", f"Đã đăng nhập và lưu {name}")
+            self._load_accounts()
+            
+        t = threading.Thread(target=_auth_thread, daemon=True)
+        t.start()
+
+    def _delete_account(self, filename):
+        from tkinter import messagebox
+        if messagebox.askyesno("Xác nhận", f"Bạn có chắc chắn muốn xóa {filename}?"):
+            from config.settings import COOKIES_DIR
+            try:
+                (COOKIES_DIR / filename).unlink(missing_ok=True)
+                self._load_accounts()
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể xóa file: {e}")
+
+    def _on_close(self):
+        if self.on_close_callback:
+            self.on_close_callback()
+        self.destroy()
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Tab: Upload
 # ═══════════════════════════════════════════════════════════════════════════════
 class UploadTab(ctk.CTkFrame, TaskMixin):
@@ -1060,10 +1209,11 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.app = app
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1) # Row 3 cho danh sách video
+        self.grid_rowconfigure(3, weight=5) # Row 3 cho danh sách video (Cho cao hơn nhiều)
         self.grid_rowconfigure(5, weight=1) # Row 5 cho log widget
         self._checkboxes = {}
         self._video_accounts = {}
+        self._video_accounts_yt = {}
         self._build()
         self.after(200, self._load_videos)
 
@@ -1073,9 +1223,15 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         accounts = [f.name for f in COOKIES_DIR.glob("tiktok_*.json")]
         return accounts if accounts else ["tiktok_cookies.json"]
 
+    @staticmethod
+    def _get_youtube_accounts():
+        from config.settings import COOKIES_DIR
+        accounts = [f.name for f in COOKIES_DIR.glob("youtube_*.json")]
+        return accounts if accounts else ["youtube_1.json"]
+
     def _build(self):
         ctk.CTkLabel(
-            self, text="📤  Upload lên TikTok",
+            self, text="📤  Upload Video",
             font=("Segoe UI", 22, "bold"), text_color=TEXT_MAIN,
         ).grid(row=0, column=0, sticky="w", pady=(0, 20))
 
@@ -1099,10 +1255,22 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._sw_cleanup_upload.select()
         self._sw_cleanup_upload.grid(row=0, column=2, sticky="w", padx=(20, 16), pady=(14, 14))
 
+        # Platform Selection
+        platform_row = ctk.CTkFrame(opts, fg_color="transparent")
+        platform_row.grid(row=1, column=0, columnspan=3, sticky="w", padx=16, pady=(0, 10))
+        ctk.CTkLabel(platform_row, text="Nền tảng:", font=("Segoe UI", 12), text_color=TEXT_DIM).pack(side="left", padx=(0, 10))
+        self._sw_platform_tt = ctk.CTkSwitch(platform_row, text="TikTok", font=("Segoe UI", 12))
+        self._sw_platform_tt.select()
+        self._sw_platform_tt.pack(side="left", padx=(0, 20))
+        self._sw_platform_yt = ctk.CTkSwitch(platform_row, text="YouTube", font=("Segoe UI", 12))
+        self._sw_platform_yt.select()
+        self._sw_platform_yt.pack(side="left")
+
+        # TikTok Account Row
         acc_row = ctk.CTkFrame(opts, fg_color="transparent")
-        acc_row.grid(row=1, column=0, columnspan=3, sticky="w", padx=16, pady=(0, 14))
+        acc_row.grid(row=2, column=0, columnspan=3, sticky="w", padx=16, pady=(0, 8))
         
-        ctk.CTkLabel(acc_row, text="Tài khoản mặc định:", font=("Segoe UI", 12), text_color=TEXT_DIM).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(acc_row, text="TK TikTok mặc định:", font=("Segoe UI", 12), text_color=TEXT_DIM).pack(side="left", padx=(0, 10))
         accounts = self._get_tiktok_accounts()
         self._opt_account = ctk.CTkOptionMenu(
             acc_row, values=accounts, font=("Segoe UI", 12), width=130,
@@ -1111,18 +1279,44 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._opt_account.pack(side="left")
         
         self._btn_apply_acc = ctk.CTkButton(
-            acc_row, text="Áp dụng cho video đã chọn", width=120, font=("Segoe UI", 11),
+            acc_row, text="Áp dụng cho list", width=120, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD,
             command=self._apply_account_to_all
         )
         self._btn_apply_acc.pack(side="left", padx=(10, 0))
         
         self._btn_manage_acc = ctk.CTkButton(
-            acc_row, text="⚙ Quản lý", width=70, font=("Segoe UI", 11),
+            acc_row, text="⚙ Quản lý TikTok", width=70, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD,
             command=self._open_account_manager
         )
         self._btn_manage_acc.pack(side="left", padx=(10, 0))
+
+        # YouTube Account Row
+        yt_acc_row = ctk.CTkFrame(opts, fg_color="transparent")
+        yt_acc_row.grid(row=3, column=0, columnspan=3, sticky="w", padx=16, pady=(0, 14))
+        
+        ctk.CTkLabel(yt_acc_row, text="TK YouTube mặc định:", font=("Segoe UI", 12), text_color=TEXT_DIM).pack(side="left", padx=(0, 10))
+        yt_accounts = self._get_youtube_accounts()
+        self._opt_account_yt = ctk.CTkOptionMenu(
+            yt_acc_row, values=yt_accounts, font=("Segoe UI", 12), width=130,
+            fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
+        )
+        self._opt_account_yt.pack(side="left")
+        
+        self._btn_apply_acc_yt = ctk.CTkButton(
+            yt_acc_row, text="Áp dụng cho list", width=120, font=("Segoe UI", 11),
+            fg_color=BORDER, hover_color=BG_CARD,
+            command=self._apply_account_to_all_yt
+        )
+        self._btn_apply_acc_yt.pack(side="left", padx=(10, 0))
+        
+        self._btn_manage_acc_yt = ctk.CTkButton(
+            yt_acc_row, text="⚙ Quản lý YouTube", width=70, font=("Segoe UI", 11),
+            fg_color=BORDER, hover_color=BG_CARD,
+            command=self._open_youtube_account_manager
+        )
+        self._btn_manage_acc_yt.pack(side="left", padx=(10, 0))
 
         # Danh sách chọn video
         list_header = ctk.CTkFrame(self, fg_color="transparent")
@@ -1133,7 +1327,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkButton(list_header, text="⏪ Về Process", width=100, height=24, fg_color="#f39c12", hover_color="#e67e22", command=self._revert_to_process).pack(side="right", padx=(0, 10))
         ctk.CTkButton(list_header, text="☑ Chọn / Bỏ chọn", width=110, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._toggle_selection).pack(side="right", padx=(0, 10))
         
-        self._video_list_frame = ctk.CTkScrollableFrame(self, fg_color=BG_DARK, border_color=BORDER, border_width=1)
+        self._video_list_frame = ctk.CTkScrollableFrame(self, fg_color=BG_DARK, border_color=BORDER, border_width=1, height=450)
         self._video_list_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 12))
 
         # Buttons
@@ -1152,7 +1346,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._status_badge.pack(side="left")
 
         # Log
-        self._log_widget = LogWidget(self)
+        self._log_widget = LogWidget(self, height=120)
         self._log_widget.grid(row=5, column=0, sticky="nsew")
 
     def _load_videos(self):
@@ -1161,6 +1355,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             widget.destroy()
         self._checkboxes.clear()
         self._video_accounts.clear()
+        self._video_accounts_yt.clear()
         self._custom_captions = {}
 
         from database.db_manager import DatabaseManager
@@ -1207,12 +1402,12 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                         command=lambda p=path: os.startfile(p) if os.name == 'nt' else None
                     ).pack(side="left", padx=(0, 15))
                 
-            ctk.CTkLabel(acc_frame, text="Tài khoản:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=5)
+            ctk.CTkLabel(acc_frame, text="TT:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(5, 2))
             
             accounts = self._get_tiktok_accounts()
             opt_acc = ctk.CTkOptionMenu(
                 acc_frame, values=accounts, font=("Segoe UI", 11),
-                width=130, fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
+                width=110, fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
             )
             opt_acc.pack(side="left")
             
@@ -1220,6 +1415,22 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             if global_acc in accounts:
                 opt_acc.set(global_acc)
                 
+            self._video_accounts[vid] = opt_acc
+
+            ctk.CTkLabel(acc_frame, text="YT:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(10, 2))
+            
+            yt_accounts = self._get_youtube_accounts()
+            opt_acc_yt = ctk.CTkOptionMenu(
+                acc_frame, values=yt_accounts, font=("Segoe UI", 11),
+                width=110, fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
+            )
+            opt_acc_yt.pack(side="left")
+            
+            global_acc_yt = getattr(self, "_opt_account_yt", None)
+            if global_acc_yt and global_acc_yt.get() in yt_accounts:
+                opt_acc_yt.set(global_acc_yt.get())
+                
+            self._video_accounts_yt[vid] = opt_acc_yt
             self._video_accounts[vid] = opt_acc
 
             # Thông tin video (pack sau, expand=True)
@@ -1235,15 +1446,17 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
 
             # Editable caption
             title = uploader_dummy._generate_caption(video)
-            caption_var = ctk.StringVar(value=title)
-            self._custom_captions[vid] = caption_var
             
-            entry = ctk.CTkEntry(
-                info_frame, textvariable=caption_var, 
+            textbox = ctk.CTkTextbox(
+                info_frame, 
                 font=("Segoe UI", 13), text_color=TEXT_MAIN,
-                fg_color=BG_DARK, border_color=BORDER, height=28
+                fg_color=BG_DARK, border_color=BORDER, height=60,
+                wrap="word"
             )
-            entry.pack(fill="x", pady=(2, 0), padx=(0, 10))
+            textbox.insert("1.0", title)
+            textbox.pack(fill="x", pady=(2, 0), padx=(0, 10))
+            
+            self._custom_captions[vid] = textbox
             
             # Kiểm tra dung lượng
             size_mb = 0
@@ -1317,54 +1530,94 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             self._on_task_done()
             return
             
-        custom_captions_dict = {vid: var.get() for vid, var in self._custom_captions.items()}
-        video_accounts_dict = {vid: opt.get() for vid, opt in self._video_accounts.items()}
+        custom_captions_dict = {vid: tb.get("1.0", "end-1c") for vid, tb in self._custom_captions.items()}
+        video_accounts_tt_dict = {vid: opt.get() for vid, opt in self._video_accounts.items()}
+        video_accounts_yt_dict = {vid: opt.get() for vid, opt in self._video_accounts_yt.items()}
         cleanup_upload = self._sw_cleanup_upload.get() == 1
+        
+        do_tt = self._sw_platform_tt.get() == 1
+        do_yt = self._sw_platform_yt.get() == 1
+        
+        if not do_tt and not do_yt:
+            self._log("Vui lòng chọn ít nhất 1 nền tảng để upload!", "WARNING")
+            self._on_task_done()
+            return
         
         # Override limit bằng đúng số lượng video được chọn để đảm bảo up đủ
         limit = len(selected_vids)
         
-        self._run_in_thread(self._do_upload, limit, selected_vids, custom_captions_dict, video_accounts_dict, cleanup_upload)
+        self._run_in_thread(self._do_upload, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, cleanup_upload, do_tt, do_yt)
 
-    async def _async_upload_groups(self, limit, account_groups, custom_captions_dict):
-        from uploader.tiktok_uploader import TikTokUploader
+    async def _async_upload_groups(self, limit, account_groups_tt, account_groups_yt, custom_captions_dict, do_tt, do_yt):
         from database.db_manager import DatabaseManager
         from config.settings import COOKIES_DIR
-        
         db = DatabaseManager()
         
-        total_uploaded = 0
-        for account_file, vids in account_groups.items():
-            if total_uploaded >= limit:
-                break
+        if do_tt:
+            from uploader.tiktok_uploader import TikTokUploader
+            total_uploaded = 0
+            for account_file, vids in account_groups_tt.items():
+                if total_uploaded >= limit:
+                    break
+                    
+                vids_to_upload = vids[:limit - total_uploaded]
                 
-            vids_to_upload = vids[:limit - total_uploaded]
-            
-            self._log(f"Bắt đầu upload {len(vids_to_upload)} video cho tài khoản {account_file}...", "INFO")
-            cookies_path = str(COOKIES_DIR / account_file)
-            uploader = TikTokUploader(db=db, cookies_file=cookies_path)
-            
-            # Lọc ra các caption cho các video đang chuẩn bị upload
-            captions_to_pass = {
-                vid: custom_captions_dict[vid] 
-                for vid in vids_to_upload if vid in custom_captions_dict
-            }
-            
-            try:
-                results = await uploader.upload_pending_videos(
-                    limit=len(vids_to_upload), 
-                    video_ids=vids_to_upload,
-                    custom_captions=captions_to_pass
-                )
-                total_uploaded += len(results)
-                self._log(f"✅ Upload xong {len(results)} videos cho {account_file}!", "SUCCESS")
-            except Exception as e:
-                self._log(f"Lỗi upload {account_file}: {e}", "ERROR")
-            finally:
-                await uploader.close()
+                self._log(f"Bắt đầu upload {len(vids_to_upload)} video lên TikTok bằng {account_file}...", "INFO")
+                cookies_path = str(COOKIES_DIR / account_file)
+                uploader = TikTokUploader(db=db, cookies_file=cookies_path)
+                
+                captions_to_pass = {
+                    vid: custom_captions_dict[vid] 
+                    for vid in vids_to_upload if vid in custom_captions_dict
+                }
+                
+                try:
+                    results = await uploader.upload_pending_videos(
+                        limit=len(vids_to_upload), 
+                        video_ids=vids_to_upload,
+                        custom_captions=captions_to_pass
+                    )
+                    total_uploaded += len(results)
+                    self._log(f"✅ Upload xong {len(results)} videos lên TikTok ({account_file})!", "SUCCESS")
+                except Exception as e:
+                    self._log(f"Lỗi upload TikTok {account_file}: {e}", "ERROR")
+                finally:
+                    await uploader.close()
+
+        if do_yt:
+            from uploader.youtube_uploader import YouTubeUploader
+            total_uploaded = 0
+            for account_file, vids in account_groups_yt.items():
+                if total_uploaded >= limit:
+                    break
+                    
+                vids_to_upload = vids[:limit - total_uploaded]
+                
+                self._log(f"Bắt đầu upload {len(vids_to_upload)} video lên YouTube bằng {account_file}...", "INFO")
+                token_path = str(COOKIES_DIR / account_file)
+                yt_uploader = YouTubeUploader(db=db, token_file=token_path)
+                
+                captions_to_pass = {
+                    vid: custom_captions_dict[vid] 
+                    for vid in vids_to_upload if vid in custom_captions_dict
+                }
+                
+                try:
+                    results = await yt_uploader.upload_pending_videos(
+                        limit=len(vids_to_upload), 
+                        video_ids=vids_to_upload,
+                        custom_captions=captions_to_pass
+                    )
+                    total_uploaded += len(results)
+                    self._log(f"✅ Upload xong {len(results)} videos lên YouTube ({account_file})!", "SUCCESS")
+                except Exception as e:
+                    self._log(f"Lỗi upload YouTube {account_file}: {e}", "ERROR")
+                finally:
+                    await yt_uploader.close()
                 
         self.after(0, self._load_videos)
         self._on_task_done()
+
 
     def _apply_account_to_all(self):
         selected = self._opt_account.get()
@@ -1393,19 +1646,56 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             elif curr not in accounts:
                 opt.set(accounts[0])
 
-    def _do_upload(self, limit, selected_vids, custom_captions_dict, video_accounts_dict, cleanup_upload):
-        from config.settings import TIKTOK_CONFIG
-        TIKTOK_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
+    def _apply_account_to_all_yt(self):
+        selected = self._opt_account_yt.get()
+        for vid, opt in self._video_accounts_yt.items():
+            if self._checkboxes[vid].get():
+                opt.set(selected)
 
-        account_groups = {}
+    def _open_youtube_account_manager(self):
+        YouTubeAccountManagerWindow(self, on_close_callback=self._refresh_youtube_accounts)
+
+    def _refresh_youtube_accounts(self):
+        accounts = self._get_youtube_accounts()
+        self._opt_account_yt.configure(values=accounts)
+        
+        current_global = self._opt_account_yt.get()
+        if not accounts:
+            self._opt_account_yt.set("")
+        elif current_global not in accounts:
+            self._opt_account_yt.set(accounts[0])
+            
+        for opt in self._video_accounts_yt.values():
+            opt.configure(values=accounts)
+            curr = opt.get()
+            if not accounts:
+                opt.set("")
+            elif curr not in accounts:
+                opt.set(accounts[0])
+
+    def _do_upload(self, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, cleanup_upload, do_tt, do_yt):
+        from config.settings import TIKTOK_CONFIG, YOUTUBE_CONFIG
+        TIKTOK_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
+        YOUTUBE_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
+
+        account_groups_tt = {}
+        account_groups_yt = {}
+        
         for vid in selected_vids:
-            acc = video_accounts_dict.get(vid)
-            if acc not in account_groups:
-                account_groups[acc] = []
-            account_groups[acc].append(vid)
+            if do_tt:
+                acc_tt = video_accounts_tt_dict.get(vid)
+                if acc_tt not in account_groups_tt:
+                    account_groups_tt[acc_tt] = []
+                account_groups_tt[acc_tt].append(vid)
+            
+            if do_yt:
+                acc_yt = video_accounts_yt_dict.get(vid)
+                if acc_yt not in account_groups_yt:
+                    account_groups_yt[acc_yt] = []
+                account_groups_yt[acc_yt].append(vid)
 
         import asyncio
-        asyncio.run(self._async_upload_groups(limit, account_groups, custom_captions_dict))
+        asyncio.run(self._async_upload_groups(limit, account_groups_tt, account_groups_yt, custom_captions_dict, do_tt, do_yt))
 
     def _on_task_done(self):
         self.after(0, lambda: self._btn_upload.configure(state="normal"))
@@ -1494,21 +1784,38 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         self._sw_cleanup_auto.pack(side="left")
 
         # Account selection
-        ctk.CTkLabel(cfg, text="Tài khoản", font=("Segoe UI", 12),
-                     text_color=TEXT_DIM).grid(row=4, column=0, sticky="w", padx=16, pady=(4, 14))
+        acc_frame = ctk.CTkFrame(cfg, fg_color="transparent")
+        acc_frame.grid(row=4, column=0, columnspan=3, sticky="w", padx=16, pady=(4, 14))
+
+        ctk.CTkLabel(acc_frame, text="TikTok:", font=("Segoe UI", 12), text_color=TEXT_DIM).pack(side="left", padx=(0, 10))
         accounts = UploadTab._get_tiktok_accounts()
         self._opt_account = ctk.CTkOptionMenu(
-            cfg, values=accounts, font=("Segoe UI", 12),
+            acc_frame, values=accounts, font=("Segoe UI", 12), width=120,
             fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
         )
-        self._opt_account.grid(row=4, column=1, sticky="w", padx=(0, 16), pady=(4, 14))
+        self._opt_account.pack(side="left")
         
         self._btn_manage_acc = ctk.CTkButton(
-            cfg, text="⚙ Quản lý", width=70, font=("Segoe UI", 11),
+            acc_frame, text="⚙ Quản lý", width=70, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD,
             command=self._open_account_manager
         )
-        self._btn_manage_acc.grid(row=4, column=2, sticky="w", padx=(0, 16), pady=(4, 14))
+        self._btn_manage_acc.pack(side="left", padx=(10, 20))
+
+        ctk.CTkLabel(acc_frame, text="YouTube:", font=("Segoe UI", 12), text_color=TEXT_DIM).pack(side="left", padx=(0, 10))
+        yt_accounts = UploadTab._get_youtube_accounts()
+        self._opt_account_yt = ctk.CTkOptionMenu(
+            acc_frame, values=yt_accounts, font=("Segoe UI", 12), width=120,
+            fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
+        )
+        self._opt_account_yt.pack(side="left")
+        
+        self._btn_manage_acc_yt = ctk.CTkButton(
+            acc_frame, text="⚙ Quản lý YT", width=70, font=("Segoe UI", 11),
+            fg_color=BORDER, hover_color=BG_CARD,
+            command=self._open_youtube_account_manager
+        )
+        self._btn_manage_acc_yt.pack(side="left", padx=(10, 0))
 
         # Buttons
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
@@ -1551,6 +1858,19 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         else:
             self._opt_account.set("")
 
+    def _open_youtube_account_manager(self):
+        YouTubeAccountManagerWindow(self, on_close_callback=self._refresh_youtube_accounts)
+
+    def _refresh_youtube_accounts(self):
+        accounts = UploadTab._get_youtube_accounts()
+        self._opt_account_yt.configure(values=accounts)
+        if accounts:
+            current = self._opt_account_yt.get()
+            if current not in accounts:
+                self._opt_account_yt.set(accounts[0])
+        else:
+            self._opt_account_yt.set("")
+
     def _browse(self):
         path = filedialog.askopenfilename(
             title="Chọn file URLs",
@@ -1572,23 +1892,31 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         file_path = self._entry_file.get().strip() or "urls.txt"
         once      = self._mode_var.get() == "once"
         account_file = self._opt_account.get()
-        self._run_in_thread(self._do_auto, file_path, once, account_file)
+        account_file_yt = getattr(self, "_opt_account_yt", None)
+        account_file_yt = account_file_yt.get() if account_file_yt else None
+        
+        self._run_in_thread(self._do_auto, file_path, once, account_file, account_file_yt)
 
-    def _do_auto(self, file_path, once, account_file):
+    def _do_auto(self, file_path, once, account_file, account_file_yt):
         from scheduler.scheduler import AutoScheduler
-        from config.settings import SCHEDULER_CONFIG, TIKTOK_CONFIG
+        from config.settings import SCHEDULER_CONFIG, TIKTOK_CONFIG, YOUTUBE_CONFIG
         
         # Cập nhật config từ UI
         try:
             SCHEDULER_CONFIG["post_times"] = [t.strip() for t in self._entry_times.get().split(",")]
-            TIKTOK_CONFIG["max_posts_per_day"] = int(self._entry_auto_limit.get() or 4)
-            TIKTOK_CONFIG["auto_cleanup_after_upload"] = self._sw_cleanup_auto.get() == 1
+            max_limit = int(self._entry_auto_limit.get() or 4)
+            TIKTOK_CONFIG["max_posts_per_day"] = max_limit
+            YOUTUBE_CONFIG["max_posts_per_day"] = max_limit
+            
+            cleanup = self._sw_cleanup_auto.get() == 1
+            TIKTOK_CONFIG["auto_cleanup_after_upload"] = cleanup
+            YOUTUBE_CONFIG["auto_cleanup_after_upload"] = cleanup
         except Exception as e:
             self._log(f"Lỗi parse cấu hình: {e}", "WARNING")
             
         urls = Path(file_path).read_text(encoding="utf-8").strip().splitlines()
         urls = [u.strip() for u in urls if u.strip() and not u.startswith("#")]
-        scheduler = AutoScheduler(douyin_urls=urls, account_file=account_file)
+        scheduler = AutoScheduler(douyin_urls=urls, tt_account_file=account_file, yt_account_file=account_file_yt)
         if once:
             import asyncio
             asyncio.run(scheduler.run_once())

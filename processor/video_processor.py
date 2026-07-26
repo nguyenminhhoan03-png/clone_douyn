@@ -198,7 +198,7 @@ class VideoProcessor:
                     
                 if mixed:
                     inputs.extend(["-i", str(mixed_audio_path)])
-                    final_audio_input_idx = (len(inputs) - 1) // 2
+                    final_audio_input_idx = inputs.count("-i") - 1
                     has_dubbing = True
                     logger.debug(f"  ✓ AI Dubbing applied")
                     
@@ -210,7 +210,7 @@ class VideoProcessor:
             music_path = self._get_random_music()
             if music_path:
                 inputs.extend(["-stream_loop", "-1", "-i", music_path])
-                final_audio_input_idx = (len(inputs) - 1) // 2
+                final_audio_input_idx = inputs.count("-i") - 1
                 logger.debug("  ✓ Audio replaced with Vietnamese music")
 
         # 8. Logo Watermark Input (Nếu có cấu hình Logo)
@@ -218,11 +218,11 @@ class VideoProcessor:
         logo_path = yt_cfg.get("logo_path")
         if logo_path and Path(logo_path).exists():
             inputs.extend(["-i", str(logo_path)])
-            logo_input_idx = (len(inputs) - 1) // 2
+            logo_input_idx = inputs.count("-i") - 1
             logger.info(f"  🏷️ YouTube Bypass: Adding Logo Watermark ({Path(logo_path).name})")
                 
         # Xây dựng lệnh FFmpeg cuối cùng
-        cmd = ["ffmpeg"] + inputs
+        cmd = ["ffmpeg", "-y"] + inputs
         
         # Build filter complex
         filter_complex = ""
@@ -262,9 +262,9 @@ class VideoProcessor:
             filter_complex += f"[{last_vid_pad}][scaled_logo]overlay={overlay_xy}[vout];"
         else:
             if last_vid_pad != "0:v":
-                filter_complex += f"[{last_vid_pad}]copy[vout];"
+                filter_complex += f"[{last_vid_pad}]null[vout];"
             else:
-                filter_complex += f"[0:v]copy[vout];"
+                filter_complex += f"[0:v]null[vout];"
             
         if audio_filters:
             filter_complex += f"[{final_audio_input_idx}:a]{','.join(audio_filters)}[aout]"

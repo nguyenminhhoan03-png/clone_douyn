@@ -226,3 +226,60 @@ def translate_srt_with_gemini(payload_text: str, api_key: str) -> str:
     except Exception as e:
         logger.error(f"Lỗi khi dịch bằng Gemini: {e}")
         return None
+
+def generate_youtube_metadata_with_gemini(original_title: str, api_keys: list) -> dict:
+    """Sử dụng Gemini để tạo Tiêu đề Clickbait và SEO Description/Tags cho YouTube Shorts."""
+    import json
+    import time
+    from loguru import logger
+    
+    prompt = (
+        "Bạn là chuyên gia SEO YouTube Shorts và Viral Marketing tại Việt Nam. "
+        "Dựa vào nội dung gốc tiếng Trung sau đây, hãy sáng tạo siêu dữ liệu "
+        "(metadata) cho video YouTube Shorts để tối đa hóa lượt xem (giật tít, gây tò mò, bắt trend GenZ).\n\n"
+        f"Nội dung gốc: {original_title}\n\n"
+        "YÊU CẦU BẮT BUỘC:\n"
+        "1. Tiêu đề (title): Dưới 80 ký tự, phải siêu giật tít, có 1-2 emoji nổi bật.\n"
+        "2. Mô tả (description): 2-3 câu ngắn gọn, kêu gọi tương tác (vd: Nhớ Đăng ký kênh nhé).\n"
+        "3. Tags (tags): 5-7 hashtag tiếng Việt hoặc tiếng Anh không dấu, viết liền (không có dấu #).\n"
+        "4. CHỈ TRẢ VỀ JSON hợp lệ với định dạng chính xác như sau (không kèm markdown, không giải thích):\n"
+        '{"title": "...", "description": "...", "tags": ["...", "..."]}'
+    )
+    
+    for attempt, api_key in enumerate(api_keys):
+        try:
+            try:
+                from google import genai
+                client = genai.Client(api_key=api_key)
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt
+                )
+            except ImportError:
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=FutureWarning)
+                    import google.generativeai as gen_ai
+                gen_ai.configure(api_key=api_key)
+                model = gen_ai.GenerativeModel('gemini-2.5-flash')
+                response = model.generate_content(prompt)
+                
+            if response and response.text:
+                text = response.text.strip()
+                if text.startswith("```json"):
+                    text = text[7:]
+                elif text.startswith("```"):
+                    text = text[3:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                    
+                data = json.loads(text.strip())
+                if "title" in data and "description" in data and "tags" in data:
+                    logger.info("✅ Đã tạo YouTube SEO Metadata bằng Gemini thành công!")
+                    return data
+        except Exception as e:
+            logger.warning(f"Lỗi tạo YT Metadata bằng Gemini (Key {attempt+1}): {e}")
+            time.sleep(2)
+            
+    logger.error("❌ Tất cả Gemini keys đều lỗi khi tạo YT Metadata.")
+    return None

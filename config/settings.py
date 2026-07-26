@@ -80,6 +80,21 @@ TIKTOK_CONFIG = {
 }
 
 # ============================================================
+# YOUTUBE UPLOADER CONFIG
+# ============================================================
+YOUTUBE_CONFIG = {
+    # Default Client Secret
+    "client_secret_file": COOKIES_DIR / "client_secret.json",
+    # Upload settings
+    "max_posts_per_day": 5,
+    "default_privacy": "public",  # public, unlisted, private
+    "default_category": "22",      # 22 = People & Blogs
+    "default_tags": ["shorts", "viral", "trending", "xuhuong"],
+    "default_description_template": "{title}\n\n#shorts #viral #trending #xuhuong",
+    "auto_cleanup_after_upload": True,
+}
+
+# ============================================================
 # VIDEO PROCESSOR CONFIG
 # ============================================================
 PROCESSOR_CONFIG = {
