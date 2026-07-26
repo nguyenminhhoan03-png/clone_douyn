@@ -9,7 +9,7 @@ yt-dlp>=2024.1.0
 edge-tts>=6.1.0
 pysrt>=1.1.2
 faster-whisper>=1.0.0
-audioop-lts>=0.0.1
+audioop-lts>=0.0.1; python_version >= '3.13'
 google-api-python-client>=2.0.0
 google-auth-oauthlib>=1.0.0
 google-auth-httplib2>=0.1.0
