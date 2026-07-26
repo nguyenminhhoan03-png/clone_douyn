@@ -25,6 +25,7 @@ class DouyinCrawler:
         self.headers = DOUYIN_CONFIG["headers"].copy()
         self.proxy = DOUYIN_CONFIG.get("proxy")
         self.delay_range = DOUYIN_CONFIG["request_delay"]
+        self.current_username = None
 
     def _random_delay(self):
         """Random delay giữa các request."""
@@ -260,7 +261,7 @@ class DouyinCrawler:
 
         logger.info(f"Video ID: {video_id} | URL: {video_url}")
 
-        if self.db.is_duplicate(video_id):
+        if self.db.is_duplicate(video_id, username=self.current_username):
             logger.info(f"Video already crawled: {video_id}")
             return None
 
@@ -556,6 +557,7 @@ class DouyinCrawler:
             tags=video_info["tags"],
             download_path=download_path,
             duration=video_info["duration"],
+            username=self.current_username,
         )
 
         if row_id > 0:
@@ -650,7 +652,7 @@ class DouyinCrawler:
                         
                         video_url = f"https://www.douyin.com/video/{aweme.get('aweme_id', '')}"
                         video_id = str(aweme.get("aweme_id", ""))
-                        if self.db.is_duplicate(video_id): continue
+                        if self.db.is_duplicate(video_id, username=self.current_username): continue
                         
                         video_data = await self.get_video_info(video_url)
                         if not video_data: continue
@@ -666,6 +668,7 @@ class DouyinCrawler:
                                 tags=video_data["tags"],
                                 download_path=download_path,
                                 duration=video_data["duration"],
+                                username=self.current_username,
                             )
                             self.db.update_video_status(video_data["video_id"], "downloaded")
                             video_data["download_path"] = download_path
@@ -678,10 +681,12 @@ class DouyinCrawler:
         logger.info(f"Finished crawling user profile: {len(results)} videos")
         return results
 
-def crawl_videos_sync(urls: list) -> list:
+def crawl_videos_sync(urls: list, username: str = None) -> list:
     crawler = DouyinCrawler()
+    crawler.current_username = username
     return asyncio.run(crawler.crawl_multiple_videos(urls))
 
-def crawl_profile_sync(user_url: str, max_videos: int = 10) -> list:
+def crawl_profile_sync(user_url: str, max_videos: int = 10, username: str = None) -> list:
     crawler = DouyinCrawler()
+    crawler.current_username = username
     return asyncio.run(crawler.crawl_user_profile(user_url, max_videos))

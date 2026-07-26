@@ -1,9 +1,10 @@
-FROM python:3.14.5-slim
+FROM python:3.10-slim
 
 WORKDIR /app
 
-# Cài đặt ffmpeg (để xử lý video) và các font chữ (để chèn text tiếng Việt/Trung)
+# Cài đặt gcc, ffmpeg và các thư viện cần thiết
 RUN apt-get update && apt-get install -y \
+    gcc build-essential libffi-dev \
     ffmpeg \
     fonts-noto \
     fonts-noto-cjk \
@@ -11,13 +12,19 @@ RUN apt-get update && apt-get install -y \
 
 COPY requirements.txt .
 
-# Cài đặt thư viện Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Cài đặt Chromium và các thư viện cần thiết cho Playwright (để tự động upload)
+# Cài đặt Playwright và Chromium
 RUN playwright install chromium --with-deps
 
+# Copy toàn bộ mã nguồn vào Docker
 COPY . .
 
-# Chạy bằng giao diện dòng lệnh (CLI) vì VPS không có màn hình GUI
+# Tạo thư mục database nếu chưa có
+RUN mkdir -p database
+
+# Expose port cho backend
+EXPOSE 8000
+
+# Mặc định chạy command nào đó (có thể ghi đè trong docker-compose)
 CMD ["python", "main.py", "status"]

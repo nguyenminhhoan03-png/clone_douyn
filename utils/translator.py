@@ -178,9 +178,9 @@ def build_vietnamese_caption(title: str, tags: str,
 
 def translate_srt_with_gemini(payload_text: str, api_key: str) -> str:
     """
-    Dịch text payload (dạng ID|text) bằng Google Gemini để đảm bảo chuẩn ngữ cảnh.
-    Tránh tuyệt đối việc Gemini làm hỏng timestamp của file SRT gốc.
+    Dịch text payload (dạng ID|text) thông qua SaaS Backend.
     """
+    from auth_client import auth_client
     try:
         prompt = (
             "Bạn là chuyên gia Review Phim/Video ngắn TikTok chuyên nghiệp tại Việt Nam.\n"
@@ -196,42 +196,24 @@ def translate_srt_with_gemini(payload_text: str, api_key: str) -> str:
             f"{payload_text}"
         )
         
-        logger.info("Đang gửi danh sách text cho Gemini phân tích ngữ cảnh...")
+        logger.info("Đang gửi danh sách text lên Backend Proxy (Gemini)...")
         
-        try:
-            # Thử dùng thư viện mới nhất của Google (google-genai)
-            from google import genai
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt
-            )
-        except ImportError:
-            # Fallback về thư viện cũ (google-generativeai) và ẩn cảnh báo FutureWarning
-            import warnings
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", category=FutureWarning)
-                import google.generativeai as gen_ai
-                
-            gen_ai.configure(api_key=api_key)
-            model = gen_ai.GenerativeModel('gemini-2.5-flash')
-            response = model.generate_content(prompt)
-        
-        if response and response.text:
+        text = auth_client.generate_ai(prompt)
+        if text:
             logger.info("Gemini đã dịch xong kịch bản (Chuẩn ngữ cảnh 100%)")
-            return response.text.strip()
+            return text.strip()
         else:
             logger.warning("Gemini trả về rỗng, fallback về bản gốc.")
             return payload_text
     except Exception as e:
-        logger.error(f"Lỗi khi dịch bằng Gemini: {e}")
+        logger.error(f"Lỗi khi dịch bằng Gemini Proxy: {e}")
         return None
 
 def generate_youtube_metadata_with_gemini(original_title: str, api_keys: list) -> dict:
-    """Sử dụng Gemini để tạo Tiêu đề Clickbait và SEO Description/Tags cho YouTube Shorts."""
+    """Sử dụng Gemini (qua SaaS Backend) để tạo Tiêu đề Clickbait và SEO Metadata."""
     import json
-    import time
     from loguru import logger
+    from auth_client import auth_client
     
     prompt = (
         "Bạn là chuyên gia SEO YouTube Shorts và Viral Marketing tại Việt Nam. "
@@ -246,40 +228,20 @@ def generate_youtube_metadata_with_gemini(original_title: str, api_keys: list) -
         '{"title": "...", "description": "...", "tags": ["...", "..."]}'
     )
     
-    for attempt, api_key in enumerate(api_keys):
-        try:
-            try:
-                from google import genai
-                client = genai.Client(api_key=api_key)
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=prompt
-                )
-            except ImportError:
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", category=FutureWarning)
-                    import google.generativeai as gen_ai
-                gen_ai.configure(api_key=api_key)
-                model = gen_ai.GenerativeModel('gemini-2.5-flash')
-                response = model.generate_content(prompt)
-                
-            if response and response.text:
-                text = response.text.strip()
-                if text.startswith("```json"):
-                    text = text[7:]
-                elif text.startswith("```"):
-                    text = text[3:]
-                if text.endswith("```"):
-                    text = text[:-3]
-                    
-                data = json.loads(text.strip())
-                if "title" in data and "description" in data and "tags" in data:
-                    logger.info("✅ Đã tạo YouTube SEO Metadata bằng Gemini thành công!")
-                    return data
-        except Exception as e:
-            logger.warning(f"Lỗi tạo YT Metadata bằng Gemini (Key {attempt+1}): {e}")
-            time.sleep(2)
+    try:
+        text = auth_client.generate_ai(prompt)
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
             
-    logger.error("❌ Tất cả Gemini keys đều lỗi khi tạo YT Metadata.")
+        data = json.loads(text.strip())
+        if "title" in data and "description" in data and "tags" in data:
+            logger.info("✅ Đã tạo YouTube SEO Metadata bằng Gemini thành công!")
+            return data
+    except Exception as e:
+        logger.warning(f"Lỗi tạo YT Metadata qua Backend Proxy: {e}")
+        
     return None

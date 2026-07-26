@@ -91,13 +91,14 @@ class DatabaseManager:
                 conn.commit()
                 logger.info("Migration: Added title_vi column")
                 
-            # Migration: thêm cột platform vào posted_videos
+            # Migration: thêm cột username
             try:
-                cursor.execute("SELECT platform FROM posted_videos LIMIT 1")
+                cursor.execute("SELECT username FROM crawled_videos LIMIT 1")
             except sqlite3.OperationalError:
-                cursor.execute("ALTER TABLE posted_videos ADD COLUMN platform TEXT DEFAULT 'tiktok'")
+                cursor.execute("ALTER TABLE crawled_videos ADD COLUMN username TEXT")
+                cursor.execute("ALTER TABLE posted_videos ADD COLUMN username TEXT")
                 conn.commit()
-                logger.info("Migration: Added platform column to posted_videos")
+                logger.info("Migration: Added username column")
 
             logger.info(f"Database initialized at: {self.db_path}")
         finally:
@@ -110,16 +111,16 @@ class DatabaseManager:
     def add_crawled_video(self, video_id: str, source_url: str, title: str = None,
                           author: str = None, music_title: str = None,
                           tags: str = None, download_path: str = None,
-                          duration: float = None) -> int:
+                          duration: float = None, username: str = None) -> int:
         """Thêm video đã crawl vào database. Trả về row id."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR IGNORE INTO crawled_videos 
-                (video_id, source_url, title, author, music_title, tags, download_path, duration)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (video_id, source_url, title, author, music_title, tags, download_path, duration))
+                (video_id, source_url, title, author, music_title, tags, download_path, duration, username)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (video_id, source_url, title, author, music_title, tags, download_path, duration, username))
             conn.commit()
 
             if cursor.rowcount > 0:
@@ -132,12 +133,15 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def is_duplicate(self, video_id: str) -> bool:
+    def is_duplicate(self, video_id: str, username: str = None) -> bool:
         """Kiểm tra video đã tồn tại trong database chưa."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM crawled_videos WHERE video_id = ?", (video_id,))
+            if username:
+                cursor.execute("SELECT 1 FROM crawled_videos WHERE video_id = ? AND username = ?", (video_id, username))
+            else:
+                cursor.execute("SELECT 1 FROM crawled_videos WHERE video_id = ?", (video_id,))
             return cursor.fetchone() is not None
         finally:
             conn.close()
@@ -184,51 +188,64 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_pending_videos(self, limit: int = 5) -> list:
+    def get_pending_videos(self, limit: int = 5, username: str = None) -> list:
         """Lấy danh sách video đã processed, chưa post."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("""
+            query = """
                 SELECT * FROM crawled_videos 
                 WHERE status = 'processed' 
                 AND id NOT IN (SELECT crawled_video_id FROM posted_videos WHERE status = 'posted')
-                ORDER BY crawled_at DESC
-                LIMIT ?
-            """, (limit,))
+            """
+            params = []
+            if username:
+                query += " AND username = ?"
+                params.append(username)
+            query += " ORDER BY crawled_at DESC LIMIT ?"
+            params.append(limit)
+            
+            cursor.execute(query, tuple(params))
             return [dict(row) for row in cursor.fetchall()]
         finally:
             conn.close()
 
-    def get_downloaded_videos(self, limit: int = 10) -> list:
+    def get_downloaded_videos(self, limit: int = 10, username: str = None) -> list:
         """Lấy danh sách video đã download, chưa processed."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM crawled_videos 
-                WHERE status = 'downloaded'
-                ORDER BY crawled_at DESC
-                LIMIT ?
-            """, (limit,))
+            query = "SELECT * FROM crawled_videos WHERE status = 'downloaded'"
+            params = []
+            if username:
+                query += " AND username = ?"
+                params.append(username)
+            query += " ORDER BY crawled_at DESC LIMIT ?"
+            params.append(limit)
+            
+            cursor.execute(query, tuple(params))
             return [dict(row) for row in cursor.fetchall()]
         finally:
             conn.close()
 
-    def get_all_videos(self, status: str = None, limit: int = 50) -> list:
+    def get_all_videos(self, status: str = None, limit: int = 50, username: str = None) -> list:
         """Lấy tất cả video với optional status filter."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
+            query = "SELECT * FROM crawled_videos WHERE 1=1"
+            params = []
             if status:
-                cursor.execute("""
-                    SELECT * FROM crawled_videos WHERE status = ? 
-                    ORDER BY crawled_at DESC LIMIT ?
-                """, (status, limit))
-            else:
-                cursor.execute("""
-                    SELECT * FROM crawled_videos ORDER BY crawled_at DESC LIMIT ?
-                """, (limit,))
+                query += " AND status = ?"
+                params.append(status)
+            if username:
+                query += " AND username = ?"
+                params.append(username)
+                
+            query += " ORDER BY crawled_at DESC LIMIT ?"
+            params.append(limit)
+            
+            cursor.execute(query, tuple(params))
             return [dict(row) for row in cursor.fetchall()]
         finally:
             conn.close()
@@ -238,15 +255,15 @@ class DatabaseManager:
     # ============================================================
 
     def add_posted_video(self, crawled_video_id: int, caption: str,
-                         hashtags: str, tiktok_video_id: str = None, platform: str = "tiktok") -> int:
+                         hashtags: str, tiktok_video_id: str = None, platform: str = "tiktok", username: str = None) -> int:
         """Ghi nhận video đã post lên TikTok/YouTube."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO posted_videos (crawled_video_id, caption, hashtags, tiktok_video_id, platform)
-                VALUES (?, ?, ?, ?, ?)
-            """, (crawled_video_id, caption, hashtags, tiktok_video_id, platform))
+                INSERT INTO posted_videos (crawled_video_id, caption, hashtags, tiktok_video_id, platform, username)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (crawled_video_id, caption, hashtags, tiktok_video_id, platform, username))
             conn.commit()
             self._update_daily_stats("videos_posted")
             logger.info(f"Recorded posted video: crawled_id={crawled_video_id}")
@@ -254,16 +271,19 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_today_post_count(self, platform: str = "tiktok") -> int:
+    def get_today_post_count(self, platform: str = "tiktok", username: str = None) -> int:
         """Đếm số video đã post hôm nay."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
             today = datetime.now().strftime("%Y-%m-%d")
-            cursor.execute("""
-                SELECT COUNT(*) FROM posted_videos 
-                WHERE DATE(posted_at) = ? AND status = 'posted' AND platform = ?
-            """, (today, platform))
+            query = "SELECT COUNT(*) FROM posted_videos WHERE DATE(posted_at) = ? AND status = 'posted' AND platform = ?"
+            params = [today, platform]
+            if username:
+                query += " AND username = ?"
+                params.append(username)
+                
+            cursor.execute(query, tuple(params))
             return cursor.fetchone()[0]
         finally:
             conn.close()
@@ -286,27 +306,30 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_stats(self) -> dict:
+    def get_stats(self, username: str = None) -> dict:
         """Lấy thống kê tổng quan."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
+            
+            user_filter = " AND username = ?" if username else ""
+            params = (username,) if username else ()
 
-            cursor.execute("SELECT COUNT(*) FROM crawled_videos")
+            cursor.execute(f"SELECT COUNT(*) FROM crawled_videos WHERE 1=1{user_filter}", params)
             total_crawled = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM crawled_videos WHERE status = 'processed'")
+            cursor.execute(f"SELECT COUNT(*) FROM crawled_videos WHERE status = 'processed'{user_filter}", params)
             total_processed = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM posted_videos WHERE status = 'posted'")
+            cursor.execute(f"SELECT COUNT(*) FROM posted_videos WHERE status = 'posted'{user_filter}", params)
             total_posted = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM crawled_videos WHERE status = 'downloaded'")
+            cursor.execute(f"SELECT COUNT(*) FROM crawled_videos WHERE status = 'downloaded'{user_filter}", params)
             pending_process = cursor.fetchone()[0]
 
-            pending_post = len(self.get_pending_videos(limit=100))
+            pending_post = len(self.get_pending_videos(limit=100, username=username))
 
-            today_posted = self.get_today_post_count()
+            today_posted = self.get_today_post_count(username=username)
 
             return {
                 "total_crawled": total_crawled,

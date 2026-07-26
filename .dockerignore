@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.git/
+.venv/
+venv/
+env/
+gui.py
+config/
+cookies/
+videos/
+output/
+downloads/
+assets/
+sessions/
+session.json
+*.exe
+*.zip

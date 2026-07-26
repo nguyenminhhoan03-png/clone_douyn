@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  # Chạy server Backend API
+  backend:
+    build: .
+    container_name: douyin_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    command: ["python", "backend/main.py"]
+    volumes:
+      - ./database:/app/database
+      - ./.env:/app/.env
+
+  # Chạy Tool Auto Crawl & Upload ngầm
+  worker:
+    build: .
+    container_name: douyin_worker
+    restart: always
+    # Lệnh dưới đây sẽ chạy auto theo logic trong file main.py auto
+    # Bạn có thể thêm file urls.txt và map volume nếu cần: python main.py auto --file urls.txt
+    command: ["python", "main.py", "auto"]
+    volumes:
+      - ./database:/app/database
+      - ./.env:/app/.env
+      - ./music:/app/music
+      - ./logs:/app/logs

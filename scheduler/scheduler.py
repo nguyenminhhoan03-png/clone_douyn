@@ -39,15 +39,17 @@ class AutoScheduler:
         self.uploader_yt = None
         
         from config.settings import COOKIES_DIR
+        import os
+        from pathlib import Path
         
         if tt_account_file:
-            cookies_path = str(COOKIES_DIR / tt_account_file)
-            self.uploader_tt = TikTokUploader(db=self.db, cookies_file=cookies_path)
+            cookies_path = Path(tt_account_file) if os.path.isabs(tt_account_file) else COOKIES_DIR / tt_account_file
+            self.uploader_tt = TikTokUploader(db=self.db, cookies_file=str(cookies_path))
             
         if yt_account_file:
             from uploader.youtube_uploader import YouTubeUploader
-            token_path = str(COOKIES_DIR / yt_account_file)
-            self.uploader_yt = YouTubeUploader(db=self.db, token_file=token_path)
+            token_path = Path(yt_account_file) if os.path.isabs(yt_account_file) else COOKIES_DIR / yt_account_file
+            self.uploader_yt = YouTubeUploader(db=self.db, token_file=str(token_path))
             
         self.douyin_urls = douyin_urls or []
         self.scheduler = AsyncIOScheduler(
