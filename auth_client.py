@@ -2,9 +2,13 @@ import requests
 import json
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+API_PORT = os.getenv("API_PORT", "8000")
 
 # Cấu hình API Server
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = f"http://localhost:{API_PORT}"
 SESSION_FILE = Path(__file__).parent / "config" / "session.json"
 
 class AuthClient:

@@ -16,6 +16,7 @@ Giọng hỗ trợ tiếng Việt:
 import asyncio
 import os
 import re
+import sys
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -24,14 +25,18 @@ from typing import Optional
 
 from loguru import logger
 
+# --- Sửa lỗi sập App (WinError 10054) trên Windows do ProactorEventLoop ---
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants / Tuning knobs – chỉnh ở đây, không cần sửa sâu trong code
 # ─────────────────────────────────────────────────────────────────────────────
-_MAX_CONCURRENCY = 4          # Số request edge-tts song song tối đa
-_PER_REQUEST_TIMEOUT = 20.0   # Timeout mỗi request (giây) – ngắn hơn để fail-fast
-_MAX_RETRIES = 4              # Số lần retry tối đa mỗi segment
+_MAX_CONCURRENCY = 2          # Giảm xuống 2 để tránh bị Microsoft Rate Limit / Ban IP
+_PER_REQUEST_TIMEOUT = 25.0   # Tăng nhẹ timeout
+_MAX_RETRIES = 5              # Số lần retry tối đa mỗi segment
 _CHUNK_MAX_CHARS = 150        # Câu dài hơn sẽ bị split thành nhiều chunk
-_THROTTLE_AFTER_SUCCESS = 0.3 # Ngủ nhẹ sau mỗi success để tránh rate-limit
+_THROTTLE_AFTER_SUCCESS = 1.0 # Ngủ 1s sau mỗi success để tránh spam request liên tục
 _FFMPEG_WORKERS = 4           # ThreadPoolExecutor workers cho FFmpeg atempo
 
 
@@ -249,6 +254,20 @@ async def _async_generate_voiceover(
         if not raw_text or len(raw_text) < 2:
             continue
 
+        # Phân tích Tag để chuyển đổi giọng nói (Multi-speaker Dubbing)
+        current_voice = voice if voice != "Multi" else "vi-VN-HoaiMyNeural"
+        import re
+        match = re.search(r'\[([MFNmf])\]', raw_text)
+        if match:
+            tag = match.group(1).upper()
+            if tag == 'M':
+                current_voice = "vi-VN-NamMinhNeural"
+            elif tag == 'F' or tag == 'N':
+                current_voice = "vi-VN-HoaiMyNeural"
+            
+            # Xóa tag khỏi text
+            raw_text = re.sub(r'\[[MFNmf]\]', '', raw_text).strip()
+
         start_ms = sub.start.ordinal
         end_ms = sub.end.ordinal
         segment_duration_ms = end_ms - start_ms
@@ -265,7 +284,8 @@ async def _async_generate_voiceover(
         for c_idx, chunk_text in enumerate(chunks_text):
             temp_file = os.path.join(temp_dir, f"seg_{i:04d}_c{c_idx}.mp3")
             label = f"seg{i}_c{c_idx}"
-            coro = _fetch_single_chunk(sem, edge_tts, chunk_text, voice, rate, temp_file, label)
+            # TRUYỀN current_voice THAY VÌ voice MẶC ĐỊNH CHUNG
+            coro = _fetch_single_chunk(sem, edge_tts, chunk_text, current_voice, rate, temp_file, label)
             fetch_tasks.append(coro)
             chunks.append({"text": chunk_text, "temp_file": temp_file})
 
@@ -422,19 +442,12 @@ def mix_audio_tracks(
     original_audio_path: str,
     voiceover_audio_path: str,
     output_path: str,
-    original_volume: float = 0.2,
+    original_volume: float = 0.35,
 ) -> Optional[str]:
     """
-    Mix audio gốc (giảm volume) + audio thuyết minh → 1 file audio.
-
-    Args:
-        original_audio_path: Audio gốc từ video
-        voiceover_audio_path: Audio thuyết minh TTS
-        output_path: Đường dẫn output
-        original_volume: Tỉ lệ volume audio gốc (0.0 - 1.0), default 0.2 = 20%
-
-    Returns:
-        Đường dẫn file audio đã mix
+    Mix audio gốc + audio thuyết minh → 1 file audio.
+    Sử dụng kỹ thuật Audio Ducking: Giữ nguyên 100% âm thanh gốc, 
+    chỉ hạ xuống `original_volume` (vd 35%) khi giọng AI đang nói.
     """
     try:
         import math
@@ -443,28 +456,49 @@ def mix_audio_tracks(
         original = AudioSegment.from_file(original_audio_path)
         voiceover = AudioSegment.from_mp3(voiceover_audio_path)
 
-        # Lặp nhạc nền (original) nếu nó ngắn hơn voiceover
         if len(original) < len(voiceover):
             loops_needed = (len(voiceover) // len(original)) + 1
             original = original * loops_needed
 
-        # Cắt cho bằng voiceover
         original = original[: len(voiceover)]
 
-        # Giảm volume audio gốc
+        # --- Audio Ducking Logic ---
+        # Tính toán mức giảm dB
         if original_volume > 0:
             db_reduction = 20 * math.log10(original_volume)
-            original = original + db_reduction
         else:
-            original = AudioSegment.silent(duration=len(original))
+            db_reduction = -100.0 # Mute
 
-        # Tăng volume voiceover nhẹ để rõ hơn
-        voiceover = voiceover + 3  # +3 dB
+        chunk_size_ms = 50
+        ducked_original_chunks = []
+        
+        # Ngưỡng RMS để coi là có giọng nói (im lặng thường có RMS rất thấp < 50)
+        # Tùy thuộc vào voiceover, có thể tinh chỉnh. TTS im lặng có RMS = 0
+        silence_threshold = 10 
 
-        mixed = original.overlay(voiceover)
+        for i in range(0, len(original), chunk_size_ms):
+            orig_chunk = original[i:i+chunk_size_ms]
+            vo_chunk = voiceover[i:i+chunk_size_ms]
+            
+            # Nếu voiceover có tiếng (RMS > threshold) thì hạ volume original_chunk
+            if vo_chunk.rms > silence_threshold:
+                ducked_original_chunks.append(orig_chunk + db_reduction)
+            else:
+                # Không có giọng nói -> Giữ nguyên 100% âm thanh gốc
+                ducked_original_chunks.append(orig_chunk)
+
+        # Nối lại
+        ducked_original = ducked_original_chunks[0]
+        for c in ducked_original_chunks[1:]:
+            ducked_original += c
+
+        # Tăng volume voiceover nhẹ để giọng TTS nổi bật rõ
+        voiceover = voiceover + 2.0  # +2 dB
+
+        mixed = ducked_original.overlay(voiceover)
         mixed.export(output_path, format="mp3", bitrate="192k")
 
-        logger.info(f"✅ Audio mixed: original@{original_volume*100:.0f}% + voiceover")
+        logger.info(f"✅ Audio mixed with Ducking (duck_vol={original_volume*100:.0f}%)")
         return output_path
 
     except Exception as exc:

@@ -24,12 +24,13 @@ from uploader.tiktok_uploader import TikTokUploader
 class AutoScheduler:
     """Tự động lập lịch crawl → process → upload video."""
 
-    def __init__(self, douyin_urls: list = None, tt_account_file: str = None, yt_account_file: str = None):
+    def __init__(self, douyin_urls: list = None, tt_account_file: str = None, yt_account_file: str = None, source_mode: str = "full"):
         """
         Args:
             douyin_urls: Danh sách URL Douyin để crawl
             tt_account_file: Tên file cookies của tài khoản TikTok
             yt_account_file: Tên file token của tài khoản YouTube
+            source_mode: 'full' (Crawl->Process->Upload) hoặc 'upload_only' (Chỉ Upload video đã Process)
         """
         self.db = DatabaseManager()
         self.crawler = DouyinCrawler(db=self.db)
@@ -37,6 +38,7 @@ class AutoScheduler:
         
         self.uploader_tt = None
         self.uploader_yt = None
+        self.source_mode = source_mode
         
         from config.settings import COOKIES_DIR
         import os
@@ -44,7 +46,20 @@ class AutoScheduler:
         
         if tt_account_file:
             cookies_path = Path(tt_account_file) if os.path.isabs(tt_account_file) else COOKIES_DIR / tt_account_file
-            self.uploader_tt = TikTokUploader(db=self.db, cookies_file=str(cookies_path))
+            
+            # Lấy proxy từ file
+            proxy_str = None
+            try:
+                import json
+                proxy_file = cookies_path.parent / "proxies.json"
+                if proxy_file.exists():
+                    with open(proxy_file, "r", encoding="utf-8") as f:
+                        proxies = json.load(f)
+                        proxy_str = proxies.get(cookies_path.name)
+            except Exception:
+                pass
+                
+            self.uploader_tt = TikTokUploader(db=self.db, cookies_file=str(cookies_path), proxy=proxy_str)
             
         if yt_account_file:
             from uploader.youtube_uploader import YouTubeUploader
@@ -144,15 +159,16 @@ class AutoScheduler:
     async def full_pipeline_job(self):
         """Job chạy toàn bộ pipeline: crawl → process → upload."""
         logger.info("=" * 60)
-        logger.info("🚀 FULL PIPELINE STARTED")
+        logger.info(f"🚀 PIPELINE STARTED (Mode: {self.source_mode})")
         logger.info(f"   Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 60)
 
-        # Step 1: Crawl
-        await self.crawl_job()
+        if self.source_mode == "full":
+            # Step 1: Crawl
+            await self.crawl_job()
 
-        # Step 2: Process
-        await self.process_job()
+            # Step 2: Process
+            await self.process_job()
 
         # Step 3: Upload (1 video mỗi lần)
         await self.upload_job()

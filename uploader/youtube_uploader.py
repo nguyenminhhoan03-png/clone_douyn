@@ -424,7 +424,13 @@ class YouTubeUploader:
 
             # Delay giữa các lần upload
             if i < len(videos) - 1:
-                wait_seconds = random.randint(15, 30)
+                delay_mins = self.config.get("post_delay_minutes", 0)
+                if delay_mins > 0:
+                    wait_seconds = int(delay_mins * 60)
+                    if wait_seconds > 300:
+                        wait_seconds += random.randint(-300, 300)
+                else:
+                    wait_seconds = random.randint(15, 30)
                 logger.info(f"  ⏳ Waiting {wait_seconds}s before next YouTube upload...")
                 await asyncio.sleep(wait_seconds)
 

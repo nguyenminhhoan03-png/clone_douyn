@@ -176,22 +176,34 @@ def build_vietnamese_caption(title: str, tags: str,
     caption = f"✨ {translated_title}\n\n{tags_str}"
     return caption
 
-def translate_srt_with_gemini(payload_text: str, api_key: str) -> str:
+def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bool = False) -> str:
     """
     Dịch text payload (dạng ID|text) thông qua SaaS Backend.
     """
     from auth_client import auth_client
+    from loguru import logger
     try:
+        if multi_speaker:
+            instruction = (
+                "4. NHẬN DIỆN NHÂN VẬT: Dựa vào ngữ cảnh, hãy thêm nhãn [M] (Nam), [F] (Nữ), hoặc [N] (Người kể chuyện/Không rõ) vào ngay sau dấu |. \n"
+                "Ví dụ gốc: '1|你好帅哥'\n"
+                "Ví dụ dịch: '1|[F] Chào anh đẹp trai nhé.'\n"
+            )
+        else:
+            instruction = (
+                "4. Câu văn phải ngắn gọn, súc tích, giật gân, nhịp điệu nhanh để làm giọng đọc AI.\n"
+                "5. Không dùng đại từ 'Tôi' để gọi nhân vật trừ khi đó là góc nhìn thứ nhất.\n"
+            )
+
         prompt = (
             "Bạn là chuyên gia Review Phim/Video ngắn TikTok chuyên nghiệp tại Việt Nam.\n"
             "Hãy dịch các câu tiếng Trung sau sang tiếng Việt. Yêu cầu dịch thoát ý, mượt mà, đúng ngữ cảnh mạng xã hội Việt Nam.\n"
             "YÊU CẦU BẮT BUỘC (Nếu vi phạm sẽ gây lỗi hệ thống):\n"
             "1. TUYỆT ĐỐI giữ nguyên cấu trúc 'ID|nội dung dịch'. Không thêm bớt bất kỳ dòng nào.\n"
             "2. TUYỆT ĐỐI không gộp các dòng lại với nhau.\n"
-            "3. KHÔNG dịch sát nghĩa (word-for-word) hay dịch thô máy móc. Hãy chuyển đổi từ lóng Douyin sang ngôn ngữ GenZ/TikTok Việt Nam (VD: 'tổng tài', 'trà xanh', 'cẩu lương', 'tiểu tam', 'khuê mật' -> 'bạn thân').\n"
-            "4. Câu văn phải ngắn gọn, súc tích, giật gân, nhịp điệu nhanh để làm giọng đọc AI.\n"
-            "5. Không dùng đại từ 'Tôi' để gọi nhân vật trừ khi đó là góc nhìn thứ nhất.\n"
-            "6. Không giải thích, không bình luận, CHỈ trả về danh sách đã dịch.\n\n"
+            "3. KHÔNG dịch thô. Chuyển đổi từ lóng Douyin sang ngôn ngữ TikTok Việt Nam (VD: 'tổng tài', 'khuê mật' -> 'bạn thân').\n"
+            f"{instruction}"
+            "CHÚ Ý CUỐI CÙNG: Không giải thích, không bình luận, CHỈ trả về danh sách đã dịch.\n\n"
             "Nội dung cần dịch:\n"
             f"{payload_text}"
         )
@@ -245,3 +257,36 @@ def generate_youtube_metadata_with_gemini(original_title: str, api_keys: list) -
         logger.warning(f"Lỗi tạo YT Metadata qua Backend Proxy: {e}")
         
     return None
+
+def summarize_review_with_gemini(full_transcript: str) -> str:
+    """
+    Tóm tắt toàn bộ transcript thành một kịch bản Review Phim lôi cuốn.
+    Sử dụng Gemini thông qua Backend Proxy.
+    """
+    from auth_client import auth_client
+    from loguru import logger
+    
+    prompt = (
+        "Bạn là một Reviewer phim kiêm Tiktoker hàng đầu Việt Nam. "
+        "Dựa vào đoạn hội thoại/transcript gốc của video tiếng Trung sau đây, hãy viết một kịch bản Review Phim cực kỳ lôi cuốn, giật gân, "
+        "hấp dẫn người xem ngay từ giây đầu tiên. Kịch bản này sẽ được AI đọc lên để làm thuyết minh.\n\n"
+        "YÊU CẦU BẮT BUỘC:\n"
+        "1. Kịch bản dài khoảng 200-400 chữ, tóm tắt toàn bộ cốt truyện một cách kịch tính nhất.\n"
+        "2. Sử dụng ngôn ngữ mạng, GenZ, văn phong review phim đặc trưng (ví dụ: 'Cô gái này...', 'Càng về sau...', 'Không thể ngờ...').\n"
+        "3. TRẢ VỀ ĐÚNG KỊCH BẢN, không có lời chào, không có giải thích, không có tiêu đề, không có markdown.\n\n"
+        f"Transcript gốc:\n{full_transcript}"
+    )
+    
+    try:
+        logger.info("Đang gửi toàn bộ Transcript cho Gemini để viết kịch bản Review Phim...")
+        text = auth_client.generate_ai(prompt)
+        if text:
+            logger.info("Gemini đã viết xong kịch bản Review Phim!")
+            return text.strip()
+        else:
+            logger.warning("Gemini trả về rỗng.")
+            return ""
+    except Exception as e:
+        logger.error(f"Lỗi khi viết kịch bản bằng Gemini Proxy: {e}")
+        return ""
+

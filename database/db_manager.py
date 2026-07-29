@@ -100,6 +100,14 @@ class DatabaseManager:
                 conn.commit()
                 logger.info("Migration: Added username column")
 
+            # Migration: thêm cột custom_caption
+            try:
+                cursor.execute("SELECT custom_caption FROM crawled_videos LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE crawled_videos ADD COLUMN custom_caption TEXT")
+                conn.commit()
+                logger.info("Migration: Added custom_caption column")
+
             logger.info(f"Database initialized at: {self.db_path}")
         finally:
             conn.close()
@@ -185,6 +193,20 @@ class DatabaseManager:
             )
             conn.commit()
             logger.debug(f"Saved Vietnamese title for {video_id}: {title_vi[:50]}")
+        finally:
+            conn.close()
+
+    def update_custom_caption(self, video_id: str, custom_caption: str):
+        """Lưu caption đã được người dùng chỉnh sửa thủ công."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE crawled_videos SET custom_caption = ? WHERE video_id = ?",
+                (custom_caption, video_id)
+            )
+            conn.commit()
+            logger.info(f"Đã lưu custom caption cho video {video_id}")
         finally:
             conn.close()
 

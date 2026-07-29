@@ -12,7 +12,7 @@ import os
 import random
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 from loguru import logger
 
@@ -77,6 +77,18 @@ class VideoProcessor:
             return float(result.stdout.strip())
         except Exception:
             return 0.0
+
+    def _get_video_height(self, input_path: str) -> int:
+        cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=height", "-of",
+            "default=noprint_wrappers=1:nokey=1", input_path
+        ]
+        try:
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            return int(result.stdout.strip())
+        except Exception:
+            return 720 # Fallback 720p
 
     def process_video(self, input_path: str, title: str = None,
                       output_path: str = None) -> Optional[str]:
@@ -146,8 +158,33 @@ class VideoProcessor:
                 str(input_path), str(srt_path), src_lang="zh", target_lang="vi"
             )
             if generated_srt:
-                srt_path_unix = str(srt_path).replace("\\", "/").replace(":", "\\:")
-                filters.append(f"subtitles='{srt_path_unix}':force_style='FontSize=22,Bold=1,PrimaryColour=&H00FFFF&,Alignment=2,MarginV=20,BorderStyle=1,Outline=3,Shadow=2'")
+                # Dùng bản clean (không có tag M/F) để chèn lên màn hình
+                clean_srt_path = str(srt_path).replace('.srt', '_clean.srt')
+                srt_path_unix = str(clean_srt_path).replace("\\", "/").replace(":", "\\:")
+                # Lấy cấu hình vùng mờ để tính tọa độ
+                blur_height = self.config.get("blur_height", 0.15)
+                blur_pos = self.config.get("blur_position", "bottom")
+                video_height = self._get_video_height(str(input_path))
+
+                # Xử lý Vị trí Subtitle (Tuỳ chỉnh theo UI)
+                sub_pos_opt = self.config.get("sub_pos", "Đè lên vùng mờ")
+                if "Đè lên vùng mờ" in sub_pos_opt:
+                    # Tính khoảng cách MarginV để chữ nằm vào giữa vùng làm mờ
+                    margin_v = int((blur_height * video_height) / 2)
+                    if blur_pos == "bottom":
+                        alignment = 2 # Néo vào đáy
+                    else:
+                        alignment = 8 # Néo vào đỉnh
+                elif "Cao" in sub_pos_opt:
+                    margin_v = 280  # Đẩy lên cao tránh UI TikTok
+                    alignment = 2
+                else: # Giữa màn hình
+                    margin_v = 0
+                    alignment = 5 # Center screen
+
+                # Style đoản kịch chuyên nghiệp (Trắng tinh tế, viền mỏng, đổ bóng nhẹ)
+                style = f"FontName=Arial,FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Alignment={alignment},MarginV={margin_v},Bold=1,BorderStyle=1,Outline=1.2,Shadow=0.5"
+                filters.append(f"subtitles='{srt_path_unix}':force_style='{style}'")
                 has_subtitles = True
                 logger.debug("  ✓ Subtitles applied")
 
@@ -179,28 +216,32 @@ class VideoProcessor:
             )
             
             if vo_result:
-                bg_music_path = self._get_random_music() if self.config.get("replace_audio") else None
                 mixed_audio_path = PROCESSED_DIR / f"{input_path.stem}_mixed.mp3"
-                orig_vol = self.config.get("original_audio_volume", 0.15)
+                orig_vol = self.config.get("original_audio_volume", 0.35)
+                
+                bg_music_path = self._get_random_music() if self.config.get("replace_audio") else None
+                from utils.tts_engine import mix_audio_tracks
                 
                 if bg_music_path:
-                    logger.info("  🎵 Mixing AI voiceover with background music...")
-                    from utils.tts_engine import mix_audio_tracks
+                    # REVIEW PHIM STYLE: Dùng nhạc nền random + Audio Ducking
+                    logger.info("  🎵 Review Phim Style: Mixing AI voiceover with background music (Ducking)...")
                     mixed = mix_audio_tracks(
                         str(bg_music_path), str(voiceover_path),
                         str(mixed_audio_path), original_volume=orig_vol,
                     )
                 else:
-                    logger.info("  🎙️ Using AI voiceover only (Background muted)...")
-                    import shutil
-                    shutil.copy(str(voiceover_path), str(mixed_audio_path))
-                    mixed = True
+                    # ĐOẢN KỊCH STYLE: Dùng âm thanh gốc + Audio Ducking
+                    logger.info("  🎵 Đoản Kịch Style: Mixing AI voiceover with ORIGINAL VIDEO AUDIO (Ducking)...")
+                    mixed = mix_audio_tracks(
+                        str(input_path), str(voiceover_path),
+                        str(mixed_audio_path), original_volume=orig_vol,
+                    )
                     
                 if mixed:
                     inputs.extend(["-i", str(mixed_audio_path)])
                     final_audio_input_idx = inputs.count("-i") - 1
                     has_dubbing = True
-                    logger.debug(f"  ✓ AI Dubbing applied")
+                    logger.debug(f"  ✓ AI Dubbing with Audio Ducking applied")
                     
                 try:
                     if voiceover_path.exists(): voiceover_path.unlink()
@@ -228,10 +269,22 @@ class VideoProcessor:
         filter_complex = ""
         last_vid_pad = "0:v"
         
-        if has_subtitles:
+        blur_enabled = self.config.get("blur_enabled", True)
+        if blur_enabled:
+            blur_height = self.config.get("blur_height", 0.15)
+            blur_pos = self.config.get("blur_position", "bottom")
+            
             filter_complex += f"[{last_vid_pad}]split=2[vmain][vtmp];"
-            filter_complex += f"[vtmp]crop=iw:ih*0.12:0:ih*0.88,boxblur=15:5[vblur];"
-            filter_complex += f"[vmain][vblur]overlay=0:H*0.88[vwithblur];"
+            if blur_pos == "bottom":
+                # Crop phần dưới cùng
+                crop_y = f"ih*{1.0 - blur_height}"
+                filter_complex += f"[vtmp]crop=iw:ih*{blur_height}:0:{crop_y},gblur=sigma=15[vblur];"
+                filter_complex += f"[vmain][vblur]overlay=0:H*{1.0 - blur_height}[vwithblur];"
+            else:
+                # Crop phần trên cùng
+                filter_complex += f"[vtmp]crop=iw:ih*{blur_height}:0:0,gblur=sigma=15[vblur];"
+                filter_complex += f"[vmain][vblur]overlay=0:0[vwithblur];"
+                
             last_vid_pad = "vwithblur"
 
         if filters:
@@ -313,10 +366,14 @@ class VideoProcessor:
 
         return str(output_path)
 
-    def process_downloaded_videos(self, titles: dict = None, limit: int = 10, video_ids: list = None) -> list:
-        videos = self.db.get_downloaded_videos(limit=limit)
-        if video_ids is not None:
+    def process_downloaded_videos(self, titles: dict = None, limit: int = 10, video_ids: list = None, cancel_check: Optional[Callable[[], bool]] = None) -> list:
+        if video_ids:
+            # Lấy không giới hạn nếu người dùng đã tick chọn cụ thể
+            videos = self.db.get_downloaded_videos(limit=999999)
             videos = [v for v in videos if v["video_id"] in video_ids]
+        else:
+            videos = self.db.get_downloaded_videos(limit=limit)
+            
         if not videos:
             logger.info("No downloaded videos to process")
             return []
@@ -324,6 +381,10 @@ class VideoProcessor:
         results = []
         titles = titles or {}
         for video in videos:
+            if cancel_check and cancel_check():
+                logger.warning("Quá trình xử lý video bị ngắt (Stop).")
+                break
+                
             video_id = video["video_id"]
             title = titles.get(video_id) or self._generate_title(video)
             processed_path = self.process_video(input_path=video["download_path"], title=title)

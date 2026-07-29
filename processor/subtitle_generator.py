@@ -82,6 +82,34 @@ class SubtitleGenerator:
             use_google_fallback = True
             
             if gemini_keys:
+                ai_mode = PROCESSOR_CONFIG.get("ai_mode", "Thuyết minh nguyên bản")
+                
+                if ai_mode == "Tóm tắt Review Phim":
+                    logger.info("Chế độ Tóm tắt Review Phim: Gom toàn bộ text...")
+                    from utils.translator import summarize_review_with_gemini
+                    full_text = " ".join([d["original_text"] for d in segment_data])
+                    review_script = summarize_review_with_gemini(full_text)
+                    
+                    if review_script:
+                        end_time = segment_data[-1]["end_time"]
+                        srt_content = [
+                            "1",
+                            f"00:00:00,000 --> {end_time}",
+                            review_script,
+                            ""
+                        ]
+                        with open(output_srt_path, "w", encoding="utf-8") as f:
+                            f.write("\n".join(srt_content))
+                        
+                        clean_path = str(output_srt_path).replace('.srt', '_clean.srt')
+                        with open(clean_path, "w", encoding="utf-8") as f:
+                            f.write("\n".join(srt_content))
+                            
+                        logger.info(f"Đã tạo kịch bản Tóm tắt Review tại: {output_srt_path}")
+                        return output_srt_path
+                    else:
+                        logger.warning("Lỗi khi viết kịch bản Review, chuyển về dịch nguyên bản...")
+                        
                 # ─── Cách 1: Dịch ngữ cảnh bằng Gemini LLM (Senior Tip: Xoay tua API Keys chống Quota) ───
                 logger.info(f"Đã tìm thấy {len(gemini_keys)} Gemini API Keys. Đang gửi dữ liệu text cho AI dịch ngữ cảnh...")
                 
@@ -109,7 +137,14 @@ class SubtitleGenerator:
                         gemini_key = gemini_keys[current_key_idx]
                         logger.info(f"Đang gửi lô {i//CHUNK_SIZE + 1}/{total_chunks} cho Gemini (Bằng Key {current_key_idx + 1}/{len(gemini_keys)})...")
                         
-                        chunk_result = translate_srt_with_gemini(chunk_text, gemini_key)
+                        # Kiểm tra cấu hình xem có đang ở chế độ nhiều giọng không
+                        multi_speaker_mode = PROCESSOR_CONFIG.get("tts_voice") == "Multi"
+                        
+                        chunk_result = translate_srt_with_gemini(
+                            chunk_text, 
+                            gemini_key,
+                            multi_speaker=multi_speaker_mode
+                        )
                         
                         if chunk_result:
                             translated_text += chunk_result + "\n"
@@ -138,8 +173,10 @@ class SubtitleGenerator:
                             if idx_str.isdigit():
                                 trans_dict[int(idx_str)] = parts[1].strip()
                     
-                    srt_content = []
+                    srt_content_tagged = []
+                    srt_content_clean = []
                     segment_idx = 1
+                    import re
                     for idx, data in enumerate(segment_data):
                         t_text = trans_dict.get(idx, data['original_text'])
                         
@@ -150,15 +187,33 @@ class SubtitleGenerator:
                                 logger.warning(f"Đã bỏ qua câu AI ảo giác: {t_text[:30]}...")
                                 continue
                                 
-                        srt_content.append(str(segment_idx))
-                        srt_content.append(f"{data['start_time']} --> {data['end_time']}")
-                        srt_content.append(t_text)
-                        srt_content.append("")
+                        # Xóa tags [M], [F], [N] để tạo bản clean cho Subtitle hiển thị trên Video
+                        clean_text = re.sub(r'\[[MFNmf]\]', '', t_text).strip()
+                        
+                        time_line = f"{data['start_time']} --> {data['end_time']}"
+                        
+                        srt_content_tagged.append(str(segment_idx))
+                        srt_content_tagged.append(time_line)
+                        srt_content_tagged.append(t_text)
+                        srt_content_tagged.append("")
+                        
+                        srt_content_clean.append(str(segment_idx))
+                        srt_content_clean.append(time_line)
+                        srt_content_clean.append(clean_text)
+                        srt_content_clean.append("")
+                        
                         segment_idx += 1
                     
-                    if srt_content:
+                    if srt_content_tagged:
+                        # Ghi bản có tags (cho TTS)
                         with open(output_srt_path, "w", encoding="utf-8") as f:
-                            f.write("\n".join(srt_content))
+                            f.write("\n".join(srt_content_tagged))
+                            
+                        # Ghi bản không tags (cho Video)
+                        clean_path = str(output_srt_path).replace('.srt', '_clean.srt')
+                        with open(clean_path, "w", encoding="utf-8") as f:
+                            f.write("\n".join(srt_content_clean))
+                            
                         use_google_fallback = False
                     else:
                         logger.warning("Không có nội dung SRT nào được tạo ra từ Gemini sau khi lọc. Fallback Google Translate.")
@@ -196,6 +251,11 @@ class SubtitleGenerator:
                     return None
                     
                 with open(output_srt_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(srt_content))
+                    
+                # Google Translate không có tags, nên clean SRT giống hệt bản gốc
+                clean_path = str(output_srt_path).replace('.srt', '_clean.srt')
+                with open(clean_path, "w", encoding="utf-8") as f:
                     f.write("\n".join(srt_content))
                 
             logger.info(f"Đã tạo file SRT: {output_srt_path}")

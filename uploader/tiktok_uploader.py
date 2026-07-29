@@ -7,7 +7,7 @@ import json
 import random
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 from loguru import logger
 
@@ -15,19 +15,61 @@ from config.settings import TIKTOK_CONFIG
 from database.db_manager import DatabaseManager
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Anti-Detection Fingerprint Pools
+#  Mỗi lần mở browser sẽ random 1 bộ để mỗi nick trông như 1 thiết bị khác nhau
+# ═══════════════════════════════════════════════════════════════════════════════
+_VIEWPORTS = [
+    {"width": 1366, "height": 768},
+    {"width": 1440, "height": 900},
+    {"width": 1536, "height": 864},
+    {"width": 1280, "height": 800},
+    {"width": 1920, "height": 1080},
+    {"width": 1600, "height": 900},
+    {"width": 1280, "height": 720},
+    {"width": 1360, "height": 768},
+]
+
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+]
+
+_LOCALES = ["vi-VN", "en-US", "vi", "en-GB", "en"]
+_TIMEZONES = ["Asia/Ho_Chi_Minh", "Asia/Bangkok", "Asia/Singapore", "Asia/Jakarta"]
+
+# Anti-detection JS injection — Không dùng Object.defineProperty để tránh bị vướng lỗi "Masking detected" của Pixelscan
+_ANTI_DETECT_SCRIPT = """
+    // Xóa dấu vết cơ bản mà không can thiệp sâu vào DOM
+    if (navigator.webdriver !== undefined) {
+        delete Object.getPrototypeOf(navigator).webdriver;
+    }
+    if (!window.chrome) {
+        window.chrome = { runtime: {} };
+    }
+"""
+
+
 class TikTokUploader:
     """Tự động upload video lên TikTok qua Playwright browser automation."""
 
-    def __init__(self, db: DatabaseManager = None, cookies_file: str = None):
+    def __init__(self, db: DatabaseManager = None, cookies_file: str = None, proxy: str = None, window_idx: int = 0):
         self.db = db or DatabaseManager()
         self.config = TIKTOK_CONFIG
         self.cookies_file = cookies_file or self.config.get("cookies_file")
+        self.proxy = proxy  # Format: "http://user:pass@ip:port" hoặc "socks5://ip:port"
+        self.window_idx = window_idx # Dùng để sắp xếp vị trí cửa sổ
         self.browser = None
         self.context = None
         self.page = None
 
     async def _init_browser(self):
-        """Khởi tạo Playwright browser với cookies."""
+        """Khởi tạo Playwright browser với cookies, proxy, và random fingerprint."""
         try:
             from playwright.async_api import async_playwright
         except ImportError:
@@ -42,63 +84,141 @@ class TikTokUploader:
 
         browser_config = self.config.get("browser", {})
 
+        # ── Fix Timezone khớp với Proxy VN ──────────────────────────────
+        # Proxy dân cư sếp mua là IP Việt Nam, nếu random ra múi giờ Singapore/Jakarta 
+        # sẽ bị web phát hiện "Timezone Mismatch". Bắt buộc phải là GMT+7.
+        fp_timezone = "Asia/Ho_Chi_Minh" 
+        
+        # ── Random fingerprint cho mỗi nick ──────────────────────────────
+        fp_viewport = random.choice(_VIEWPORTS)
+        fp_user_agent = random.choice(_USER_AGENTS)
+        fp_locale = random.choice(_LOCALES)
+
+        # Tính toán kích thước và vị trí cửa sổ (Mô phỏng đt xếp hàng)
+        win_w = 420
+        win_h = 800
+        # Xếp các cửa sổ liên tiếp nhau từ trái qua phải, nếu hết màn (VD 1920) thì xuống dòng
+        max_cols = 1920 // win_w
+        if max_cols == 0: max_cols = 1
+        
+        row = self.window_idx // max_cols
+        col = self.window_idx % max_cols
+        
+        pos_x = col * win_w
+        pos_y = row * 50 # Xuống dòng thì thụt xuống 1 xíu để thấy viền trên
+
+        # ── Build launch kwargs (có thể có proxy) ────────────────────────
+        launch_kwargs = {
+            "headless": browser_config.get("headless", False),
+            "slow_mo": browser_config.get("slow_mo", 500),
+            "args": [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+                f"--window-size={win_w},{win_h}",
+                f"--window-position={pos_x},{pos_y}",
+                "--force-device-scale-factor=1", # Khử triệt để lỗi lẻ số thập phân do Scale của Windows
+            ],
+        }
+        if self.proxy:
+            proxy_str = self.proxy.strip()
+            if proxy_str.startswith("http://") or proxy_str.startswith("socks5://"):
+                launch_kwargs["proxy"] = {"server": proxy_str}
+            else:
+                parts = proxy_str.split(":")
+                if len(parts) == 4:
+                    ip, port, user, pwd = parts
+                    launch_kwargs["proxy"] = {
+                        "server": f"http://{ip}:{port}",
+                        "username": user,
+                        "password": pwd
+                    }
+                elif len(parts) == 2:
+                    ip, port = parts
+                    launch_kwargs["proxy"] = {"server": f"http://{ip}:{port}"}
+                else:
+                    launch_kwargs["proxy"] = {"server": proxy_str}
+                    
+            display_proxy = proxy_str
+            if ":" in proxy_str and len(proxy_str.split(":")) == 4:
+                parts = proxy_str.split(":")
+                display_proxy = f"{parts[0]}:{parts[1]} (có user/pass)"
+                
+            logger.info(f"🌐 Sử dụng proxy: {display_proxy}")
+
+        # ── Profile Directory (Khởi tạo máy mới thực sự) ──────────────────
+        # Thay vì dùng trình duyệt ẩn danh (Incognito) sẽ bị mất LocalStorage/Cache
+        # Ta tạo riêng 1 thư mục vật lý (Profile) cho từng nick như người dùng thật.
+        import os
+        from pathlib import Path
+        cookie_path = Path(self.cookies_file) if self.cookies_file else Path("default.json")
+        profile_dir = cookie_path.parent / ".profiles" / cookie_path.stem
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        
         try:
-            # Ưu tiên dùng Chrome thật (hoặc Edge) để lách Cloudflare/Akamai 403
-            self.browser = await self._playwright.chromium.launch(
-                headless=browser_config.get("headless", False),
-                slow_mo=browser_config.get("slow_mo", 500),
-                channel="chrome",
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                ],
+            self.context = await self._playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel="chrome", 
+                no_viewport=True,
+                user_agent=fp_user_agent,
+                locale=fp_locale,
+                timezone_id=fp_timezone,
+                **launch_kwargs
             )
         except Exception:
             try:
-                # Nếu không có Chrome, thử dùng Edge
-                self.browser = await self._playwright.chromium.launch(
-                    headless=browser_config.get("headless", False),
-                    slow_mo=browser_config.get("slow_mo", 500),
-                    channel="msedge",
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--no-sandbox",
-                    ],
+                self.context = await self._playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    channel="msedge", 
+                    no_viewport=True,
+                    user_agent=fp_user_agent,
+                    locale=fp_locale,
+                    timezone_id=fp_timezone,
+                    **launch_kwargs
                 )
             except Exception:
-                # Fallback dùng Chromium mặc định của Playwright
-                logger.warning("Không tìm thấy Chrome/Edge, dùng Chromium mặc định (có thể bị TikTok chặn 403)")
-                self.browser = await self._playwright.chromium.launch(
-                    headless=browser_config.get("headless", False),
-                    slow_mo=browser_config.get("slow_mo", 500),
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--no-sandbox",
-                    ],
+                logger.warning("Không tìm thấy Chrome/Edge, dùng Chromium mặc định")
+                self.context = await self._playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    no_viewport=True,
+                    user_agent=fp_user_agent,
+                    locale=fp_locale,
+                    timezone_id=fp_timezone,
+                    **launch_kwargs
                 )
 
-        # Tạo context với viewport
-        viewport = browser_config.get("viewport", {"width": 1280, "height": 720})
-        self.context = await self.browser.new_context(
-            viewport=viewport,
-            locale="vi-VN",
-            timezone_id="Asia/Ho_Chi_Minh",
+        logger.info(
+            f"🎭 Fingerprint: {fp_viewport['width']}x{fp_viewport['height']} | "
+            f"{fp_locale} | {fp_timezone} | UA: ...{fp_user_agent[-30:]}"
         )
+
+        # Không cần gọi new_context vì launch_persistent_context đã trả về context
 
         # Load cookies nếu có
         await self._load_cookies()
 
-        self.page = await self.context.new_page()
+        # Lấy tab (page) mặc định đã được mở sẵn khi launch
+        self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
 
-        # Anti-detection: Override navigator.webdriver
-        await self.page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-            window.chrome = { runtime: {} };
-        """)
+        # Kiểm tra mạng/proxy sống hay chết trước khi tiếp tục
+        await self._check_network_and_proxy()
 
-        logger.info("Browser initialized successfully")
+        logger.info("Browser initialized successfully (anti-detect enabled)")
+
+    async def _check_network_and_proxy(self):
+        """Kiểm tra IP hiện tại qua context để đảm bảo Proxy sống trước khi làm việc."""
+        try:
+            logger.info("🔍 Đang kiểm tra kết nối mạng và Proxy (Check IP)...")
+            response = await self.page.goto("https://api.ipify.org", timeout=15000)
+            if response and response.ok:
+                ip = await response.text()
+                logger.info(f"✅ KẾT NỐI THÀNH CÔNG. IP hiện tại: {ip.strip()}")
+            else:
+                raise Exception(f"HTTP Status: {response.status if response else 'No response'}")
+        except Exception as e:
+            err_msg = str(e).split('\n')[0]
+            logger.error(f"❌ Lỗi Proxy/Mạng: {err_msg}")
+            raise Exception(f"Lỗi Proxy/Mạng: {err_msg}")
 
     async def _load_cookies(self):
         """Load cookies TikTok từ file JSON."""
@@ -702,12 +822,186 @@ class TikTokUploader:
 
             # Delay giữa các lần post
             if i < len(videos) - 1:
-                wait_seconds = random.randint(15, 30)
+                # Đọc cấu hình delay (tính bằng phút) hoặc mặc định random 15-30 giây nếu không cấu hình (hoặc bằng 0)
+                delay_mins = self.config.get("post_delay_minutes", 0)
+                if delay_mins > 0:
+                    wait_seconds = int(delay_mins * 60)
+                    # Thêm chút random +- 5 phút (nếu delay lớn) để giống người thật
+                    if wait_seconds > 300:
+                        wait_seconds += random.randint(-300, 300)
+                else:
+                    wait_seconds = random.randint(15, 30)
+                    
                 logger.info(f"  ⏳ Waiting {wait_seconds} seconds before next post...")
                 await asyncio.sleep(wait_seconds)
 
         logger.info(f"\n📊 Upload summary: {len(uploaded_ids)}/{len(videos)} successful")
         return uploaded_ids
+
+    async def nurture_account(
+        self,
+        duration_minutes: int = 15,
+        like_ratio: float = 0.2,
+        update_callback: Optional[Callable[[str, str], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None
+    ) -> bool:
+        """
+        Nuôi nick bằng cách lướt trang For You và thả tim ngẫu nhiên.
+        
+        Args:
+            duration_minutes: Thời gian treo (phút).
+            like_ratio: Tỷ lệ thả tim (0.0 -> 1.0).
+            update_callback: Hàm callback để cập nhật log ra giao diện.
+        """
+        try:
+            if not self.browser:
+                await self._init_browser()
+
+            logger.info(f"Bắt đầu nuôi nick {self.cookies_file} trong {duration_minutes} phút...")
+            if update_callback:
+                update_callback(f"Bắt đầu nuôi nick trong {duration_minutes} phút...", "INFO")
+
+            # Đi tới trang For You thẳng luôn, bỏ qua check_login (vào trang upload) để tránh rườm rà
+            try:
+                await self.page.goto("https://www.tiktok.com/foryou", wait_until="domcontentloaded", timeout=30000)
+            except Exception as e:
+                pass
+            await self._random_delay(3, 6)
+
+            start_time = time.time()
+            end_time = start_time + (duration_minutes * 60)
+            video_count = 0
+            liked_count = 0
+
+            while time.time() < end_time:
+                if cancel_check and cancel_check():
+                    break
+
+                video_count += 1
+                
+                # Giả lập xem video — thời gian random tự nhiên
+                # Đôi khi xem nhanh (3-8s), đôi khi xem kỹ (15-45s), đôi khi "nghỉ" đọc comment (30-90s)
+                behavior_roll = random.random()
+                if behavior_roll < 0.15:
+                    # 15% xác suất: "nghỉ xả hơi" — giống đang đọc comment hoặc AFK
+                    watch_time = random.uniform(30.0, 90.0)
+                    pause_msg = f"💤 Tạm nghỉ {int(watch_time)}s (giả lập đọc comment)..."
+                    logger.info(pause_msg)
+                    if update_callback:
+                        update_callback(pause_msg, "INFO")
+                elif behavior_roll < 0.40:
+                    # 25% xác suất: xem nhanh rồi lướt
+                    watch_time = random.uniform(3.0, 8.0)
+                else:
+                    # 60% xác suất: xem bình thường
+                    watch_time = random.uniform(8.0, 30.0)
+
+                msg = f"Đang xem video thứ {video_count} (chờ {int(watch_time)}s)..."
+                logger.info(msg)
+                if update_callback:
+                    update_callback(msg, "INFO")
+                
+                await asyncio.sleep(watch_time)
+
+                # Thử tắt các popup cảnh báo (như popup rủi ro tài khoản)
+                try:
+                    # Dùng name="OK", exact=True để tránh bấm nhầm chữ "TikTok" (vì chứa chữ ok)
+                    ok_btn = self.page.get_by_role("button", name="OK", exact=True)
+                    if await ok_btn.count() > 0 and await ok_btn.first.is_visible():
+                        await ok_btn.first.click()
+                        logger.info("Đã tự động đóng popup cảnh báo của TikTok.")
+                except Exception:
+                    pass
+
+                # Đảm bảo bot không đi lạc, nếu mất dấu /foryou hoặc /explore thì quay về
+                try:
+                    current_url = self.page.url
+                    if "tiktok.com/@" in current_url or ("/foryou" not in current_url and "/explore" not in current_url):
+                        logger.info("Bị đi lạc khỏi trang chủ, đang quay lại For You...")
+                        await self.page.goto("https://www.tiktok.com/foryou", wait_until="domcontentloaded")
+                        await self._random_delay(2, 4)
+                except Exception:
+                    pass
+
+                # Thả tim ngẫu nhiên — nhưng không like liên tục, đôi khi skip vài video
+                if random.random() < like_ratio and watch_time > 5.0:
+                    try:
+                        # TikTok có nhiều nút tim trong DOM, ta tìm nút nào đang nằm CHÍNH XÁC trên màn hình (viewport)
+                        like_btns = self.page.locator('[data-e2e="like-icon"]')
+                        viewport = self.page.viewport_size
+                        vh = viewport['height'] if viewport else 800
+                        for i in range(await like_btns.count()):
+                            if await like_btns.nth(i).is_visible():
+                                box = await like_btns.nth(i).bounding_box()
+                                # Nút tim phải nằm trong vùng nhìn thấy của màn hình (từ 0 đến vh)
+                                if box and 0 <= box['y'] <= vh:
+                                    await like_btns.nth(i).click(force=True)
+                                    liked_count += 1
+                                    like_msg = f"❤️ Đã thả tim video thứ {video_count}"
+                                    logger.info(like_msg)
+                                    if update_callback:
+                                        update_callback(like_msg, "SUCCESS")
+                                    await self._random_delay(1, 3)
+                                    break
+                    except Exception as e:
+                        logger.debug(f"Không thể thả tim: {e}")
+
+                # Follow ngẫu nhiên (Khoảng 5% xác suất nếu xem lâu)
+                if random.random() < 0.05 and watch_time > 8.0:
+                    try:
+                        # Tìm nút follow (nút + đỏ dưới avatar hoặc nút chữ Follow/Theo dõi)
+                        follow_locators = ['[data-e2e="feed-follow"]', 'button:has-text("Follow")', 'button:has-text("Theo dõi")']
+                        followed = False
+                        viewport = self.page.viewport_size
+                        vh = viewport['height'] if viewport else 800
+                        
+                        for loc in follow_locators:
+                            if followed: break
+                            btns = self.page.locator(loc)
+                            for i in range(await btns.count()):
+                                if await btns.nth(i).is_visible():
+                                    box = await btns.nth(i).bounding_box()
+                                    if box and 0 <= box['y'] <= vh:
+                                        await btns.nth(i).click(force=True)
+                                        flw_msg = f"👤 Đã bấm Follow chủ kênh video thứ {video_count}"
+                                        logger.info(flw_msg)
+                                        if update_callback:
+                                            update_callback(flw_msg, "SUCCESS")
+                                        await self._random_delay(1, 3)
+                                        followed = True
+                                        break
+                    except Exception as e:
+                        logger.debug(f"Không thể Follow: {e}")
+
+                # Lướt sang video tiếp theo — đôi khi scroll nhanh 2-3 video liên tiếp
+                try:
+                    await self.page.keyboard.press("ArrowDown")
+                    # 20% xác suất: scroll nhanh thêm 1-2 video (giống lướt qua video không thích)
+                    if random.random() < 0.20:
+                        extra_scrolls = random.randint(1, 2)
+                        for _ in range(extra_scrolls):
+                            await self._random_delay(0.5, 1.5)
+                            await self.page.keyboard.press("ArrowDown")
+                            video_count += 1
+                    await self._random_delay(1, 2)
+                except Exception as e:
+                    logger.debug(f"Lỗi cuộn trang: {e}")
+                    await self.page.evaluate("window.scrollBy(0, window.innerHeight);")
+                    await self._random_delay(1, 2)
+                    
+            summary = f"🎉 Hoàn thành nuôi nick! Đã xem ~{video_count} video, thả tim {liked_count} lần."
+            logger.info(summary)
+            if update_callback:
+                update_callback(summary, "SUCCESS")
+                
+            return True
+
+        except Exception as e:
+            err = f"Lỗi trong quá trình nuôi nick: {e}"
+            logger.error(err)
+            if update_callback:
+                update_callback(err, "ERROR")
+            return False
 
     async def close(self):
         """Đóng browser."""
