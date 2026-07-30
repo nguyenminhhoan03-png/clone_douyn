@@ -310,6 +310,23 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def get_today_processed_count(self, username: str = None) -> int:
+        """Đếm số video đã processed hôm nay."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            today = datetime.now().strftime("%Y-%m-%d")
+            query = "SELECT COUNT(*) FROM crawled_videos WHERE DATE(processed_at) = ?"
+            params = [today]
+            if username:
+                query += " AND username = ?"
+                params.append(username)
+                
+            cursor.execute(query, tuple(params))
+            return cursor.fetchone()[0]
+        finally:
+            conn.close()
+
     # ============================================================
     # STATISTICS
     # ============================================================

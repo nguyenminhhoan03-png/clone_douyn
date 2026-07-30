@@ -16,7 +16,7 @@ from typing import Optional, Callable
 
 from loguru import logger
 
-from config.settings import PROCESSOR_CONFIG, PROCESSED_DIR, MUSIC_DIR
+from config.settings import PROCESSOR_CONFIG, get_user_processed_dir, MUSIC_DIR
 from database.db_manager import DatabaseManager
 from processor.subtitle_generator import SubtitleGenerator
 
@@ -24,15 +24,16 @@ from processor.subtitle_generator import SubtitleGenerator
 class VideoProcessor:
     """Xử lý video dance Douyin bằng Native FFmpeg (Siêu tốc)."""
 
-    def __init__(self, db: DatabaseManager = None):
+    def __init__(self, db: DatabaseManager = None, username: str = None):
         self.db = db or DatabaseManager()
         self.config = PROCESSOR_CONFIG
+        self.current_username = username
         
         # Thêm default config cho auto_subtitle
         if "auto_subtitle" not in self.config:
             self.config["auto_subtitle"] = True
             
-        PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+        get_user_processed_dir(self.current_username).mkdir(parents=True, exist_ok=True)
         MUSIC_DIR.mkdir(parents=True, exist_ok=True)
         
         self.subtitle_generator = SubtitleGenerator() if self.config.get("auto_subtitle") else None
@@ -98,7 +99,7 @@ class VideoProcessor:
             return None
 
         if not output_path:
-            output_path = PROCESSED_DIR / f"processed_{input_path.name}"
+            output_path = get_user_processed_dir(self.current_username) / f"processed_{input_path.name}"
         output_path = Path(output_path)
 
         logger.info(f"Processing video: {input_path.name} (Native FFmpeg)")
@@ -152,7 +153,7 @@ class VideoProcessor:
         has_subtitles = False
         srt_path = None
         if self.config.get("auto_subtitle") and self.subtitle_generator:
-            srt_path = PROCESSED_DIR / f"{input_path.stem}.srt"
+            srt_path = get_user_processed_dir(self.current_username) / f"{input_path.stem}.srt"
             logger.info(f"  Running AI to transcribe & translate subtitles...")
             generated_srt = self.subtitle_generator.generate_srt(
                 str(input_path), str(srt_path), src_lang="zh", target_lang="vi"
@@ -204,7 +205,7 @@ class VideoProcessor:
         if self.config.get("ai_dubbing") and has_subtitles and srt_path and srt_path.exists():
             from utils.tts_engine import generate_voiceover_from_srt, mix_audio_tracks
             logger.info("  🎙️ Generating AI Vietnamese voiceover...")
-            voiceover_path = PROCESSED_DIR / f"{input_path.stem}_voiceover.mp3"
+            voiceover_path = get_user_processed_dir(self.current_username) / f"{input_path.stem}_voiceover.mp3"
             
             tts_voice = self.config.get("tts_voice", "vi-VN-HoaiMyNeural")
             tts_rate = self.config.get("tts_rate", "+0%")
@@ -216,7 +217,7 @@ class VideoProcessor:
             )
             
             if vo_result:
-                mixed_audio_path = PROCESSED_DIR / f"{input_path.stem}_mixed.mp3"
+                mixed_audio_path = get_user_processed_dir(self.current_username) / f"{input_path.stem}_mixed.mp3"
                 orig_vol = self.config.get("original_audio_volume", 0.35)
                 
                 bg_music_path = self._get_random_music() if self.config.get("replace_audio") else None

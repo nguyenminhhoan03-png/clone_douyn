@@ -23,18 +23,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-# ─── Palette ─────────────────────────────────────────────────────────────────
-BG_DARK      = "#0f1117"
-BG_CARD      = "#1a1d27"
-BG_SIDEBAR   = "#13151f"
-ACCENT       = "#4f8ef7"
-ACCENT_HOVER = "#6ba3ff"
-SUCCESS      = "#2ecc71"
-WARNING      = "#f39c12"
-DANGER       = "#e74c3c"
-TEXT_MAIN    = "#e8eaf6"
-TEXT_DIM     = "#6c7293"
-BORDER       = "#2a2d3e"
+# ─── Palette (Sleek Dark Theme) ─────────────────────────────────────────────
+BG_DARK      = "#0E1015" # Nền tối nhất
+BG_CARD      = "#1C1F2E" # Nền Card/Panel
+BG_SIDEBAR   = "#141620" # Nền Sidebar
+ACCENT       = "#8B5CF6" # Tím Violet (giống nút Upload & Enhance)
+ACCENT_HOVER = "#7C3AED" # Tím đậm khi hover
+SUCCESS      = "#10B981"
+WARNING      = "#F59E0B"
+DANGER       = "#EF4444"
+TEXT_MAIN    = "#F8FAFC"
+TEXT_DIM     = "#94A3B8"
+BORDER       = "#2D3142"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -100,29 +100,236 @@ class StatusBadge(ctk.CTkLabel):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  StatsCard
+#  ToastNotification - Popup thông báo kiểu Toast
 # ═══════════════════════════════════════════════════════════════════════════════
+class ToastNotification(ctk.CTkToplevel):
+    """
+    Toast popup góc dưới phải màn hình.
+    - Tự tắt sau `duration` giây nếu không đóng tay.
+    - Có nút X để đóng ngay.
+    - type_: 'info' | 'warning' | 'error' | 'update'
+    """
+    _COLORS = {
+        "info":    ("#2980b9", "#d6eaf8"),
+        "warning": ("#e67e22", "#fdebd0"),
+        "error":   ("#c0392b", "#fadbd8"),
+        "update":  ("#8e44ad", "#e8daef"),
+    }
+
+    def __init__(self, master, title: str, message: str, type_: str = "info", duration: int = 8):
+        super().__init__(master)
+        
+        # Lấy màu theo type
+        accent, bg_light = self._COLORS.get(type_, self._COLORS["info"])
+        
+        # Cấu hình cửa sổ - không có border, không có titlebar
+        self.overrideredirect(True)
+        self.wm_attributes("-topmost", True)
+        self.configure(fg_color=BG_CARD)
+        
+        self._duration = duration
+        self._remaining = duration
+        
+        # ── Layout chính ──────────────────────────────────────────────────────
+        self.configure(width=380)
+        
+        # Accent bar bên trái
+        bar = ctk.CTkFrame(self, fg_color=accent, width=6, corner_radius=0)
+        bar.pack(side="left", fill="y")
+        bar.pack_propagate(False)
+        
+        # Nội dung
+        content = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=0)
+        content.pack(side="left", fill="both", expand=True, padx=0)
+        
+        # Header row
+        header = ctk.CTkFrame(content, fg_color="transparent")
+        header.pack(fill="x", padx=14, pady=(12, 4))
+        
+        # Icon theo type
+        icons = {"info": "ℹ️", "warning": "📢", "error": "⚠️", "update": "🚀"}
+        icon_text = icons.get(type_, "ℹ️")
+        ctk.CTkLabel(header, text=f"{icon_text}  {title}",
+                     font=("Segoe UI", 13, "bold"),
+                     text_color=accent).pack(side="left")
+        
+        # Nút X và countdown
+        right = ctk.CTkFrame(header, fg_color="transparent")
+        right.pack(side="right")
+        
+        self._lbl_countdown = ctk.CTkLabel(right, text=f"{duration}s",
+                                            font=("Segoe UI", 10), text_color=TEXT_DIM)
+        self._lbl_countdown.pack(side="left", padx=(0, 6))
+        
+        ctk.CTkButton(right, text="✕", width=24, height=24,
+                      fg_color="transparent", hover_color=BORDER,
+                      font=("Segoe UI", 11, "bold"), text_color=TEXT_DIM,
+                      command=self.close_toast).pack(side="left")
+        
+        # Message
+        ctk.CTkLabel(content, text=message,
+                     font=("Segoe UI", 12), text_color=TEXT_MAIN,
+                     wraplength=310, justify="left", anchor="w"
+                     ).pack(fill="x", padx=14, pady=(0, 12), anchor="w")
+        
+        # Progress bar (tự thu nhỏ theo thời gian)
+        prog_bg = ctk.CTkFrame(content, fg_color=BORDER, height=3, corner_radius=0)
+        prog_bg.pack(fill="x", side="bottom")
+        self._prog = ctk.CTkFrame(prog_bg, fg_color=accent, height=3, corner_radius=0)
+        self._prog.pack(side="left", fill="y")
+        
+        # Border
+        self.configure(border_width=1, border_color=BORDER)
+        
+        # Đặt vị trí góc dưới phải
+        self.update_idletasks()
+        self._position_toast(master)
+        
+        # Bắt đầu đếm ngược
+        self.after(100, self._tick)
+    
+    def _position_toast(self, master):
+        """Đặt toast ở trên cùng, ở giữa cửa sổ chính."""
+        try:
+            master.update_idletasks()
+            self.update_idletasks()
+            mx = master.winfo_x()
+            my = master.winfo_y()
+            mw = master.winfo_width()
+            
+            tw = 420
+            th = 110
+            
+            x = mx + (mw // 2) - (tw // 2)
+            y = my + 24  # margin top 24px
+            self.geometry(f"{tw}x{th}+{x}+{y}")
+        except Exception:
+            self.geometry("420x110+300+60")
+    
+    def _tick(self):
+        """Cập nhật countdown mỗi giây."""
+        if not self.winfo_exists():
+            return
+        self._remaining -= 1
+        if self._remaining <= 0:
+            self.close_toast()
+            return
+        self._lbl_countdown.configure(text=f"{self._remaining}s")
+        # Thu nhỏ progress bar
+        ratio = self._remaining / self._duration
+        try:
+            total_w = self._prog.master.winfo_width()
+            self._prog.configure(width=int(total_w * ratio))
+        except Exception:
+            pass
+        self.after(1000, self._tick)
+    
+    def close_toast(self):
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+
+def show_toast(master, title: str, message: str, type_: str = "info", duration: int = 8):
+    """Helper function để bắn toast từ bất kỳ đâu."""
+    try:
+        toast = ToastNotification(master, title=title, message=message, type_=type_, duration=duration)
+        return toast
+    except Exception as e:
+        print(f"Toast error: {e}")
+        return None
+
+
+
 class StatsCard(ctk.CTkFrame):
-    def __init__(self, master, label: str, value: str = "0", color=ACCENT, **kwargs):
-        super().__init__(master, fg_color=BG_CARD, corner_radius=12,
+    def __init__(self, master, label: str, value: str = "0", color=ACCENT, icon: str = "", **kwargs):
+        super().__init__(master, fg_color=BG_CARD, corner_radius=10,
                          border_width=1, border_color=BORDER, **kwargs)
-        self.grid_columnconfigure(0, weight=1)
-
-        self._lbl_value = ctk.CTkLabel(
-            self, text=value,
-            font=("Segoe UI", 28, "bold"),
-            text_color=color,
-        )
-        self._lbl_value.grid(row=0, column=0, padx=16, pady=(16, 2))
-
+        
+        self.pack_propagate(False)
+        self.configure(height=90)
+        
+        # Đường viền màu bên trái đặc trưng của Web Dashboard
+        accent_line = ctk.CTkFrame(self, fg_color=color, width=5, corner_radius=0)
+        accent_line.pack(side="left", fill="y", pady=15)
+        
+        # Nội dung
+        content = ctk.CTkFrame(self, fg_color="transparent")
+        content.pack(side="left", fill="both", expand=True, padx=16, pady=12)
+        
+        header = ctk.CTkFrame(content, fg_color="transparent")
+        header.pack(fill="x")
+        
         ctk.CTkLabel(
-            self, text=label,
-            font=("Segoe UI", 11),
+            header, text=label.upper(),
+            font=("Segoe UI", 11, "bold"),
             text_color=TEXT_DIM,
-        ).grid(row=1, column=0, padx=16, pady=(2, 14))
+        ).pack(side="left")
+        
+        if icon:
+            ctk.CTkLabel(
+                header, text=icon,
+                font=("Segoe UI", 16),
+                text_color=color,
+            ).pack(side="right")
+        
+        self._lbl_value = ctk.CTkLabel(
+            content, text=value,
+            font=("Segoe UI", 22, "bold"),
+            text_color=TEXT_MAIN,
+            anchor="w",
+            justify="left"
+        )
+        self._lbl_value.pack(side="left", fill="x", expand=True, pady=(2, 0))
 
     def set_value(self, v):
         self._lbl_value.configure(text=str(v))
+
+
+class SystemInfoWidget(ctk.CTkFrame):
+    def __init__(self, master, **kwargs):
+        kwargs.setdefault("fg_color", "transparent")
+        super().__init__(master, **kwargs)
+        
+        ctk.CTkLabel(self, text="💻  Tài nguyên Hệ thống", font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).pack(anchor="w", padx=20, pady=(16, 10))
+        
+        self.bars = {}
+        for name, color in [("CPU", "#e74c3c"), ("RAM", "#3498db"), ("Disk", "#2ecc71")]:
+            row = ctk.CTkFrame(self, fg_color="transparent")
+            row.pack(fill="x", padx=20, pady=8)
+            
+            header = ctk.CTkFrame(row, fg_color="transparent")
+            header.pack(fill="x", pady=(0, 4))
+            
+            ctk.CTkLabel(header, text=name, font=("Segoe UI", 11, "bold"), text_color=TEXT_DIM).pack(side="left")
+            lbl_val = ctk.CTkLabel(header, text="--%", font=("Segoe UI", 11, "bold"), text_color=color)
+            lbl_val.pack(side="right")
+            
+            pb = ctk.CTkProgressBar(row, height=8, progress_color=color, fg_color=BG_DARK, corner_radius=4)
+            pb.pack(fill="x")
+            pb.set(0)
+            
+            self.bars[name] = (pb, lbl_val)
+            
+    def update_stats(self):
+        try:
+            import psutil
+            cpu = psutil.cpu_percent()
+            ram = psutil.virtual_memory().percent
+            disk = psutil.disk_usage('/').percent
+            
+            self.bars["CPU"][0].set(cpu / 100)
+            self.bars["CPU"][1].configure(text=f"{cpu:.1f}%")
+            
+            self.bars["RAM"][0].set(ram / 100)
+            self.bars["RAM"][1].configure(text=f"{ram:.1f}%")
+            
+            self.bars["Disk"][0].set(disk / 100)
+            self.bars["Disk"][1].configure(text=f"{disk:.1f}%")
+        except ImportError:
+            for n in ["CPU", "RAM", "Disk"]:
+                self.bars[n][1].configure(text="N/A")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -137,7 +344,7 @@ class SidebarButton(ctk.CTkButton):
             font=("Segoe UI", 14, "bold"),
             fg_color="transparent",
             text_color=TEXT_DIM,
-            hover_color="#1E293B",
+            hover_color=BG_CARD,
             anchor="w",
             height=48,
             corner_radius=12,
@@ -196,6 +403,69 @@ class TaskMixin:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Tab: Dashboard
 # ═══════════════════════════════════════════════════════════════════════════════
+import math
+import tkinter as tk
+
+class DonutChart(ctk.CTkFrame):
+    def __init__(self, master, title="Biểu đồ", **kwargs):
+        # Mặc định nền trong suốt nếu không truyền fg_color
+        kwargs.setdefault("fg_color", "transparent")
+        super().__init__(master, **kwargs)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
+        
+        self.canvas_size = 150
+        self.thickness = 22
+        
+        # Tiêu đề
+        ctk.CTkLabel(self, text=title, font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(16, 0))
+        
+        # Canvas
+        self.canvas = tk.Canvas(self, width=self.canvas_size, height=self.canvas_size, bg=BG_CARD, highlightthickness=0)
+        self.canvas.grid(row=1, column=0, padx=(20, 10), pady=(10, 20), sticky="e")
+        
+        # Legend Frame
+        self.legend_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.legend_frame.grid(row=1, column=1, padx=(10, 20), pady=(10, 20), sticky="w")
+        
+    def update_data(self, data):
+        self.canvas.delete("all")
+        for widget in self.legend_frame.winfo_children():
+            widget.destroy()
+            
+        total = sum(v for _, v, _ in data)
+        if total == 0:
+            self.canvas.create_oval(15, 15, self.canvas_size-15, self.canvas_size-15, outline=BG_DARK, width=self.thickness)
+            self._draw_center_text(0)
+            return
+            
+        start_angle = 90
+        for label, val, color in data:
+            if val == 0: continue
+            extent = (val / total) * 360
+            self.canvas.create_arc(15, 15, self.canvas_size-15, self.canvas_size-15,
+                                   start=start_angle, extent=extent, style=tk.ARC, outline=color, width=self.thickness)
+            start_angle += extent
+            
+            # Draw Legend Item
+            row = ctk.CTkFrame(self.legend_frame, fg_color="transparent")
+            row.pack(fill="x", pady=6)
+            
+            dot = tk.Canvas(row, width=12, height=12, bg=BG_CARD, highlightthickness=0)
+            dot.create_oval(2, 2, 10, 10, fill=color, outline=color)
+            dot.pack(side="left", padx=(0, 8))
+            
+            percent = int((val/total)*100)
+            ctk.CTkLabel(row, text=label, font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).pack(side="left")
+            ctk.CTkLabel(row, text=f"  {val} ({percent}%)", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="right")
+            
+        self._draw_center_text(total)
+        
+    def _draw_center_text(self, total):
+        self.canvas.create_text(self.canvas_size/2, self.canvas_size/2 - 10, text="Tổng số", font=("Segoe UI", 11), fill=TEXT_DIM)
+        self.canvas.create_text(self.canvas_size/2, self.canvas_size/2 + 10, text=str(total), font=("Segoe UI", 20, "bold"), fill="white")
+
+
 class DashboardTab(ctk.CTkFrame):
     def __init__(self, master, app, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
@@ -220,33 +490,41 @@ class DashboardTab(ctk.CTkFrame):
         btn_refresh.pack(side="right")
 
         # Stats cards - Account
-        self._card_plan = StatsCard(self, "Gói Cước", value="Free", color="#3498db")
-        self._card_limit = StatsCard(self, "Giới Hạn / Ngày", value="0", color="#e67e22")
-        self._card_used = StatsCard(self, "Đã Dùng", value="0", color="#e74c3c")
-        self._card_rem = StatsCard(self, "Còn Lại", value="0", color="#2ecc71")
+        self._card_role = StatsCard(self, "Tài khoản", value="User", color="#3498db", icon="👤")
+        self._card_expire = StatsCard(self, "Ngày Hết Hạn", value="Chưa có", color="#e67e22", icon="⏳")
+        self._card_status = StatsCard(self, "Trạng Thái", value="Active", color="#2ecc71", icon="🟢")
+        self._card_features = StatsCard(self, "Chức năng", value="Mở khóa (Full)", color="#9b59b6", icon="💎")
         
-        for col, card in enumerate([self._card_plan, self._card_limit, self._card_used, self._card_rem]):
-            card.grid(row=1, column=col, padx=6, pady=4, sticky="ew")
+        for col, card in enumerate([self._card_role, self._card_expire, self._card_status, self._card_features]):
+            card.grid(row=2, column=col, padx=6, pady=4, sticky="ew")
 
         # Stats cards - Local
-        self._card_crawled   = StatsCard(self, "Đã Crawl",   color=ACCENT)
-        self._card_processed = StatsCard(self, "Đã Xử lý",   color="#9b59b6")
-        self._card_posted    = StatsCard(self, "Đã Upload",   color=SUCCESS)
-        self._card_pending   = StatsCard(self, "Chờ Upload",  color=WARNING)
+        self._card_crawled   = StatsCard(self, "Đã Crawl",   color=ACCENT, icon="📥")
+        self._card_processed = StatsCard(self, "Đã Xử lý",   color=ACCENT, icon="⚙")
+        self._card_posted    = StatsCard(self, "Đã Upload",   color=SUCCESS, icon="📤")
+        self._card_pending   = StatsCard(self, "Chờ Upload",  color=WARNING, icon="⏳")
 
         for col, card in enumerate([
             self._card_crawled, self._card_processed,
             self._card_posted, self._card_pending
         ]):
-            card.grid(row=2, column=col, padx=6, pady=4, sticky="ew")
+            card.grid(row=3, column=col, padx=6, pady=4, sticky="ew")
+
+        # Performance Chart
+        self._chart = DonutChart(self, title="📈  Tiến Độ Tổng Quan", fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        self._chart.grid(row=4, column=0, sticky="nsew", padx=(4, 2), pady=(20, 0))
+        
+        # System Info
+        self._sys_info = SystemInfoWidget(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        self._sys_info.grid(row=4, column=1, sticky="nsew", padx=(2, 2), pady=(20, 0))
 
         # Recent activity log
         log_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12,
                                   border_width=1, border_color=BORDER)
-        log_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=4, pady=(20, 0))
+        log_frame.grid(row=4, column=2, columnspan=2, sticky="nsew", padx=(2, 4), pady=(20, 0))
         log_frame.grid_rowconfigure(1, weight=1)
         log_frame.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        self.grid_rowconfigure(4, weight=1)
 
         ctk.CTkLabel(
             log_frame, text="📋  Activity Log",
@@ -266,6 +544,7 @@ class DashboardTab(ctk.CTkFrame):
         """Loop auto refresh stats."""
         try:
             self.refresh_stats(silent=True)
+            self._sys_info.update_stats()
         except Exception:
             pass
         finally:
@@ -280,25 +559,64 @@ class DashboardTab(ctk.CTkFrame):
             current_user = auth_client.user_info.get("username") if auth_client.user_info else None
             
             s  = db.get_stats(username=current_user)
-            self._card_crawled.set_value(s.get("total_crawled", 0))
-            self._card_processed.set_value(s.get("total_processed", 0))
-            self._card_posted.set_value(s.get("total_posted", 0))
-            self._card_pending.set_value(s.get("pending_post", 0))
+            crawled = s.get("total_crawled", 0)
+            processed = s.get("total_processed", 0)
+            posted = s.get("total_posted", 0)
+            pending = s.get("pending_post", 0)
+            
+            self._card_crawled.set_value(crawled)
+            self._card_processed.set_value(processed)
+            self._card_posted.set_value(posted)
+            self._card_pending.set_value(pending)
+            
+            # Update Chart
+            self._chart.update_data([
+                ("Video đã Upload", posted, SUCCESS),
+                ("Video chờ Upload", pending, WARNING),
+                ("Đã Crawl/Xử lý", max(0, crawled - posted - pending), ACCENT)
+            ])
             
             # Fetch Account Info
             from auth_client import auth_client
             success, _ = auth_client.get_me()
             if success and auth_client.user_info:
-                self._card_plan.set_value(auth_client.user_info.get("plan_name", "Free"))
-                limit = auth_client.user_info.get("max_daily_videos", 0)
-                limit_str = "∞" if limit > 1000 else str(limit)
-                self._card_limit.set_value(limit_str)
-                self._card_used.set_value(auth_client.user_info.get("used_today", 0))
+                self._card_role.set_value(auth_client.user_info.get("role", "user").upper())
+                self._card_expire.set_value(auth_client.user_info.get("expire_date", "Chưa có"))
                 
-                rem = auth_client.user_info.get("remaining", 0)
-                rem_str = "∞" if limit > 1000 else str(rem)
-                self._card_rem.set_value(rem_str)
+                is_expired = auth_client.user_info.get("is_expired", True)
+                if is_expired:
+                    self._card_status.set_value("HẾT HẠN")
+                    self._card_features.set_value("Đã khóa")
+                else:
+                    self._card_status.set_value("Hoạt động")
+                    self._card_features.set_value("Mở khóa (Full)")
                 
+            # Load announcement từ server → hiện Toast
+            succ, pay_info = auth_client.get_payment_info()
+            if succ and pay_info:
+                announcement = pay_info.get("system_announcement", "").strip()
+                version = pay_info.get("client_version", "").strip()
+                
+                # Chỉ hiện toast 1 lần khi refresh lần đầu (not silent)
+                if not silent:
+                    if version and version != "1.0":
+                        show_toast(
+                            self.winfo_toplevel(),
+                            title="Cập Nhật Phiên Bản Mới!",
+                            message=f"Phiên bản v{version} đã ra mắt.\nTải lại Tool mới nhất để có tính năng mới & vá lỗi!",
+                            type_="update",
+                            duration=15
+                        )
+                    elif announcement:
+                        show_toast(
+                            self.winfo_toplevel(),
+                            title="Thông Báo Hệ Thống",
+                            message=announcement,
+                            type_="warning",
+                            duration=10
+                        )
+
+            
             if not silent:
                 self._log_widget.append("Stats đã được cập nhật.", "SUCCESS")
         except Exception as e:
@@ -455,6 +773,11 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         return result
 
     def _start_crawl(self):
+        from auth_client import auth_client
+        if auth_client.user_info and auth_client.user_info.get("is_expired", True):
+            messagebox.showerror("Bản quyền", "Tài khoản của bạn đã hết hạn. Vui lòng gia hạn để tiếp tục sử dụng!")
+            return
+            
         self._btn_crawl.configure(state="disabled")
         self._status_badge.set("Đang crawl...", WARNING)
         self._log_widget.clear()
@@ -751,7 +1074,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         self._btn_process = ctk.CTkButton(
             btn_row, text="▶  Bắt đầu Xử lý", height=42,
             font=("Segoe UI", 14, "bold"),
-            fg_color="#9b59b6", hover_color="#8e44ad",
+            fg_color=ACCENT, hover_color=ACCENT_HOVER,
             command=self._start_process,
         )
         self._btn_process.pack(fill="x", pady=(0, 10))
@@ -795,12 +1118,13 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
                                  border_width=1, border_color=BORDER)
             card.pack(fill="x", pady=4, padx=10)
             
-            var = ctk.BooleanVar(value=True) # Mặc định chọn tất cả
+            var = ctk.BooleanVar(value=False) # Không chọn mặc định
             self._checkboxes[vid] = var
             
             # Checkbox bên trái
             cb = ctk.CTkCheckBox(
-                card, text="", variable=var, width=24
+                card, text="", variable=var, width=24,
+                command=self._update_limit_state
             )
             cb.pack(side="left", padx=(10, 0), pady=10)
             
@@ -832,8 +1156,28 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
                 import os
                 if os.path.exists(path):
                     size_mb = os.path.getsize(path) / (1024 * 1024)
-            ctk.CTkLabel(info_frame, text=f"📦 {size_mb:.1f} MB (Chưa xử lý)", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(anchor="w", pady=(2, 0))
+                    
+            duration = video.get("duration", 0)
+            if duration > 0:
+                mins = int(duration // 60)
+                secs = int(duration % 60)
+                duration_str = f"({mins}:{secs:02d})"
+            else:
+                duration_str = "(Chưa xử lý)"
+                
+            ctk.CTkLabel(info_frame, text=f"📦 {size_mb:.1f} MB {duration_str}", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(anchor="w", pady=(2, 0))
             
+        self._update_limit_state()
+
+    def _update_limit_state(self):
+        selected_count = sum(1 for var in self._checkboxes.values() if var.get())
+        self._entry_limit.configure(state="normal")
+        if selected_count > 0:
+            self._entry_limit.delete(0, "end")
+            self._entry_limit.insert(0, str(selected_count))
+            self._entry_limit.configure(state="disabled", text_color=TEXT_DIM)
+        else:
+            self._entry_limit.configure(text_color=TEXT_MAIN)
     def _delete_selected(self):
         selected_ids = [vid for vid, var in self._checkboxes.items() if var.get()]
         if not selected_ids:
@@ -870,9 +1214,9 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         db = DatabaseManager()
         current_user = auth_client.user_info.get("username") if auth_client.user_info else None
         
+        from config.settings import get_user_downloads_dir
         # Thư mục lưu trữ video cục bộ
-        local_dir = Path("downloads/local")
-        local_dir.mkdir(parents=True, exist_ok=True)
+        local_dir = get_user_downloads_dir(current_user)
         
         imported_count = 0
         for path_str in file_paths:
@@ -979,22 +1323,42 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         self._load_videos()
 
     def _start_process(self):
+        from auth_client import auth_client
+        if auth_client.user_info and auth_client.user_info.get("is_expired", True):
+            messagebox.showerror("Bản quyền", "Tài khoản của bạn đã hết hạn. Vui lòng gia hạn để tiếp tục sử dụng!")
+            return
+            
+        role = auth_client.user_info.get("role", "user") if auth_client.user_info else "user"
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        
+        # Kiểm tra giới hạn Role
+        if role != "admin":
+            from database.db_manager import DatabaseManager
+            db = DatabaseManager()
+            today_count = db.get_today_processed_count(username=username)
+            if today_count >= 10:
+                messagebox.showerror("Giới hạn", "Tài khoản của bạn đã đạt giới hạn 10 video process/ngày. Vui lòng nâng cấp gói hoặc liên hệ Admin!")
+                return
+            
+        self._btn_process.configure(state="disabled")
+        self._log_widget.clear()
+        self._log("Bắt đầu xử lý video...", "INFO")
         if getattr(self, "is_running", False):
             self._cancel_task()
             self._btn_process.configure(state="disabled", text="Đang dừng...")
             return
 
         self.is_running = True
-        self._btn_process.configure(text="⏹ Dừng lại", fg_color=DANGER, hover_color="#c0392b")
+        self._btn_process.configure(state="normal", text="⏹ Dừng lại", fg_color=DANGER, hover_color="#c0392b")
         self._status_badge.set("Đang xử lý...", WARNING)
         self._log_widget.clear()
         self._log("Bắt đầu xử lý video...", "INFO")
 
         title = self._entry_title.get().strip() or None
         limit = int(self._entry_limit.get() or 10)
-        self._run_in_thread(self._do_process, title, limit)
+        self._run_in_thread(self._do_process, title, limit, username)
 
-    def _do_process(self, title, limit):
+    def _do_process(self, title, limit, username):
         from processor.video_processor import VideoProcessor
         from database.db_manager import DatabaseManager
         from config.settings import PROCESSOR_CONFIG
@@ -1094,7 +1458,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         PROCESSOR_CONFIG["tts_rate"] = rate_val
 
         db        = DatabaseManager()
-        processor = VideoProcessor(db=db)
+        processor = VideoProcessor(db=db, username=username)
         titles    = {}
         if title:
             for vid in selected_ids:
@@ -1112,7 +1476,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
     def _on_task_done(self):
         super()._on_task_done()
         self.is_running = False
-        self.after(0, lambda: self._btn_process.configure(state="normal", text="▶  Bắt đầu Xử lý", fg_color="#9b59b6", hover_color="#8e44ad"))
+        self.after(0, lambda: self._btn_process.configure(state="normal", text="▶  Bắt đầu Xử lý", fg_color=ACCENT, hover_color=ACCENT_HOVER))
         self.after(0, lambda: self._status_badge.set("Xong", SUCCESS))
 
 
@@ -1187,244 +1551,8 @@ class InputJSONWindow(ctk.CTkToplevel):
         self.destroy()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  AccountManagerWindow
-# ═══════════════════════════════════════════════════════════════════════════════
-class AccountManagerWindow(ctk.CTkToplevel):
-    def __init__(self, master, on_close_callback=None):
-        super().__init__(master)
-        self.title("Quản lý Tài khoản (Cookies)")
-        self.geometry("450x350")
-        self.on_close_callback = on_close_callback
-        
-        self.transient(master)
-        self.grab_set()
-
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
-
-        ctk.CTkLabel(self, text="Danh sách tài khoản (JSON):", font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 8))
-        
-        self._list_frame = ctk.CTkScrollableFrame(self, fg_color=BG_DARK, border_color=BORDER, border_width=1)
-        self._list_frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
-        
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 16))
-        
-        ctk.CTkButton(btn_frame, text="Tải lên tài khoản mới", fg_color=SUCCESS, hover_color="#27ae60", command=self._upload_account).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="Nhập JSON thủ công", fg_color=ACCENT, hover_color="#2980b9", command=self._input_json).pack(side="left")
-        ctk.CTkButton(btn_frame, text="Đóng", fg_color=BORDER, hover_color=BG_CARD, command=self._on_close).pack(side="right")
-        
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self._load_accounts()
-
-    def _load_accounts(self):
-        for widget in self._list_frame.winfo_children():
-            widget.destroy()
-            
-        user_dir = UploadTab._get_user_cookies_dir()
-        accounts = [f.name for f in user_dir.glob("tiktok_*.json")]
-            
-        for acc in accounts:
-            item = ctk.CTkFrame(self._list_frame, fg_color=BG_CARD, corner_radius=6)
-            item.pack(fill="x", pady=4, padx=4)
-            display_acc = acc if len(acc) < 35 else acc[:20] + "..." + acc[-10:]
-            ctk.CTkLabel(item, text=display_acc, font=("Consolas", 12)).pack(side="left", padx=10, pady=8)
-            ctk.CTkButton(item, text="Xóa", width=50, fg_color=DANGER, hover_color="#c0392b", command=lambda a=acc: self._delete_account(a)).pack(side="right", padx=10, pady=8)
-            ctk.CTkButton(item, text="Sửa", width=50, fg_color=WARNING, hover_color="#d35400", command=lambda a=acc: self._edit_account(a)).pack(side="right", padx=5, pady=8)
-
-    def _upload_account(self):
-        path = filedialog.askopenfilename(
-            title="Chọn file cookie JSON",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-        )
-        if path:
-            try:
-                dest_name = os.path.basename(path)
-                if not dest_name.startswith("tiktok_"):
-                    dest_name = f"tiktok_{dest_name}"
-                user_dir = UploadTab._get_user_cookies_dir()
-                shutil.copy2(path, user_dir / dest_name)
-                messagebox.showinfo("Thành công", f"Đã tải lên tài khoản: {dest_name}")
-                self._load_accounts()
-            except Exception as e:
-                messagebox.showerror("Lỗi", f"Không thể tải lên file: {e}")
-
-    def _input_json(self):
-        InputJSONWindow(self, on_close_callback=self._load_accounts)
-
-    def _edit_account(self, filename):
-        try:
-            user_dir = UploadTab._get_user_cookies_dir()
-            with open(user_dir / filename, "r", encoding="utf-8") as f:
-                content = f.read()
-            InputJSONWindow(self, on_close_callback=self._load_accounts, initial_name=filename, initial_content=content)
-        except Exception as e:
-            messagebox.showerror("Lỗi", f"Không thể đọc file: {e}")
-
-    def _delete_account(self, filename):
-        if messagebox.askyesno("Xác nhận", f"Bạn có chắc chắn muốn xóa {filename}?"):
-            try:
-                user_dir = UploadTab._get_user_cookies_dir()
-                (user_dir / filename).unlink(missing_ok=True)
-                self._load_accounts()
-            except Exception as e:
-                messagebox.showerror("Lỗi", f"Không thể xóa file: {e}")
-
-    def _on_close(self):
-        if self.on_close_callback:
-            self.on_close_callback()
-        self.destroy()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  YouTubeAccountManagerWindow
-# ═══════════════════════════════════════════════════════════════════════════════
-class YouTubeAccountManagerWindow(ctk.CTkToplevel):
-    def __init__(self, master, on_close_callback=None):
-        super().__init__(master)
-        self.title("Quản lý Tài khoản (YouTube)")
-        self.geometry("550x550")
-        self.on_close_callback = on_close_callback
-        
-        self.transient(master)
-        self.grab_set()
-
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
-
-        ctk.CTkLabel(self, text="Danh sách tài khoản YouTube (Token):", font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 8))
-        
-        self._list_frame = ctk.CTkScrollableFrame(self, fg_color=BG_DARK, border_color=BORDER, border_width=1)
-        self._list_frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
-        
-        # Secret Key input frame (File)
-        secret_frame = ctk.CTkFrame(self, fg_color="transparent")
-        secret_frame.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 8))
-        
-        ctk.CTkLabel(secret_frame, text="Client Secret (File):", font=("Segoe UI", 12)).pack(side="left")
-        self._secret_entry = ctk.CTkEntry(secret_frame, font=("Segoe UI", 11), width=250)
-        user_dir = UploadTab._get_user_cookies_dir()
-        self._secret_entry.insert(0, str(user_dir / "client_secret.json"))
-        self._secret_entry.pack(side="left", padx=10)
-        ctk.CTkButton(secret_frame, text="📁", width=36, height=28, fg_color=BORDER, hover_color=BG_CARD, command=self._pick_secret).pack(side="left")
-        ctk.CTkButton(secret_frame, text="Đăng nhập", fg_color=SUCCESS, hover_color="#27ae60", command=self._add_account).pack(side="left", padx=(10, 0))
-        
-        # Secret Key input frame (Paste JSON)
-        paste_frame = ctk.CTkFrame(self, fg_color="transparent")
-        paste_frame.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 8))
-        
-        ctk.CTkLabel(paste_frame, text="Hoặc dán mã JSON của Client Secret (KHÔNG PHẢI COOKIES!):", font=("Segoe UI", 12, "bold"), text_color="#e74c3c").pack(anchor="w")
-        self._json_textbox = ctk.CTkTextbox(paste_frame, height=80, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER, border_width=1)
-        self._json_textbox.pack(fill="x", pady=4)
-        ctk.CTkButton(paste_frame, text="Lưu JSON & Đăng nhập", fg_color=SUCCESS, hover_color="#27ae60", command=self._add_account_from_json).pack(anchor="w")
-        
-        # Bottom Buttons
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=4, column=0, sticky="ew", padx=16, pady=(16, 16))
-        
-        ctk.CTkButton(btn_frame, text="Đóng", fg_color=BORDER, hover_color=BG_CARD, command=self._on_close).pack(side="right")
-        
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self._load_accounts()
-
-    def _pick_secret(self):
-        import os
-        from tkinter import filedialog
-        path = filedialog.askopenfilename(
-            title="Chọn file client_secret.json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
-        )
-        if path:
-            self._secret_entry.delete(0, "end")
-            self._secret_entry.insert(0, path)
-
-    def _load_accounts(self):
-        for widget in self._list_frame.winfo_children():
-            widget.destroy()
-            
-        user_dir = UploadTab._get_user_cookies_dir()
-        accounts = [f.name for f in user_dir.glob("youtube_*.json")]
-            
-        for acc in accounts:
-            item = ctk.CTkFrame(self._list_frame, fg_color=BG_CARD, corner_radius=6)
-            item.pack(fill="x", pady=4, padx=4)
-            ctk.CTkLabel(item, text=acc, font=("Consolas", 12)).pack(side="left", padx=10, pady=8)
-            ctk.CTkButton(item, text="Xóa", width=50, fg_color=DANGER, hover_color="#c0392b", command=lambda a=acc: self._delete_account(a)).pack(side="right", padx=10, pady=8)
-
-    def _add_account_from_json(self):
-        json_text = self._json_textbox.get("1.0", "end").strip()
-        if not json_text:
-            from tkinter import messagebox
-            messagebox.showerror("Lỗi", "Vui lòng dán nội dung file client_secret.json vào ô trống.")
-            return
-            
-        import json
-        try:
-            json.loads(json_text)
-        except json.JSONDecodeError:
-            from tkinter import messagebox
-            messagebox.showerror("Lỗi", "Nội dung JSON không hợp lệ.")
-            return
-            
-        user_dir = UploadTab._get_user_cookies_dir()
-        secret_path = str(user_dir / "client_secret.json")
-        with open(secret_path, "w", encoding="utf-8") as f:
-            f.write(json_text)
-            
-        self._secret_entry.delete(0, "end")
-        self._secret_entry.insert(0, secret_path)
-        
-        # Clear textbox sau khi dùng
-        self._json_textbox.delete("1.0", "end")
-        self._add_account()
-
-    def _add_account(self):
-        secret_path = self._secret_entry.get().strip()
-        import os
-        if not os.path.exists(secret_path):
-            from tkinter import messagebox
-            messagebox.showerror("Lỗi", "Không tìm thấy file client_secret.json! Vui lòng tải từ Google Cloud Console hoặc dán code JSON vào ô bên dưới.")
-            return
-            
-        user_dir = UploadTab._get_user_cookies_dir()
-        # Find next available youtube_X.json
-        idx = 1
-        while (user_dir / f"youtube_{idx}.json").exists():
-            idx += 1
-        
-        new_token_name = f"youtube_{idx}.json"
-        token_path = str(user_dir / new_token_name)
-        
-        import threading
-        
-        def _auth_thread():
-            from uploader.youtube_uploader import YouTubeUploader
-            if YouTubeUploader.authorize_new_account(secret_path, token_path):
-                self.after(0, lambda: _on_auth_success(new_token_name))
-                
-        def _on_auth_success(name):
-            from tkinter import messagebox
-            messagebox.showinfo("Thành công", f"Đã đăng nhập và lưu {name}")
-            self._load_accounts()
-            
-        t = threading.Thread(target=_auth_thread, daemon=True)
-        t.start()
-
-    def _delete_account(self, filename):
-        from tkinter import messagebox
-        if messagebox.askyesno("Xác nhận", f"Bạn có chắc chắn muốn xóa {filename}?"):
-            try:
-                user_dir = UploadTab._get_user_cookies_dir()
-                (user_dir / filename).unlink(missing_ok=True)
-                self._load_accounts()
-            except Exception as e:
-                messagebox.showerror("Lỗi", f"Không thể xóa file: {e}")
-
-    def _on_close(self):
-        if self.on_close_callback:
-            self.on_close_callback()
-        self.destroy()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Tab: Upload
@@ -1564,7 +1692,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         
         self._btn_manage_acc = ctk.CTkButton(
             tt_btns, text="⚙ Quản lý", width=70, height=24, font=("Segoe UI", 11),
-            fg_color=BORDER, hover_color=BG_CARD, command=self._open_account_manager
+            fg_color=BORDER, hover_color=BG_CARD, command=lambda: self.app._nav(5)
         )
         self._btn_manage_acc.pack(side="left")
 
@@ -1593,7 +1721,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         
         self._btn_manage_acc_yt = ctk.CTkButton(
             yt_btns, text="⚙ Quản lý", width=70, height=24, font=("Segoe UI", 11),
-            fg_color=BORDER, hover_color=BG_CARD, command=self._open_youtube_account_manager
+            fg_color=BORDER, hover_color=BG_CARD, command=lambda: self.app._nav(5)
         )
         self._btn_manage_acc_yt.pack(side="left")
 
@@ -1724,7 +1852,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                     messagebox.showinfo("Thành công", f"Đã lưu Caption cho video {video_id}")
                 return cmd
                 
-            btn_save = ctk.CTkButton(row4, text="💾 Lưu Caption", width=120, height=26, font=("Segoe UI", 12, "bold"), fg_color="#2980b9", hover_color="#3498db", command=make_save_cmd(vid, textbox))
+            btn_save = ctk.CTkButton(row4, text="💾 Lưu Caption", width=120, height=26, font=("Segoe UI", 12, "bold"), fg_color=ACCENT, hover_color=ACCENT_HOVER, command=make_save_cmd(vid, textbox))
             btn_save.pack(side="left")
 
         self._update_selected_count()
@@ -1779,13 +1907,33 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._update_selected_count()
 
     def _start_upload(self):
+        from auth_client import auth_client
+        if auth_client.user_info and auth_client.user_info.get("is_expired", True):
+            messagebox.showerror("Bản quyền", "Tài khoản của bạn đã hết hạn. Vui lòng gia hạn để tiếp tục sử dụng!")
+            return
+            
+        role = auth_client.user_info.get("role", "user") if auth_client.user_info else "user"
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        
+        # Kiểm tra giới hạn Role
+        if role != "admin":
+            from database.db_manager import DatabaseManager
+            db = DatabaseManager()
+            today_count = db.get_today_post_count(platform="tiktok", username=username)
+            if today_count >= 10:
+                messagebox.showerror("Giới hạn", "Tài khoản của bạn đã đạt giới hạn 10 video upload/ngày. Vui lòng nâng cấp gói hoặc liên hệ Admin!")
+                return
+            
+        self._btn_upload.configure(state="disabled")
+        self._log_widget.clear()
+        self._log("Bắt đầu chuẩn bị Upload...", "INFO")
         if getattr(self, "is_running", False):
             self._cancel_task()
             self._btn_upload.configure(state="disabled", text="Đang dừng...")
             return
 
         self.is_running = True
-        self._btn_upload.configure(text="⏹ Dừng lại", fg_color=DANGER, hover_color="#c0392b")
+        self._btn_upload.configure(state="normal", text="⏹ Dừng lại", fg_color=DANGER, hover_color="#c0392b")
         self._status_badge.set("Đang upload...", WARNING)
         self._log_widget.clear()
         self._log("Bắt đầu upload video lên TikTok...", "INFO")
@@ -1825,6 +1973,9 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         db = DatabaseManager()
         
+        from auth_client import auth_client
+        current_user = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        
         if do_tt:
             from uploader.tiktok_uploader import TikTokUploader
             total_uploaded = 0
@@ -1853,7 +2004,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                 except Exception:
                     pass
                     
-                uploader = TikTokUploader(db=db, cookies_file=cookies_path, proxy=proxy_str)
+                uploader = TikTokUploader(db=db, cookies_file=cookies_path, proxy=proxy_str, username=current_user)
                 
                 captions_to_pass = {
                     vid: custom_captions_dict[vid] 
@@ -1864,7 +2015,8 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                     results = await uploader.upload_pending_videos(
                         limit=len(vids_to_upload), 
                         video_ids=vids_to_upload,
-                        custom_captions=captions_to_pass
+                        custom_captions=captions_to_pass,
+                        cancel_check=lambda: self.cancel_flag
                     )
                     total_uploaded += len(results)
                     self._log(f"✅ Upload xong {len(results)} videos lên TikTok ({account_file})!", "SUCCESS")
@@ -1885,7 +2037,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                 self._log(f"Bắt đầu upload {len(vids_to_upload)} video lên YouTube bằng {account_file}...", "INFO")
                 user_dir = self._get_user_cookies_dir()
                 token_path = str(user_dir / account_file)
-                yt_uploader = YouTubeUploader(db=db, token_file=token_path)
+                yt_uploader = YouTubeUploader(db=db, token_file=token_path, username=current_user)
                 
                 captions_to_pass = {
                     vid: custom_captions_dict[vid] 
@@ -1896,7 +2048,8 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                     results = await yt_uploader.upload_pending_videos(
                         limit=len(vids_to_upload), 
                         video_ids=vids_to_upload,
-                        custom_captions=captions_to_pass
+                        custom_captions=captions_to_pass,
+                        cancel_check=lambda: self.cancel_flag
                     )
                     total_uploaded += len(results)
                     self._log(f"✅ Upload xong {len(results)} videos lên YouTube ({account_file})!", "SUCCESS")
@@ -1915,8 +2068,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             if self._checkboxes[vid].get():
                 opt.set(selected)
 
-    def _open_account_manager(self):
-        AccountManagerWindow(self, on_close_callback=self._refresh_accounts)
+
 
     def _refresh_accounts(self):
         accounts = self._get_tiktok_accounts()
@@ -1942,8 +2094,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             if self._checkboxes[vid].get():
                 opt.set(selected)
 
-    def _open_youtube_account_manager(self):
-        YouTubeAccountManagerWindow(self, on_close_callback=self._refresh_youtube_accounts)
+
 
     def _refresh_youtube_accounts(self):
         accounts = self._get_youtube_accounts()
@@ -2118,7 +2269,7 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         self._btn_manage_acc = ctk.CTkButton(
             acc_frame, text="⚙ Quản lý", width=70, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD,
-            command=self._open_account_manager
+            command=lambda: self.app._nav(5)
         )
         self._btn_manage_acc.pack(side="left", padx=(10, 20))
 
@@ -2136,7 +2287,7 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         self._btn_manage_acc_yt = ctk.CTkButton(
             acc_frame, text="⚙ Quản lý YT", width=70, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD,
-            command=self._open_youtube_account_manager
+            command=lambda: self.app._nav(5)
         )
         self._btn_manage_acc_yt.pack(side="left", padx=(10, 0))
 
@@ -2168,8 +2319,7 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         self._log_widget = LogWidget(self)
         self._log_widget.grid(row=3, column=0, sticky="nsew")
 
-    def _open_account_manager(self):
-        AccountManagerWindow(self, on_close_callback=self._refresh_accounts)
+
 
     def _refresh_accounts(self):
         accounts = UploadTab._get_tiktok_accounts()
@@ -2181,8 +2331,7 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         else:
             self._opt_account.set("")
 
-    def _open_youtube_account_manager(self):
-        YouTubeAccountManagerWindow(self, on_close_callback=self._refresh_youtube_accounts)
+
 
     def _refresh_youtube_accounts(self):
         accounts = UploadTab._get_youtube_accounts()
@@ -2213,6 +2362,11 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
             self._entry_file.insert(0, path)
 
     def _start(self):
+        from auth_client import auth_client
+        if auth_client.user_info and auth_client.user_info.get("is_expired", True):
+            messagebox.showerror("Bản quyền", "Tài khoản của bạn đã hết hạn. Vui lòng gia hạn để tiếp tục sử dụng!")
+            return
+            
         self._running = True
         self._btn_start.configure(state="disabled")
         self._btn_stop.configure(state="normal")
@@ -2298,6 +2452,392 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Tab: Nuôi Nick (Farm)
 # ═══════════════════════════════════════════════════════════════════════════════
+class AccountsTab(ctk.CTkFrame, TaskMixin):
+    def __init__(self, parent, app=None, **kwargs):
+        super().__init__(parent, fg_color="transparent", **kwargs)
+        self.app = app
+        
+        self.tabview = ctk.CTkTabview(self, fg_color="transparent")
+        self.tabview.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        self.tab_tiktok = self.tabview.add("🎵 TikTok")
+        self.tab_youtube = self.tabview.add("▶️ YouTube")
+        
+        self._build_tiktok_tab()
+        self._build_youtube_tab()
+        
+    def _build_tiktok_tab(self):
+        hdr = ctk.CTkFrame(self.tab_tiktok, fg_color="transparent")
+        hdr.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(hdr, text="Quản lý Tài khoản TikTok", font=("Segoe UI", 16, "bold")).pack(side="left")
+        ctk.CTkButton(hdr, text="🔄 Làm mới", width=70, height=28, fg_color=BORDER, hover_color=BG_CARD, command=self._load_accounts).pack(side="right", padx=5)
+        ctk.CTkButton(hdr, text="📁 Tải JSON", width=90, height=28, fg_color=ACCENT, hover_color=ACCENT_HOVER, command=self._upload_account).pack(side="right", padx=(0, 5))
+        ctk.CTkButton(hdr, text="➕ Thêm nick mới", width=120, height=28, fg_color=SUCCESS, hover_color="#27ae60", command=self._add_new_account).pack(side="right", padx=(0, 5))
+        
+        self._list_frame = ctk.CTkScrollableFrame(self.tab_tiktok, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        self._list_frame.pack(fill="both", expand=True)
+        
+        self._proxy_entries = {}
+        self._load_accounts()
+
+    def _build_youtube_tab(self):
+        ctk.CTkLabel(self.tab_youtube, text="Danh sách tài khoản YouTube (Token):", font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).pack(anchor="w", pady=(0, 8))
+        
+        self._yt_list_frame = ctk.CTkScrollableFrame(self.tab_youtube, fg_color=BG_DARK, border_color=BORDER, border_width=1)
+        self._yt_list_frame.pack(fill="both", expand=True, pady=(0, 16))
+        
+        secret_frame = ctk.CTkFrame(self.tab_youtube, fg_color="transparent")
+        secret_frame.pack(fill="x", pady=(0, 8))
+        
+        ctk.CTkLabel(secret_frame, text="Client Secret (File):", font=("Segoe UI", 12)).pack(side="left")
+        self._secret_entry = ctk.CTkEntry(secret_frame, font=("Segoe UI", 11), width=250)
+        from config.settings import COOKIES_DIR
+        from auth_client import auth_client
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        user_dir = COOKIES_DIR / username
+        self._secret_entry.insert(0, str(user_dir / "client_secret.json"))
+        self._secret_entry.pack(side="left", padx=10)
+        ctk.CTkButton(secret_frame, text="📁", width=36, height=28, fg_color=BORDER, hover_color=BG_CARD, command=self._pick_secret).pack(side="left")
+        ctk.CTkButton(secret_frame, text="Đăng nhập", fg_color=SUCCESS, hover_color="#27ae60", command=self._add_yt_account).pack(side="left", padx=(10, 0))
+        
+        paste_frame = ctk.CTkFrame(self.tab_youtube, fg_color="transparent")
+        paste_frame.pack(fill="x", pady=(0, 8))
+        
+        ctk.CTkLabel(paste_frame, text="Hoặc dán mã JSON của Client Secret (KHÔNG PHẢI COOKIES!):", font=("Segoe UI", 12, "bold"), text_color="#e74c3c").pack(anchor="w")
+        self._json_textbox = ctk.CTkTextbox(paste_frame, height=80, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER, border_width=1)
+        self._json_textbox.pack(fill="x", pady=4)
+        ctk.CTkButton(paste_frame, text="Lưu JSON & Đăng nhập", fg_color=SUCCESS, hover_color="#27ae60", command=self._add_yt_account_from_json).pack(anchor="w")
+        
+        self._load_yt_accounts()
+
+    def _load_accounts(self):
+        for widget in self._list_frame.winfo_children():
+            widget.destroy()
+        if not hasattr(self, '_proxy_entries'):
+            self._proxy_entries = {}
+        self._proxy_entries.clear()
+        
+        from config.settings import COOKIES_DIR
+        from auth_client import auth_client
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        user_dir = COOKIES_DIR / username
+        
+        accounts = [f.name for f in user_dir.glob("tiktok_*.json")]
+        if not accounts:
+            ctk.CTkLabel(self._list_frame, text="Chưa có tài khoản nào.", text_color=TEXT_DIM).pack(pady=20)
+            return
+        
+        saved_proxies = self._load_proxies(user_dir)
+            
+        for acc in accounts:
+            row = ctk.CTkFrame(self._list_frame, fg_color=BG_DARK, corner_radius=8, border_width=1, border_color=BORDER)
+            row.pack(fill="x", pady=4, ipady=2)
+            row.grid_columnconfigure(1, weight=1)
+            
+            display_acc = acc.replace("tiktok_", "").replace(".json", "")
+            if len(display_acc) > 15:
+                display_acc = display_acc[:12] + "..."
+                
+            ctk.CTkLabel(row, text=display_acc, font=("Segoe UI", 13, "bold"), text_color=ACCENT, width=120, anchor="w").grid(row=0, column=0, padx=(12, 10), pady=10, sticky="w")
+            
+            proxy_frame = ctk.CTkFrame(row, fg_color="transparent")
+            proxy_frame.grid(row=0, column=1, sticky="ew", padx=10)
+            proxy_frame.grid_columnconfigure(1, weight=1)
+            
+            ctk.CTkLabel(proxy_frame, text="🌐 Proxy:", font=("Segoe UI", 11), text_color=TEXT_DIM).grid(row=0, column=0, padx=(0, 8))
+            proxy_entry = ctk.CTkEntry(
+                proxy_frame, height=28, font=("Consolas", 11),
+                placeholder_text="ip:port:user:pass", fg_color=BG_CARD, border_color=BORDER
+            )
+            proxy_entry.grid(row=0, column=1, sticky="ew")
+            
+            if acc in saved_proxies and saved_proxies[acc]:
+                proxy_entry.insert(0, saved_proxies[acc])
+            self._proxy_entries[acc] = proxy_entry
+            
+            btn_login = ctk.CTkButton(
+                row, text="🔑 Login", width=70, height=28, font=("Segoe UI", 11, "bold"),
+                fg_color=BORDER, hover_color=BG_CARD, text_color=TEXT_MAIN,
+                command=lambda a=acc: self._manual_login(a)
+            )
+            btn_login.grid(row=0, column=2, padx=(0, 5))
+            
+            btn_edit = ctk.CTkButton(
+                row, text="Sửa", width=50, height=28, font=("Segoe UI", 11),
+                fg_color=WARNING, hover_color="#d35400",
+                command=lambda a=acc: self._edit_account(a)
+            )
+            btn_edit.grid(row=0, column=3, padx=(0, 5))
+            
+            btn_delete = ctk.CTkButton(
+                row, text="Xóa", width=50, height=28, font=("Segoe UI", 11),
+                fg_color=DANGER, hover_color="#c0392b",
+                command=lambda a=acc: self._delete_tiktok_account(a)
+            )
+            btn_delete.grid(row=0, column=4, padx=(0, 12))
+
+    def _add_new_account(self):
+        dialog = ctk.CTkInputDialog(text="Nhập tên tài khoản (Viết liền không dấu, VD: nick_1):", title="Thêm tài khoản")
+        acc_name = dialog.get_input()
+        if not acc_name:
+            return
+        acc_name = acc_name.strip()
+        if not acc_name:
+            return
+        if not acc_name.startswith("tiktok_"):
+            acc_name = "tiktok_" + acc_name
+        if not acc_name.endswith(".json"):
+            acc_name += ".json"
+            
+        from config.settings import COOKIES_DIR
+        from auth_client import auth_client
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        user_dir = COOKIES_DIR / username
+        user_dir.mkdir(parents=True, exist_ok=True)
+        
+        cookie_file = user_dir / acc_name
+        if not cookie_file.exists():
+            import json
+            with open(cookie_file, "w", encoding="utf-8") as f:
+                json.dump([], f)
+                
+        self._load_accounts()
+        from tkinter import messagebox
+        messagebox.showinfo("Thành công", f"Đã tạo {acc_name}. Hãy điền Proxy và bấm '🔑 Login' để lưu phiên!")
+
+    def _manual_login(self, acc_name, force_no_proxy=False):
+        proxy_str = None
+        if not force_no_proxy:
+            proxy_str = self._proxy_entries[acc_name].get().strip()
+            
+        from config.settings import COOKIES_DIR
+        from auth_client import auth_client
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        user_dir = COOKIES_DIR / username
+        self._save_proxies(user_dir)
+        
+        cookie_path = str(user_dir / acc_name)
+        
+        def _login_worker():
+            import asyncio
+            from config.settings import TIKTOK_CONFIG
+            from uploader.tiktok_uploader import TikTokUploader
+            old_headless = TIKTOK_CONFIG["browser"].get("headless", True)
+            TIKTOK_CONFIG["browser"]["headless"] = False
+            try:
+                async def _run():
+                    uploader = TikTokUploader(cookies_file=cookie_path, proxy=proxy_str if proxy_str else None)
+                    await uploader._init_browser()
+                    tiktok_page = await uploader.context.new_page()
+                    await tiktok_page.goto("https://www.tiktok.com/")
+                    while len(uploader.context.pages) > 0:
+                        try:
+                            await uploader.context.pages[0].title()
+                            await asyncio.sleep(1)
+                        except:
+                            break
+                    await uploader.close()
+                asyncio.run(_run())
+                
+                def _on_succ():
+                    from tkinter import messagebox
+                    messagebox.showinfo("Thành công", f"Đã đóng trình duyệt và lưu phiên đăng nhập cho {acc_name}.")
+                self.after(0, _on_succ)
+                
+            except Exception as e:
+                err_msg = str(e)
+                def _on_err():
+                    from tkinter import messagebox
+                    if "Lỗi Proxy" in err_msg or "net::ERR_" in err_msg or "Timeout" in err_msg:
+                        msg = f"Proxy có vẻ đã chết hoặc sai thông tin!\n\nLỗi:\n{err_msg}\n\nBạn có muốn BỎ QUA PROXY và dùng IP thật của máy để tiếp tục không?"
+                        if messagebox.askyesno("Proxy Hết Hạn / Lỗi", msg):
+                            self._manual_login(acc_name, force_no_proxy=True)
+                    else:
+                        messagebox.showerror("Lỗi", f"Lỗi khi mở đăng nhập:\n{err_msg}")
+                self.after(0, _on_err)
+            finally:
+                TIKTOK_CONFIG["browser"]["headless"] = old_headless
+                
+        import threading
+        threading.Thread(target=_login_worker, daemon=True).start()
+
+    def _load_proxies(self, user_dir) -> dict:
+        proxy_file = user_dir / "proxies.json"
+        if proxy_file.exists():
+            try:
+                import json
+                with open(proxy_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_proxies(self, user_dir):
+        import json
+        proxies = {}
+        for acc, entry in self._proxy_entries.items():
+            val = entry.get().strip()
+            if val:
+                proxies[acc] = val
+        proxy_file = user_dir / "proxies.json"
+        with open(proxy_file, "w", encoding="utf-8") as f:
+            json.dump(proxies, f, indent=2, ensure_ascii=False)
+
+    def _delete_tiktok_account(self, filename):
+        from tkinter import messagebox
+        if messagebox.askyesno("Xác nhận", f"Bạn có chắc chắn muốn xóa {filename}?"):
+            try:
+                from config.settings import COOKIES_DIR
+                from auth_client import auth_client
+                username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+                user_dir = COOKIES_DIR / username
+                (user_dir / filename).unlink(missing_ok=True)
+                self._load_accounts()
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể xóa file: {e}")
+
+    def _upload_account(self):
+        from tkinter import filedialog, messagebox
+        import shutil
+        import os
+        path = filedialog.askopenfilename(
+            title="Chọn file cookie JSON",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if path:
+            try:
+                dest_name = os.path.basename(path)
+                if not dest_name.startswith("tiktok_"):
+                    dest_name = f"tiktok_{dest_name}"
+                from config.settings import COOKIES_DIR
+                from auth_client import auth_client
+                username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+                user_dir = COOKIES_DIR / username
+                user_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, user_dir / dest_name)
+                messagebox.showinfo("Thành công", f"Đã tải lên tài khoản: {dest_name}")
+                self._load_accounts()
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể tải lên file: {e}")
+
+    def _edit_account(self, filename):
+        from tkinter import messagebox
+        try:
+            from config.settings import COOKIES_DIR
+            from auth_client import auth_client
+            username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            user_dir = COOKIES_DIR / username
+            with open(user_dir / filename, "r", encoding="utf-8") as f:
+                content = f.read()
+            InputJSONWindow(self.winfo_toplevel(), on_close_callback=self._load_accounts, initial_name=filename, initial_content=content)
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể đọc file: {e}")
+
+    def _pick_secret(self):
+        import os
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="Chọn file client_secret.json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if path:
+            self._secret_entry.delete(0, "end")
+            self._secret_entry.insert(0, path)
+
+    def _load_yt_accounts(self):
+        for widget in self._yt_list_frame.winfo_children():
+            widget.destroy()
+            
+        from config.settings import COOKIES_DIR
+        from auth_client import auth_client
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        user_dir = COOKIES_DIR / username
+        accounts = [f.name for f in user_dir.glob("youtube_*.json")]
+            
+        for acc in accounts:
+            item = ctk.CTkFrame(self._yt_list_frame, fg_color=BG_CARD, corner_radius=6)
+            item.pack(fill="x", pady=4, padx=4)
+            ctk.CTkLabel(item, text=acc, font=("Consolas", 12)).pack(side="left", padx=10, pady=8)
+            ctk.CTkButton(item, text="Xóa", width=50, fg_color=DANGER, hover_color="#c0392b", command=lambda a=acc: self._delete_yt_account(a)).pack(side="right", padx=10, pady=8)
+
+    def _delete_yt_account(self, name):
+        from tkinter import messagebox
+        import os
+        if messagebox.askyesno("Xác nhận", f"Xóa tài khoản YouTube: {name}?"):
+            from config.settings import COOKIES_DIR
+            from auth_client import auth_client
+            username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            user_dir = COOKIES_DIR / username
+            path = user_dir / name
+            try:
+                if path.exists():
+                    os.remove(path)
+                self._load_yt_accounts()
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể xóa: {e}")
+
+    def _add_yt_account_from_json(self):
+        json_text = self._json_textbox.get("1.0", "end").strip()
+        if not json_text:
+            from tkinter import messagebox
+            messagebox.showerror("Lỗi", "Vui lòng dán nội dung file client_secret.json vào ô trống.")
+            return
+            
+        import json
+        try:
+            json.loads(json_text)
+        except json.JSONDecodeError:
+            from tkinter import messagebox
+            messagebox.showerror("Lỗi", "Nội dung JSON không hợp lệ.")
+            return
+            
+        from config.settings import COOKIES_DIR
+        from auth_client import auth_client
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        user_dir = COOKIES_DIR / username
+        secret_path = str(user_dir / "client_secret.json")
+        with open(secret_path, "w", encoding="utf-8") as f:
+            f.write(json_text)
+            
+        self._secret_entry.delete(0, "end")
+        self._secret_entry.insert(0, secret_path)
+        self._json_textbox.delete("1.0", "end")
+        self._add_yt_account()
+
+    def _add_yt_account(self):
+        secret_path = self._secret_entry.get().strip()
+        import os
+        if not os.path.exists(secret_path):
+            from tkinter import messagebox
+            messagebox.showerror("Lỗi", "Không tìm thấy file client_secret.json! Vui lòng tải từ Google Cloud Console hoặc dán code JSON vào ô bên dưới.")
+            return
+            
+        from config.settings import COOKIES_DIR
+        from auth_client import auth_client
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        user_dir = COOKIES_DIR / username
+        idx = 1
+        while (user_dir / f"youtube_{idx}.json").exists():
+            idx += 1
+        
+        new_token_name = f"youtube_{idx}.json"
+        token_path = str(user_dir / new_token_name)
+        
+        import threading
+        def _auth_thread():
+            from uploader.youtube_uploader import YouTubeUploader
+            if YouTubeUploader.authorize_new_account(secret_path, token_path):
+                self.after(0, lambda: _on_auth_success(new_token_name))
+                
+        def _on_auth_success(name):
+            from tkinter import messagebox
+            messagebox.showinfo("Thành công", f"Đã đăng nhập và lưu {name}")
+            self._load_yt_accounts()
+            
+        t = threading.Thread(target=_auth_thread, daemon=True)
+        t.start()
+
+
 class FarmTab(ctk.CTkFrame, TaskMixin):
     def __init__(self, master, app, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
@@ -2322,23 +2862,29 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         
         row1 = ctk.CTkFrame(cfg, fg_color="transparent")
         row1.grid(row=0, column=0, sticky="ew", padx=20, pady=16)
-        row1.grid_columnconfigure(4, weight=1) # Đẩy nút Start sang phải
+        row1.grid_columnconfigure(3, weight=1) # Đẩy nút Start sang phải
 
-        ctk.CTkLabel(row1, text="⏱ Thời gian (phút):", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=0, column=0, padx=(0, 10))
-        self._entry_duration = ctk.CTkEntry(row1, width=70, font=("Segoe UI", 12, "bold"), justify="center", fg_color=BG_DARK, border_color=BORDER)
-        self._entry_duration.insert(0, "15")
-        self._entry_duration.grid(row=0, column=1, padx=(0, 25))
-
-        ctk.CTkLabel(row1, text="❤️ Tỷ lệ thả tim:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=0, column=2, padx=(0, 10))
-        self._entry_like_ratio = ctk.CTkEntry(row1, width=70, font=("Segoe UI", 12, "bold"), justify="center", fg_color=BG_DARK, border_color=BORDER)
-        self._entry_like_ratio.insert(0, "0.2")
-        self._entry_like_ratio.grid(row=0, column=3)
+        ctk.CTkLabel(row1, text="📜 Kịch bản Nuôi:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=0, column=0, padx=(0, 10))
+        
+        self.flows = []
+        self._load_flows()
+        
+        flow_names = [f["name"] for f in self.flows] if self.flows else ["Chưa có kịch bản"]
+        self._combo_flow = ctk.CTkOptionMenu(row1, values=flow_names, width=280)
+        self._combo_flow.grid(row=0, column=1, padx=(0, 10))
+        
+        btn_manage_flow = ctk.CTkButton(
+            row1, text="⚙ Quản lý Kịch bản", width=120, height=28, font=("Segoe UI", 11, "bold"),
+            fg_color=BORDER, hover_color=BG_DARK, text_color=TEXT_MAIN,
+            command=self._open_flow_manager
+        )
+        btn_manage_flow.grid(row=0, column=2, padx=(0, 10))
 
         self._btn_start = ctk.CTkButton(
             row1, text="▶  Bắt đầu Nuôi", height=36, font=("Segoe UI", 13, "bold"),
             fg_color=SUCCESS, hover_color="#27ae60", command=self._start_farm
         )
-        self._btn_start.grid(row=0, column=4, sticky="e")
+        self._btn_start.grid(row=0, column=3, sticky="e")
 
         # Layout cột: Trái (Danh sách Acc), Phải (Log)
         split = ctk.CTkFrame(self, fg_color="transparent")
@@ -2356,7 +2902,6 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         hdr.pack(fill="x", padx=10, pady=10)
         ctk.CTkLabel(hdr, text="Danh sách Tài khoản (TikTok)", font=("Segoe UI", 13, "bold")).pack(side="left")
         ctk.CTkButton(hdr, text="🔄 Refresh", width=60, height=24, command=self._load_accounts).pack(side="right")
-        ctk.CTkButton(hdr, text="➕ Thêm nick mới", width=100, height=24, fg_color="#2ecc71", hover_color="#27ae60", command=self._add_new_account).pack(side="right", padx=(0, 10))
         
         self._list_frame = ctk.CTkScrollableFrame(acc_frame, fg_color="transparent")
         self._list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -2370,13 +2915,35 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         self._log_widget = LogWidget(log_frame)
         self._log_widget.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
+    def _load_flows(self):
+        import json
+        from pathlib import Path
+        flows_path = Path("config/flows.json")
+        self.flows = []
+        if flows_path.exists():
+            try:
+                with open(flows_path, "r", encoding="utf-8") as f:
+                    self.flows = json.load(f)
+            except Exception as e:
+                self._log(f"Lỗi đọc kịch bản: {e}", "ERROR")
+
+    def _open_flow_manager(self):
+        from gui_flows import FlowBuilderDialog
+        
+        def on_close():
+            self._load_flows()
+            flow_names = [f["name"] for f in self.flows] if self.flows else ["Chưa có kịch bản"]
+            self._combo_flow.configure(values=flow_names)
+            if self.flows:
+                self._combo_flow.set(flow_names[0])
+                
+        FlowBuilderDialog(self, on_close_callback=on_close)
+        
     def _load_accounts(self):
         for widget in self._list_frame.winfo_children():
             widget.destroy()
         self._checkboxes.clear()
-        if not hasattr(self, '_proxy_entries'):
-            self._proxy_entries = {}
-        self._proxy_entries.clear()
+        self._proxy_entries = {}
         
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
@@ -2385,152 +2952,33 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         
         accounts = [f.name for f in user_dir.glob("tiktok_*.json")]
         if not accounts:
-            ctk.CTkLabel(self._list_frame, text="Chưa có tài khoản nào.", text_color=TEXT_DIM).pack(pady=20)
+            ctk.CTkLabel(self._list_frame, text="Chưa có tài khoản nào. Vui lòng sang tab 'Tài khoản' để thêm.", text_color=TEXT_DIM).pack(pady=20)
             return
-        
-        # Load saved proxies
-        saved_proxies = self._load_proxies(user_dir)
             
         for acc in accounts:
-            row = ctk.CTkFrame(self._list_frame, fg_color=BG_DARK, corner_radius=8, border_width=1, border_color=BORDER)
-            row.pack(fill="x", pady=4, ipady=2)
-            row.grid_columnconfigure(1, weight=1) # Cột proxy tự giãn
+            row = ctk.CTkFrame(self._list_frame, fg_color=BG_CARD, corner_radius=6, border_width=1, border_color=BORDER)
+            row.pack(fill="x", pady=(0, 6), padx=4)
+            row.grid_columnconfigure(0, weight=1)
             
             var = ctk.BooleanVar(value=False)
             self._checkboxes[acc] = var
             
-            # Rút gọn tên hiển thị (bỏ tiktok_ và .json)
             display_acc = acc.replace("tiktok_", "").replace(".json", "")
-            if len(display_acc) > 15:
-                display_acc = display_acc[:12] + "..."
+            if len(display_acc) > 30:
+                display_acc = display_acc[:27] + "..."
                 
-            cb = ctk.CTkCheckBox(row, text=display_acc, variable=var, font=("Segoe UI", 12, "bold"), width=120)
-            cb.grid(row=0, column=0, padx=(12, 10), pady=10, sticky="w")
+            cb = ctk.CTkCheckBox(row, text=f"  {display_acc}", variable=var, font=("Segoe UI", 13, "bold"), fg_color=SUCCESS, hover_color="#27ae60")
+            cb.grid(row=0, column=0, padx=(16, 10), pady=12, sticky="w")
             
-            # Proxy Input
-            proxy_frame = ctk.CTkFrame(row, fg_color="transparent")
-            proxy_frame.grid(row=0, column=1, sticky="ew", padx=10)
-            proxy_frame.grid_columnconfigure(1, weight=1)
-            
-            ctk.CTkLabel(proxy_frame, text="🌐 Proxy:", font=("Segoe UI", 11), text_color=TEXT_DIM).grid(row=0, column=0, padx=(0, 8))
-            proxy_entry = ctk.CTkEntry(
-                proxy_frame, height=28, font=("Consolas", 11),
-                placeholder_text="ip:port:user:pass", fg_color=BG_CARD, border_color=BORDER
-            )
-            proxy_entry.grid(row=0, column=1, sticky="ew")
-            
-            # Điền proxy đã lưu (nếu có)
-            if acc in saved_proxies and saved_proxies[acc]:
-                proxy_entry.insert(0, saved_proxies[acc])
-            self._proxy_entries[acc] = proxy_entry
-            
-            # Nút Đăng nhập thủ công
-            btn_login = ctk.CTkButton(
-                row, text="🔑 Login", width=70, height=28, font=("Segoe UI", 11, "bold"),
-                fg_color=BORDER, hover_color=BG_CARD, text_color=TEXT_MAIN,
-                command=lambda a=acc: self._manual_login(a)
-            )
-            btn_login.grid(row=0, column=2, padx=(0, 12))
-
-    def _add_new_account(self):
-        dialog = ctk.CTkInputDialog(text="Nhập tên tài khoản (Viết liền không dấu, VD: nick_1):", title="Thêm tài khoản")
-        acc_name = dialog.get_input()
-        if not acc_name:
-            return
-            
-        acc_name = acc_name.strip()
-        if not acc_name:
-            return
-            
-        if not acc_name.startswith("tiktok_"):
-            acc_name = "tiktok_" + acc_name
-            
-        if not acc_name.endswith(".json"):
-            acc_name += ".json"
-            
-        from config.settings import COOKIES_DIR
-        from auth_client import auth_client
-        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
-        user_dir = COOKIES_DIR / username
-        user_dir.mkdir(parents=True, exist_ok=True)
-        
-        cookie_file = user_dir / acc_name
-        if not cookie_file.exists():
-            import json
-            with open(cookie_file, "w", encoding="utf-8") as f:
-                json.dump([], f)
-                
-        self._load_accounts()
-        self._log(f"Đã tạo {acc_name}. Hãy điền Proxy và bấm '🔑 Đăng nhập' để lưu phiên!", "SUCCESS")
-
-    def _manual_login(self, acc_name):
-        proxy_str = self._proxy_entries[acc_name].get().strip()
-        from config.settings import COOKIES_DIR
-        from auth_client import auth_client
-        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
-        user_dir = COOKIES_DIR / username
-        self._save_proxies(user_dir)
-        
-        cookie_path = str(user_dir / acc_name)
-        self._log(f"Mở trình duyệt cho {acc_name} để đăng nhập...", "INFO")
-        
-        def _login_worker():
-            import asyncio
-            from config.settings import TIKTOK_CONFIG
-            from uploader.tiktok_uploader import TikTokUploader
-            old_headless = TIKTOK_CONFIG["browser"].get("headless", True)
-            TIKTOK_CONFIG["browser"]["headless"] = False
-            try:
-                async def _run():
-                    uploader = TikTokUploader(cookies_file=cookie_path, proxy=proxy_str if proxy_str else None)
-                    await uploader._init_browser()
-                    self._log(f"Đã mở trình duyệt. Hãy đăng nhập TikTok. Đăng nhập xong, tắt trình duyệt để tự động lưu.", "WARNING")
-                    tiktok_page = await uploader.context.new_page()
-                    await tiktok_page.goto("https://www.tiktok.com/")
-                    # Chờ người dùng đóng tab cuối cùng
-                    while len(uploader.context.pages) > 0:
-                        try:
-                            # Test xem page còn mở không
-                            await uploader.context.pages[0].title()
-                            await asyncio.sleep(1)
-                        except:
-                            break
-                    await uploader.close()
-                asyncio.run(_run())
-                self._log(f"Đã đóng trình duyệt và lưu thông tin cho {acc_name}.", "SUCCESS")
-            except Exception as e:
-                self._log(f"Lỗi khi mở đăng nhập: {e}", "ERROR")
-            finally:
-                TIKTOK_CONFIG["browser"]["headless"] = old_headless
-                
-        import threading
-        threading.Thread(target=_login_worker, daemon=True).start()
-
-    def _load_proxies(self, user_dir) -> dict:
-        """Load proxy config từ file proxies.json."""
-        proxy_file = user_dir / "proxies.json"
-        if proxy_file.exists():
-            try:
-                import json
-                with open(proxy_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return {}
-
-    def _save_proxies(self, user_dir):
-        """Lưu proxy config vào file proxies.json."""
-        import json
-        proxies = {}
-        for acc, entry in self._proxy_entries.items():
-            val = entry.get().strip()
-            if val:
-                proxies[acc] = val
-        proxy_file = user_dir / "proxies.json"
-        with open(proxy_file, "w", encoding="utf-8") as f:
-            json.dump(proxies, f, indent=2, ensure_ascii=False)
+            status_lbl = ctk.CTkLabel(row, text="● Sẵn sàng", font=("Segoe UI", 11, "bold"), text_color=SUCCESS)
+            status_lbl.grid(row=0, column=1, padx=(10, 16), pady=12, sticky="e")
 
     def _start_farm(self):
+        from auth_client import auth_client
+        if auth_client.user_info and auth_client.user_info.get("is_expired", True):
+            messagebox.showerror("Bản quyền", "Tài khoản của bạn đã hết hạn. Vui lòng gia hạn để tiếp tục sử dụng!")
+            return
+            
         if getattr(self, "is_running", False):
             self._cancel_task()
             self._btn_start.configure(state="disabled", text="Đang dừng...")
@@ -2541,11 +2989,14 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
             self._log("Vui lòng chọn ít nhất 1 tài khoản để nuôi!", "WARNING")
             return
             
-        try:
-            duration = int(self._entry_duration.get())
-            ratio = float(self._entry_like_ratio.get())
-        except ValueError:
-            self._log("Vui lòng nhập đúng định dạng số cho Thời gian và Tỷ lệ Like!", "ERROR")
+        if not self.flows:
+            self._log("Chưa có kịch bản nào. Vui lòng tạo kịch bản trước!", "ERROR")
+            return
+            
+        flow_name = self._combo_flow.get()
+        selected_flow = next((f for f in self.flows if f.get("name") == flow_name), None)
+        if not selected_flow:
+            self._log("Lỗi không tìm thấy kịch bản đã chọn!", "ERROR")
             return
         
         # Thu thập proxy cho mỗi account
@@ -2555,22 +3006,15 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
                 val = self._proxy_entries[acc].get().strip()
                 if val:
                     proxies[acc] = val
-        
-        # Lưu proxy config
-        from config.settings import COOKIES_DIR
-        from auth_client import auth_client
-        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
-        user_dir = COOKIES_DIR / username
-        self._save_proxies(user_dir)
-            
+                    
         self.is_running = True
-        self._btn_start.configure(text="⏹ Dừng lại", fg_color=DANGER, hover_color="#c0392b")
+        self._btn_start.configure(state="normal", text="⏹ Dừng lại", fg_color=DANGER, hover_color="#c0392b")
         self._log_widget.clear()
-        self._log(f"Bắt đầu nuôi {len(selected)} tài khoản...", "INFO")
+        self._log(f"Bắt đầu nuôi {len(selected)} tài khoản với Kịch bản '{flow_name}'...", "INFO")
         
-        self._run_in_thread(self._do_farm, selected, duration, ratio, proxies)
+        self._run_in_thread(self._do_farm, selected, selected_flow, proxies)
 
-    async def _do_farm(self, accounts, duration, ratio, proxies=None):
+    async def _do_farm(self, accounts, flow, proxies=None):
         import random
         import asyncio
         from uploader.tiktok_uploader import TikTokUploader
@@ -2597,12 +3041,8 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
                 short_name = acc.split('_')[1] if len(acc.split('_')) > 1 else acc[:8]
                 prefix = f"[Nick_{short_name}]"
                 
-                acc_duration = int(duration * random.uniform(0.7, 1.3))
-                acc_ratio = round(ratio * random.uniform(0.7, 1.3), 2)
-                acc_ratio = min(acc_ratio, 1.0)
-                
                 self._log(f"-------------------------------------", "INFO")
-                self._log(f"{prefix} 🌱 Bắt đầu (⏱ {acc_duration}m | ❤️ {acc_ratio})", "INFO")
+                self._log(f"{prefix} 🌱 Bắt đầu Kịch bản: {flow.get('name')}", "INFO")
                 if proxy_str:
                     display_proxy = proxy_str.split("@")[-1] if "@" in proxy_str else proxy_str
                     self._log(f"{prefix} 🌐 Proxy: {display_proxy}", "INFO")
@@ -2612,13 +3052,11 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
                 uploader = TikTokUploader(cookies_file=cookie_path, proxy=proxy_str, window_idx=idx)
                 try:
                     def update_cb(msg, lvl="INFO"):
-                        # Tránh in log quá rác, thêm tiền tố để phân biệt đa luồng
                         if "Đang xem video" not in msg: 
                             self._log(f"{prefix} {msg}", lvl)
                     
-                    await uploader.nurture_account(
-                        duration_minutes=acc_duration,
-                        like_ratio=acc_ratio,
+                    await uploader.execute_farm_flow(
+                        flow=flow,
                         update_callback=update_cb,
                         cancel_check=lambda: self.cancel_flag
                     )
@@ -2668,41 +3106,36 @@ class SettingsTab(ctk.CTkFrame):
 
     def _build_user(self):
         ctk.CTkLabel(
-            self, text="💎  Gói Cước & Nâng Cấp",
+            self, text="💎  Bản Quyền & Gia Hạn",
             font=("Segoe UI", 24, "bold"), text_color=TEXT_MAIN,
         ).grid(row=0, column=0, sticky="w", pady=(0, 20))
         
-        plans = ctk.CTkFrame(self, fg_color="transparent")
-        plans.grid(row=1, column=0, sticky="ew")
-        plans.grid_columnconfigure((0, 1, 2), weight=1)
+        from auth_client import auth_client
+        expire_date = auth_client.user_info.get("expire_date", "Chưa có") if auth_client.user_info else "Chưa có"
+        is_expired = auth_client.user_info.get("is_expired", True) if auth_client.user_info else True
         
-        # Free Plan
-        p1 = ctk.CTkFrame(plans, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
-        p1.grid(row=0, column=0, padx=10, sticky="nsew")
-        ctk.CTkLabel(p1, text="Free", font=("Segoe UI", 20, "bold"), text_color=TEXT_DIM).pack(pady=(20, 10))
-        ctk.CTkLabel(p1, text="5 Videos / Ngày", font=("Segoe UI", 14)).pack(pady=5)
-        ctk.CTkLabel(p1, text="❌ Thuyết Minh AI", font=("Segoe UI", 14), text_color=DANGER).pack(pady=5)
-        ctk.CTkButton(p1, text="Đang Dùng", state="disabled", fg_color=BG_DARK, text_color=TEXT_DIM).pack(pady=20)
+        status_color = DANGER if is_expired else SUCCESS
+        status_text = "Đã hết hạn" if is_expired else "Đang hoạt động"
         
-        # Pro Plan
-        p2 = ctk.CTkFrame(plans, fg_color=BG_CARD, corner_radius=12, border_width=2, border_color=ACCENT)
-        p2.grid(row=0, column=1, padx=10, sticky="nsew")
-        ctk.CTkLabel(p2, text="Pro", font=("Segoe UI", 24, "bold"), text_color=ACCENT).pack(pady=(20, 10))
-        ctk.CTkLabel(p2, text="50 Videos / Ngày", font=("Segoe UI", 16, "bold")).pack(pady=5)
-        ctk.CTkLabel(p2, text="✅ Thuyết Minh AI", font=("Segoe UI", 16), text_color=SUCCESS).pack(pady=5)
-        ctk.CTkButton(p2, text="Nâng cấp ngay", fg_color=ACCENT, hover_color=ACCENT_HOVER, command=lambda: self._show_upgrade_dialog("Pro")).pack(pady=20)
+        plan_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=status_color)
+        plan_frame.grid(row=1, column=0, sticky="ew")
         
-        # VIP Plan
-        p3 = ctk.CTkFrame(plans, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color="#f1c40f")
-        p3.grid(row=0, column=2, padx=10, sticky="nsew")
-        ctk.CTkLabel(p3, text="VIP", font=("Segoe UI", 20, "bold"), text_color="#f1c40f").pack(pady=(20, 10))
-        ctk.CTkLabel(p3, text="∞ Không Giới Hạn", font=("Segoe UI", 14)).pack(pady=5)
-        ctk.CTkLabel(p3, text="✅ Thuyết Minh AI", font=("Segoe UI", 14), text_color=SUCCESS).pack(pady=5)
-        ctk.CTkButton(p3, text="Liên hệ", fg_color="#f1c40f", text_color="#000", hover_color="#f39c12", command=lambda: self._show_upgrade_dialog("VIP")).pack(pady=20)
+        ctk.CTkLabel(plan_frame, text="Trạng thái:", font=("Segoe UI", 16)).grid(row=0, column=0, padx=20, pady=(20, 10), sticky="w")
+        ctk.CTkLabel(plan_frame, text=status_text, font=("Segoe UI", 18, "bold"), text_color=status_color).grid(row=0, column=1, pady=(20, 10), sticky="w")
+        
+        ctk.CTkLabel(plan_frame, text="Ngày Hết Hạn:", font=("Segoe UI", 16)).grid(row=1, column=0, padx=20, pady=(0, 20), sticky="w")
+        ctk.CTkLabel(plan_frame, text=expire_date, font=("Segoe UI", 18, "bold"), text_color=TEXT_MAIN).grid(row=1, column=1, pady=(0, 20), sticky="w")
+        
+        ctk.CTkButton(
+            plan_frame, text="Gia Hạn (Thanh Toán QR)", fg_color=ACCENT, hover_color=ACCENT_HOVER, 
+            command=self._show_payment_dialog
+        ).grid(row=0, column=2, rowspan=2, padx=20, pady=20, sticky="e")
+        
+        plan_frame.grid_columnconfigure(1, weight=1)
         
         # ── Gemini API Key (Người dùng tự điền) ──
         ctk.CTkLabel(
-            self, text="🔑  Tự Túc API Key (Giảm chi phí, không giới hạn)",
+            self, text="🔑  Tự Túc API Key (Sử dụng AI Tốc độ cao)",
             font=("Segoe UI", 18, "bold"), text_color=TEXT_MAIN,
         ).grid(row=2, column=0, sticky="w", pady=(30, 10))
         
@@ -2716,10 +3149,20 @@ class SettingsTab(ctk.CTkFrame):
         self._entry_user_gemini.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=16)
         
         # Load existing key
-        import os
-        from dotenv import load_dotenv
-        load_dotenv()
-        existing_key = os.getenv("GEMINI_API_KEY", "")
+        existing_key = ""
+        try:
+            from config.settings import COOKIES_DIR
+            from auth_client import auth_client
+            import json
+            username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            user_settings_path = COOKIES_DIR / username / "settings.json"
+            if user_settings_path.exists():
+                with open(user_settings_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    existing_key = data.get("gemini_api_key", "")
+        except:
+            pass
+            
         if existing_key:
             self._entry_user_gemini.insert(0, existing_key)
             
@@ -2731,7 +3174,7 @@ class SettingsTab(ctk.CTkFrame):
         btn_save_key.grid(row=0, column=2, padx=(0, 16), pady=16)
         
         ctk.CTkLabel(
-            ai_frame, text="*Nếu bạn tự nhập API Key, bạn có thể dùng tính năng AI mà KHÔNG cần nâng cấp gói Pro/VIP.", 
+            ai_frame, text="*Sử dụng API Key cá nhân để mở khóa tính năng AI mạnh mẽ nhất mà không phụ thuộc Server.", 
             font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM
         ).grid(row=1, column=0, columnspan=3, sticky="w", padx=16, pady=(0, 16))
 
@@ -2742,54 +3185,128 @@ class SettingsTab(ctk.CTkFrame):
         env_content = f"GEMINI_API_KEY={gemini_key}\n"
         with open(env_path, "w", encoding="utf-8") as f:
             f.write(env_content)
+            
+        import os
+        os.environ["GEMINI_API_KEY"] = gemini_key # Update immediately in current process
+            
         messagebox.showinfo(
             "Đã lưu",
             "Đã lưu Gemini API Key. Bạn có thể sử dụng các tính năng AI không giới hạn!"
         )
+        self.app._update_user_ui()
 
-    def _show_upgrade_dialog(self, plan_name):
+    def _show_payment_dialog(self):
+        from auth_client import auth_client
+        success, payment_info = auth_client.get_payment_info()
+        if not success or not payment_info.get("bank_bin"):
+            messagebox.showerror("Lỗi", "Hệ thống chưa cấu hình thanh toán. Vui lòng liên hệ Admin!")
+            return
+            
         win = ctk.CTkToplevel(self)
-        win.title(f"Nâng cấp gói {plan_name}")
-        win.geometry("400x500")
+        win.title("Gia Hạn Bản Quyền")
+        win.geometry("500x650")
         win.resizable(False, False)
         win.transient(self.winfo_toplevel())
         win.grab_set()
         
-        ctk.CTkLabel(win, text=f"Nâng cấp lên gói {plan_name}", font=("Segoe UI", 20, "bold")).pack(pady=(20, 10))
-        ctk.CTkLabel(win, text="Vui lòng chuyển khoản với nội dung:", font=("Segoe UI", 14)).pack()
+        ctk.CTkLabel(win, text="Thanh Toán Qua VietQR", font=("Segoe UI", 20, "bold")).pack(pady=(20, 10))
         
-        from auth_client import auth_client
         username = auth_client.user_info.get("username", "Unknown") if auth_client.user_info else "Unknown"
-        syntax = f"NANG CAP {username} {plan_name.upper()}"
+        prefix = payment_info.get("payment_prefix", "DOUYIN")
+        syntax = f"{prefix} {username.upper()}"
         
-        # Copy to clipboard button
-        def _copy_syntax():
-            self.clipboard_clear()
-            self.clipboard_append(syntax)
-            self.update()
+        ctk.CTkLabel(win, text="Chọn gói gia hạn:", font=("Segoe UI", 14)).pack(pady=(5, 5))
+        
+        # Sẽ được khởi tạo sau khi định nghĩa _update_qr
+        opt_plan_frame = ctk.CTkFrame(win, fg_color="transparent")
+        opt_plan_frame.pack(pady=5)
+        
+        # Tạo mapping giá kèm theo Mã Gói
+        price_map = {
+            f"1 Tháng (30 ngày) - {payment_info.get('price_1_month', 0):,}đ": (payment_info.get("price_1_month", 0), "1M"),
+            f"3 Tháng (90 ngày) - {payment_info.get('price_3_months', 0):,}đ": (payment_info.get("price_3_months", 0), "3M"),
+            f"6 Tháng (180 ngày) - {payment_info.get('price_6_months', 0):,}đ": (payment_info.get("price_6_months", 0), "6M"),
+            f"1 Năm (365 ngày) - {payment_info.get('price_1_year', 0):,}đ": (payment_info.get("price_1_year", 0), "1Y"),
+            f"Vĩnh viễn (10 Năm) - {payment_info.get('price_lifetime', 0):,}đ": (payment_info.get("price_lifetime", 0), "LT"),
+        }
+        options = list(price_map.keys())
+        
+        lbl_syntax = ctk.CTkLabel(win, text=f"Nội dung CK: {syntax}", font=("Consolas", 16, "bold"), text_color=SUCCESS)
+        lbl_syntax.pack(pady=10)
+        
+        # Label chứa ảnh QR
+        lbl_qr = ctk.CTkLabel(win, text="Đang tải QR Code...")
+        lbl_qr.pack(pady=10)
+        
+        def _update_qr(selected_plan):
+            amount, package_code = price_map[selected_plan]
+            bank_bin = payment_info.get("bank_bin", "")
+            bank_account = payment_info.get("bank_account", "")
             
-        code_btn = ctk.CTkButton(win, text=syntax + " 📋", font=("Consolas", 16, "bold"), 
-                                 fg_color=BG_DARK, text_color=SUCCESS, hover_color=BORDER,
-                                 command=_copy_syntax)
-        code_btn.pack(pady=10)
-        
-        import os
-        from PIL import Image
-        qr_path = os.path.join(os.path.dirname(__file__), "qr.png")
-        if os.path.exists(qr_path):
-            try:
-                img = Image.open(qr_path)
-                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(200, 200))
-                ctk.CTkLabel(win, image=ctk_img, text="").pack(pady=10)
-            except Exception as e:
-                print(f"Không thể load QR code: {e}")
-        else:
-            ctk.CTkLabel(win, text="(Bạn có thể copy file qr.png vào thư mục\nchứa tool để hiển thị mã QR ở đây)", font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM).pack(pady=20)
-                
-        ctk.CTkLabel(win, text="Sau khi chuyển khoản, vui lòng liên hệ Admin\nqua Zalo/Telegram để kích hoạt.", font=("Segoe UI", 12)).pack(pady=10)
-        
-        ctk.CTkButton(win, text="Đóng", command=win.destroy, fg_color=BORDER, hover_color=BG_CARD).pack(pady=(10, 20))
+            # Cập nhật lại nội dung chuyển khoản chứa Mã gói
+            new_syntax = f"{prefix} {username.upper()} {package_code}"
+            lbl_syntax.configure(text=f"Nội dung CK: {new_syntax}")
+            
+            qr_url = f"https://img.vietqr.io/image/{bank_bin}-{bank_account}-compact2.png?amount={amount}&addInfo={new_syntax.replace(' ', '%20')}"
+            
+            def fetch_qr():
+                import urllib.request
+                import io
+                from PIL import Image
+                try:
+                    req = urllib.request.Request(qr_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req) as u:
+                        raw_data = u.read()
+                    img = Image.open(io.BytesIO(raw_data))
+                    ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(250, 300))
+                    self.after(0, lambda: lbl_qr.configure(image=ctk_img, text=""))
+                except Exception as e:
+                    self.after(0, lambda: lbl_qr.configure(text=f"Lỗi tải QR: {e}", image=""))
+            
+            import threading
+            threading.Thread(target=fetch_qr, daemon=True).start()
 
+        opt_plan = ctk.CTkOptionMenu(opt_plan_frame, values=options, command=_update_qr, width=300)
+        opt_plan.set(options[0])
+        opt_plan.pack()
+        
+        # Load default QR
+        _update_qr(options[0])
+        
+        ctk.CTkLabel(win, text=f"Chủ thẻ: {payment_info.get('bank_name', 'UNKNOWN')}", font=("Segoe UI", 12, "bold")).pack(pady=5)
+        ctk.CTkLabel(win, text="⚠️ Vui lòng chuyển khoản ĐÚNG NỘI DUNG để được cộng ngày tự động.", font=("Segoe UI", 12), text_color=DANGER).pack(pady=5)
+        ctk.CTkLabel(win, text="Hệ thống đang tự động kiểm tra trạng thái thanh toán...", font=("Segoe UI", 11, "italic")).pack(pady=(0, 10))
+        
+        original_expire = auth_client.user_info.get("expire_date") if auth_client.user_info else None
+        check_job = None
+        
+        def _check_payment():
+            nonlocal check_job
+            if not win.winfo_exists():
+                return
+            try:
+                success, data = auth_client.get_me()
+                if success:
+                    new_expire = data.get("expire_date")
+                    if new_expire and new_expire != original_expire:
+                        messagebox.showinfo("Thành công", f"Thanh toán thành công!\nTài khoản đã được gia hạn đến: {new_expire}")
+                        win.destroy()
+                        self.app._update_user_ui()
+                        return
+            except Exception:
+                pass
+            check_job = win.after(5000, _check_payment)
+            
+        check_job = win.after(5000, _check_payment)
+        
+        def _on_close():
+            if check_job:
+                win.after_cancel(check_job)
+            win.destroy()
+            
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+        
+        ctk.CTkButton(win, text="Đóng", command=_on_close, fg_color=BORDER, hover_color=BG_CARD).pack(pady=(10, 20))
     def _build_admin(self):
         ctk.CTkLabel(
             self, text="⚙️  Quản trị Hệ thống (Admin Dashboard)",
@@ -2804,12 +3321,12 @@ class SettingsTab(ctk.CTkFrame):
         self.tab_sys.grid_columnconfigure(0, weight=1)
         self.tab_users = self.tabview.add("Người dùng")
         self.tab_users.grid_columnconfigure(0, weight=1)
-        self.tab_plans = self.tabview.add("Gói Cước")
-        self.tab_plans.grid_columnconfigure(0, weight=1)
+        self.tab_payment = self.tabview.add("Thanh toán (Webhook)")
+        self.tab_payment.grid_columnconfigure(0, weight=1)
         
         self._build_admin_system(self.tab_sys)
         self._build_admin_users(self.tab_users)
-        self._build_admin_plans(self.tab_plans)
+        self._build_admin_payment(self.tab_payment)
 
     def _build_admin_system(self, parent):
         # ── Cookies section ──────────────────────────────────────────────────
@@ -2864,7 +3381,6 @@ class SettingsTab(ctk.CTkFrame):
             self._entry_gemini.insert(0, existing_key)
             
         self._entry_gemini.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=(14, 14))
-        self._entry_gemini.configure(state="disabled") # KHÓA (Sử dụng Proxy Server)
 
         # ── TikTok section ───────────────────────────────────────────────────
         self._section(parent, "🎵  TikTok Upload", row=4)
@@ -2960,7 +3476,8 @@ class SettingsTab(ctk.CTkFrame):
             card = ctk.CTkFrame(self.user_list_frame, fg_color=BG_CARD, corner_radius=8, border_width=1, border_color=BORDER)
             card.pack(fill="x", pady=4, padx=10)
             
-            info_str = f"👤 {u['username']}  |  🎖️ Role: {u['role']}  |  💎 Plan: {u['plan_name']}"
+            status_text = "Hết hạn" if u.get('is_expired', True) else "Active"
+            info_str = f"👤 {u['username']}  |  🎖️ Role: {u['role']}  |  ⏳ Hết hạn: {u.get('expire_date', 'Chưa có')} ({status_text})"
             ctk.CTkLabel(card, text=info_str, font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="left", padx=15, pady=10)
             
             ctk.CTkButton(card, text="🗑 Xóa", width=60, height=26, fg_color=DANGER, hover_color="#c0392b",
@@ -2978,7 +3495,7 @@ class SettingsTab(ctk.CTkFrame):
         win = ctk.CTkToplevel(self)
         title = "Sửa Tài khoản" if user else "Thêm Tài khoản"
         win.title(title)
-        win.geometry("400x350")
+        win.geometry("400x400")
         win.resizable(False, False)
         win.transient(self.winfo_toplevel())
         win.grab_set()
@@ -2999,25 +3516,36 @@ class SettingsTab(ctk.CTkFrame):
         else: opt_role.set("user")
         opt_role.pack(pady=5)
         
-        opt_plan = ctk.CTkOptionMenu(win, values=["Free", "Pro", "VIP"], width=250)
-        if user: opt_plan.set(user["plan_name"])
-        else: opt_plan.set("Free")
-        opt_plan.pack(pady=5)
+        duration_map = {
+            "Gia hạn 1 Tháng (30 ngày)": 30,
+            "Gia hạn 3 Tháng (90 ngày)": 90,
+            "Gia hạn 6 Tháng (180 ngày)": 180,
+            "Gia hạn 1 Năm (365 ngày)": 365,
+            "Vĩnh viễn (10 Năm)": 3650
+        }
+        if user:
+            ctk.CTkLabel(win, text="Chỉ chọn nếu muốn gia hạn thêm:", text_color=TEXT_DIM).pack(pady=(10, 0))
+            duration_map["Không gia hạn thêm"] = 0
+            
+        opt_duration = ctk.CTkOptionMenu(win, values=list(duration_map.keys()), width=250)
+        if user: opt_duration.set("Không gia hạn thêm")
+        else: opt_duration.set("Gia hạn 1 Tháng (30 ngày)")
+        opt_duration.pack(pady=5)
         
         def _save():
             from auth_client import auth_client
             u_name = entry_user.get()
             u_pass = entry_pass.get()
             u_role = opt_role.get()
-            u_plan = opt_plan.get()
+            days = duration_map[opt_duration.get()]
             
             if not user:
                 if not u_name or not u_pass:
                     messagebox.showerror("Lỗi", "Username và Password là bắt buộc")
                     return
-                success, msg = auth_client.admin_create_user(u_name, u_pass, u_role, u_plan)
+                success, msg = auth_client.admin_create_user(u_name, u_pass, u_role, days_to_add=days)
             else:
-                success, msg = auth_client.admin_update_user(user["id"], password=u_pass if u_pass else None, role=u_role, plan_name=u_plan)
+                success, msg = auth_client.admin_update_user(user["id"], password=u_pass if u_pass else None, role=u_role, days_to_add=days if days > 0 else None)
                 
             if success:
                 win.destroy()
@@ -3036,100 +3564,242 @@ class SettingsTab(ctk.CTkFrame):
             else:
                 messagebox.showerror("Lỗi", msg)
 
-    def _build_admin_plans(self, parent):
-        ctk.CTkLabel(parent, text="Quản lý Gói cước (Plans)", font=("Segoe UI", 16, "bold"), text_color=TEXT_MAIN).pack(pady=10)
+    def _build_admin_payment(self, parent):
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=20, pady=20)
         
-        frame = ctk.CTkFrame(parent, fg_color="transparent")
-        frame.pack(fill="both", expand=True, padx=20, pady=10)
+        self._section(scroll, "🏦  Thông tin Ngân hàng", row=0)
+        bank = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        bank.grid(row=1, column=0, sticky="ew", pady=(0, 16))
+        bank.grid_columnconfigure(1, weight=1)
         
-        self.plans_list_frame = ctk.CTkScrollableFrame(frame, fg_color=BG_CARD)
-        self.plans_list_frame.pack(fill="both", expand=True)
+        from auth_client import auth_client
+        success, configs = auth_client.admin_get_config()
+        if not success: configs = {}
         
-        btn_refresh = ctk.CTkButton(parent, text="Làm mới danh sách", command=self._refresh_plans_list)
-        btn_refresh.pack(pady=10)
-        
-        self._refresh_plans_list()
-
-    def _refresh_plans_list(self):
-        for widget in self.plans_list_frame.winfo_children():
-            widget.destroy()
+        # Bank Info
+        for i, (label, key) in enumerate([
+            ("Mã BIN Ngân hàng (VD: 970436)", "bank_bin"),
+            ("Số Tài khoản", "bank_account"),
+            ("Tên Tài khoản", "bank_name"),
+            ("SePay Webhook Token", "webhook_token"),
+            ("Tiền tố Chuyển khoản (VD: DOUYIN)", "payment_prefix"),
+        ]):
+            ctk.CTkLabel(bank, text=label, font=("Segoe UI", 12), text_color=TEXT_DIM).grid(row=i, column=0, sticky="w", padx=16, pady=(14 if i==0 else 4, 4))
+            entry = ctk.CTkEntry(bank, width=300, font=("Segoe UI", 12), fg_color=BG_DARK, border_color=BORDER)
+            entry.insert(0, configs.get(key, ""))
+            entry.grid(row=i, column=1, sticky="w", padx=16, pady=(14 if i==0 else 4, 4))
+            setattr(self, f"_entry_{key}", entry)
             
-        import requests
-        from auth_client import auth_client, API_BASE_URL
+        # Prices Info
+        self._section(scroll, "💰  Bảng Giá (VNĐ)", row=2)
+        price = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        price.grid(row=3, column=0, sticky="ew", pady=(0, 16))
+        price.grid_columnconfigure(1, weight=1)
         
-        try:
-            resp = requests.get(f"{API_BASE_URL}/admin/plans", headers={
-                "Authorization": f"Bearer {auth_client.token}"
-            }, timeout=5)
-            if resp.status_code == 200:
-                plans = resp.json()
-                for i, p in enumerate(plans):
-                    item = ctk.CTkFrame(self.plans_list_frame, fg_color=BG_DARK, corner_radius=8)
-                    item.pack(fill="x", pady=5, padx=5)
-                    
-                    info = f"Gói: {p['name']} | Max Limit: {p['max_daily_videos']} | AI Script: {'Có' if p['can_use_ai_script'] else 'Không'}"
-                    ctk.CTkLabel(item, text=info, font=("Segoe UI", 12)).pack(side="left", padx=10, pady=10)
-                    
-                    btn_edit = ctk.CTkButton(item, text="Sửa", width=60, command=lambda p=p: self._show_edit_plan_dialog(p))
-                    btn_edit.pack(side="right", padx=10)
-            else:
-                ctk.CTkLabel(self.plans_list_frame, text="Lỗi khi tải danh sách Gói Cước").pack(pady=10)
-        except Exception as e:
-            ctk.CTkLabel(self.plans_list_frame, text=f"Lỗi kết nối: {e}").pack(pady=10)
-
-    def _show_edit_plan_dialog(self, plan):
-        win = ctk.CTkToplevel(self)
-        win.title(f"Sửa Gói Cước: {plan['name']}")
-        win.geometry("400x300")
-        win.grab_set()
+        for i, (label, key) in enumerate([
+            ("Giá 1 Tháng (30 ngày)", "price_1_month"),
+            ("Giá 3 Tháng (90 ngày)", "price_3_months"),
+            ("Giá 6 Tháng (180 ngày)", "price_6_months"),
+            ("Giá 1 Năm (365 ngày)", "price_1_year"),
+            ("Giá Vĩnh viễn (10 Năm)", "price_lifetime"),
+        ]):
+            ctk.CTkLabel(price, text=label, font=("Segoe UI", 12), text_color=TEXT_DIM).grid(row=i, column=0, sticky="w", padx=16, pady=(14 if i==0 else 4, 4))
+            entry = ctk.CTkEntry(price, width=200, font=("Segoe UI", 12), fg_color=BG_DARK, border_color=BORDER)
+            entry.insert(0, configs.get(key, ""))
+            entry.grid(row=i, column=1, sticky="w", padx=16, pady=(14 if i==0 else 4, 4))
+            setattr(self, f"_entry_{key}", entry)
         
-        ctk.CTkLabel(win, text=f"Chỉnh sửa giới hạn cho gói {plan['name']}", font=("Segoe UI", 14, "bold")).pack(pady=10)
-        
-        ctk.CTkLabel(win, text="Giới Hạn Video / Ngày:").pack(pady=(10, 0))
-        entry_limit = ctk.CTkEntry(win, width=200)
-        entry_limit.insert(0, str(plan['max_daily_videos']))
-        entry_limit.pack(pady=5)
-        
-        switch_ai = ctk.CTkSwitch(win, text="Cho phép dùng AI Script")
-        if plan['can_use_ai_script']:
-            switch_ai.select()
-        switch_ai.pack(pady=10)
-        
-        def save():
-            try:
-                limit = int(entry_limit.get())
-            except:
-                messagebox.showerror("Lỗi", "Giới hạn phải là số nguyên")
-                return
-                
+        # ── Nút Lưu phần Giá & Ngân hàng ──────────────────────────────────────
+        def _save_payment():
             data = {
-                "max_daily_videos": limit,
-                "can_use_ai_script": switch_ai.get() == 1
+                "bank_bin": self._entry_bank_bin.get(),
+                "bank_account": self._entry_bank_account.get(),
+                "bank_name": self._entry_bank_name.get(),
+                "webhook_token": self._entry_webhook_token.get(),
+                "payment_prefix": self._entry_payment_prefix.get().upper(),
+                "price_1_month": self._entry_price_1_month.get(),
+                "price_3_months": self._entry_price_3_months.get(),
+                "price_6_months": self._entry_price_6_months.get(),
+                "price_1_year": self._entry_price_1_year.get(),
+                "price_lifetime": self._entry_price_lifetime.get(),
+                "system_announcement": getattr(self, "_entry_system_announcement", type("", (), {"get": lambda s: ""})()).get(),
+                "client_version": getattr(self, "_entry_client_version", type("", (), {"get": lambda s: ""})()).get(),
             }
-            
-            import requests
-            from auth_client import auth_client, API_BASE_URL
-            
-            try:
-                resp = requests.put(f"{API_BASE_URL}/admin/plans/{plan['id']}", json=data, headers={
-                    "Authorization": f"Bearer {auth_client.token}"
-                }, timeout=5)
+            succ, msg = auth_client.admin_save_config(data)
+            if succ:
+                messagebox.showinfo("Thành công", "Đã lưu cấu hình Thanh toán!")
+            else:
+                messagebox.showerror("Lỗi", msg)
                 
-                if resp.status_code == 200:
-                    messagebox.showinfo("Thành công", "Đã cập nhật Gói cước thành công!")
-                    win.destroy()
-                    self._refresh_plans_list()
+        ctk.CTkButton(scroll, text="💾  Lưu Cấu Hình Giá & Ngân Hàng", width=240, command=_save_payment,
+                      fg_color=SUCCESS, hover_color="#27ae60",
+                      font=("Segoe UI", 13, "bold")).grid(row=4, column=0, pady=(8, 24), sticky="w")
+        
+        # ══════════════════════════════════════════════════════════════════════
+        # Thông Báo & Cập Nhật - Card riêng biệt
+        # ══════════════════════════════════════════════════════════════════════
+        self._section(scroll, "📢  Thông Báo & Cập Nhật Phiên Bản", row=5)
+        
+        noti_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        noti_card.grid(row=6, column=0, sticky="ew", pady=(0, 16))
+        noti_card.grid_columnconfigure(0, weight=1)
+        
+        # Description
+        desc_frame = ctk.CTkFrame(noti_card, fg_color="#1e2a3a", corner_radius=8)
+        desc_frame.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 12))
+        desc_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(desc_frame, text="ℹ️  Hướng dẫn sử dụng",
+                     font=("Segoe UI", 12, "bold"), text_color=ACCENT,
+                     anchor="w").grid(row=0, column=0, sticky="w", padx=12, pady=(10, 4))
+        ctk.CTkLabel(desc_frame,
+                     text="• Thông báo hệ thống sẽ hiển thị banner vàng trên Dashboard của TẤT CẢ người dùng.\n"
+                          "• Phiên bản Tool: Nhập số phiên bản mới nhất (VD: 1.1). Nếu khác phiên bản client,\n"
+                          "  banner đỏ ép buộc user tải bản mới sẽ xuất hiện. Để trống = không thông báo update.",
+                     font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", anchor="w",
+                     wraplength=700).grid(row=1, column=0, sticky="w", padx=12, pady=(0, 10))
+        
+        # Announcement input
+        inner = ctk.CTkFrame(noti_card, fg_color="transparent")
+        inner.grid(row=1, column=0, sticky="ew", padx=16, pady=0)
+        inner.grid_columnconfigure(1, weight=1)
+        
+        # Thông báo
+        ctk.CTkLabel(inner, text="📢  Thông báo hệ thống", font=("Segoe UI", 12, "bold"),
+                     text_color=WARNING, anchor="w").grid(row=0, column=0, sticky="nw", padx=(0, 16), pady=(8, 0))
+        self._entry_system_announcement = ctk.CTkTextbox(inner, height=80, font=("Segoe UI", 12),
+                                                          fg_color=BG_DARK, border_color=BORDER,
+                                                          border_width=1, corner_radius=8)
+        self._entry_system_announcement.grid(row=0, column=1, sticky="ew", pady=8)
+        # Pre-fill
+        ann_val = configs.get("system_announcement", "")
+        if ann_val:
+            self._entry_system_announcement.insert("0.0", ann_val)
+        
+        # Version
+        ctk.CTkLabel(inner, text="🚀  Phiên bản mới nhất", font=("Segoe UI", 12, "bold"),
+                     text_color=ACCENT, anchor="w").grid(row=1, column=0, sticky="w", padx=(0, 16), pady=(0, 8))
+        ver_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        ver_frame.grid(row=1, column=1, sticky="w", pady=(0, 8))
+        self._entry_client_version = ctk.CTkEntry(ver_frame, width=140, font=("Consolas", 13, "bold"),
+                                                   fg_color=BG_DARK, border_color=ACCENT,
+                                                   placeholder_text="VD: 1.1")
+        self._entry_client_version.pack(side="left")
+        ver_val = configs.get("client_version", "")
+        if ver_val:
+            self._entry_client_version.insert(0, ver_val)
+        ctk.CTkLabel(ver_frame, text="  (Tool client hiện tại: v1.0)",
+                     font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left")
+        
+        # Nút Lưu Thông Báo
+        def _save_noti():
+            announcement_text = self._entry_system_announcement.get("0.0", "end").strip()
+            ver_text = self._entry_client_version.get().strip()
+            data = {
+                "bank_bin": self._entry_bank_bin.get(),
+                "bank_account": self._entry_bank_account.get(),
+                "bank_name": self._entry_bank_name.get(),
+                "webhook_token": self._entry_webhook_token.get(),
+                "payment_prefix": self._entry_payment_prefix.get().upper(),
+                "price_1_month": self._entry_price_1_month.get(),
+                "price_3_months": self._entry_price_3_months.get(),
+                "price_6_months": self._entry_price_6_months.get(),
+                "price_1_year": self._entry_price_1_year.get(),
+                "price_lifetime": self._entry_price_lifetime.get(),
+                "system_announcement": announcement_text,
+                "client_version": ver_text,
+            }
+            succ, msg = auth_client.admin_save_config(data)
+            if succ:
+                if announcement_text:
+                    messagebox.showinfo("Thành công", f"📢 Thông báo đã được gửi tới tất cả người dùng!\n\nNội dung: {announcement_text[:100]}...")
                 else:
-                    messagebox.showerror("Lỗi", f"Không thể lưu: {resp.text}")
-            except Exception as e:
-                messagebox.showerror("Lỗi", f"Lỗi kết nối: {e}")
-                
-        ctk.CTkButton(win, text="Lưu thay đổi", command=save, fg_color=SUCCESS, hover_color="#27ae60").pack(pady=20)
+                    messagebox.showinfo("Thành công", "Đã xóa thông báo hệ thống.")
+            else:
+                messagebox.showerror("Lỗi", msg)
+        
+        btn_row = ctk.CTkFrame(noti_card, fg_color="transparent")
+        btn_row.grid(row=2, column=0, sticky="e", padx=16, pady=(4, 16))
+        
+        ctk.CTkButton(btn_row, text="🗑  Xóa Thông Báo", width=160, command=lambda: (
+            self._entry_system_announcement.delete("0.0", "end"),
+            _save_noti()
+        ), fg_color=BORDER, hover_color=BG_DARK, font=("Segoe UI", 12)).pack(side="left", padx=(0, 10))
+        
+        ctk.CTkButton(btn_row, text="📢  Gửi Thông Báo", width=160, command=_save_noti,
+                      fg_color=WARNING, hover_color="#d68910", text_color=BG_DARK,
+                      font=("Segoe UI", 12, "bold")).pack(side="left")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Login Window
 # ═══════════════════════════════════════════════════════════════════════════════
 from auth_client import auth_client
+
+class RegisterWindow(ctk.CTkToplevel):
+    def __init__(self, master):
+        super().__init__(master)
+        
+        self.title("Đăng ký Tài khoản")
+        self.geometry("400x350")
+        self.resizable(False, False)
+        self.configure(fg_color=BG_DARK)
+        
+        self.transient(master) # Nổi lên trên LoginWindow
+        self.grab_set()        # Khoá cửa sổ Login khi đang đăng ký
+        
+        ctk.CTkLabel(
+            self, text="Tạo Tài Khoản",
+            font=("Segoe UI", 28, "bold"), text_color=TEXT_MAIN
+        ).pack(pady=(30, 20))
+        
+        self.entry_user = ctk.CTkEntry(self, placeholder_text="Tên đăng nhập", width=250)
+        self.entry_user.pack(pady=10)
+        
+        self.entry_pass = ctk.CTkEntry(self, placeholder_text="Mật khẩu", show="*", width=250)
+        self.entry_pass.pack(pady=10)
+        
+        self.entry_pass_confirm = ctk.CTkEntry(self, placeholder_text="Xác nhận Mật khẩu", show="*", width=250)
+        self.entry_pass_confirm.pack(pady=10)
+        
+        self.btn_register = ctk.CTkButton(
+            self, text="Đăng ký", width=250, height=40,
+            command=self._do_register, font=("Segoe UI", 14, "bold"),
+            fg_color=SUCCESS, hover_color="#059669"
+        )
+        self.btn_register.pack(pady=20)
+        
+    def _do_register(self):
+        user = self.entry_user.get().strip()
+        pwd = self.entry_pass.get()
+        pwd2 = self.entry_pass_confirm.get()
+        
+        from tkinter import messagebox
+        if not user or not pwd:
+            messagebox.showwarning("Lỗi", "Vui lòng nhập đầy đủ Tên đăng nhập và Mật khẩu!")
+            return
+            
+        if pwd != pwd2:
+            messagebox.showwarning("Lỗi", "Mật khẩu xác nhận không khớp!")
+            return
+            
+        self.btn_register.configure(state="disabled", text="Đang xử lý...")
+        
+        def run():
+            success, msg = auth_client.register(user, pwd)
+            self.after(0, self._handle_result, success, msg)
+            
+        import threading
+        threading.Thread(target=run, daemon=True).start()
+        
+    def _handle_result(self, success, msg):
+        from tkinter import messagebox
+        if success:
+            messagebox.showinfo("Thành công", msg)
+            self.grab_release()
+            self.destroy()
+        else:
+            messagebox.showerror("Lỗi", msg)
+            self.btn_register.configure(state="normal", text="Đăng ký")
 
 class LoginWindow(ctk.CTkToplevel):
     def __init__(self, master, on_success):
@@ -3137,7 +3807,7 @@ class LoginWindow(ctk.CTkToplevel):
         self.on_success = on_success
         
         self.title("Đăng nhập Hệ thống")
-        self.geometry("400x320")
+        self.geometry("400x380")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         
@@ -3159,6 +3829,16 @@ class LoginWindow(ctk.CTkToplevel):
             command=self._do_login, font=("Segoe UI", 14, "bold")
         )
         self.btn_login.pack(pady=20)
+        
+        self.btn_register = ctk.CTkButton(
+            self, text="Chưa có tài khoản? Đăng ký ngay", width=250, height=30,
+            command=self._open_register, font=("Segoe UI", 12),
+            fg_color="transparent", text_color=ACCENT, hover_color=BG_CARD
+        )
+        self.btn_register.pack(pady=0)
+        
+    def _open_register(self):
+        RegisterWindow(self)
         
     def _do_login(self):
         user = self.entry_user.get()
@@ -3193,9 +3873,10 @@ class App(ctk.CTk):
     TABS = [
         ("📊", "Dashboard", DashboardTab),
         ("🔍", "Crawl",     CrawlTab),
-        ("🎞️", "Process",   ProcessTab),
+        ("🎥", "Process",   ProcessTab),
         ("📤", "Upload",    UploadTab),
         ("🤖", "Auto",      AutoTab),
+        ("👥", "Accounts",  AccountsTab),
         ("🌱", "Farm",      FarmTab),
         ("⚙️", "Settings",  SettingsTab),
     ]
@@ -3220,27 +3901,72 @@ class App(ctk.CTk):
             self._nav_buttons[0].set_active(True)
             self._show_tab(0)
             self._update_user_ui()
+            self.after(100, lambda: self.state("zoomed"))  # Full màn hình sau khi load xong
         else:
             self.withdraw() # Ẩn main window
             LoginWindow(self, self._on_login_success)
 
     def _update_user_ui(self):
-        # Cập nhật UI theo gói cước
+        # Cập nhật UI theo trạng thái bản quyền
         if auth_client.user_info:
-            plan = auth_client.user_info.get("plan_name", "Unknown")
-            user = auth_client.user_info.get("username", "Unknown")
-            rem = auth_client.user_info.get("remaining", 0)
-            if hasattr(self, "lbl_user_info"):
-                self.lbl_user_info.configure(text=f"👤 User: {user}\n💎 Plan: {plan}\n📦 Còn lại: {rem} vid")
+            role = auth_client.user_info.get("role", "user")
             
+            if role == "admin":
+                is_expired = False
+                expire = "Vĩnh viễn (Admin)"
+                status = "👑 Quản trị viên"
+            else:
+                expire = auth_client.user_info.get("expire_date", "Chưa có")
+                is_expired = auth_client.user_info.get("is_expired", True)
+                status = "❌ Hết hạn" if is_expired else "✅ Hoạt động"
+                
+            user = auth_client.user_info.get("username", "Unknown")
+            
+            if hasattr(self, "lbl_user_info"):
+                self.lbl_user_info.configure(text=f"👤 User: {user}\n⏳ Hạn: {expire}\n🌟 {status}")
+            
+            # ── Ẩn nút Nâng cấp VIP nếu là Admin ──
+            if hasattr(self, "_nav_buttons"):
+                if role == "admin":
+                    if hasattr(self, "btn_upgrade_sidebar"):
+                        self.btn_upgrade_sidebar.pack_forget()
+                else:
+                    if hasattr(self, "btn_upgrade_sidebar"):
+                        self.btn_upgrade_sidebar.pack(padx=12, pady=(0, 10), fill="x")
+                
+                # Hiển thị toàn bộ các tab cho cả Admin và User
+                nav_container = getattr(self, "_nav_scroll", None)
+                if nav_container:
+                    for i, btn in enumerate(self._nav_buttons):
+                        btn.grid(row=i, column=0, sticky="ew", padx=12, pady=3)
+            
+            has_custom_key = False
+            from config.settings import COOKIES_DIR, PROCESSOR_CONFIG
+            import json
+            user_dir = COOKIES_DIR / user
+            user_settings = user_dir / "settings.json"
+            
+            if user_settings.exists():
+                try:
+                    with open(user_settings, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        key = data.get("gemini_api_key", "").strip()
+                        if key:
+                            has_custom_key = True
+                            PROCESSOR_CONFIG["gemini_api_keys"] = [key]
+                        else:
+                            PROCESSOR_CONFIG["gemini_api_keys"] = []
+                except:
+                    pass
+            else:
+                PROCESSOR_CONFIG["gemini_api_keys"] = []
             # Cập nhật quyền hạn ở tab Process
             if hasattr(self, "_tab_frames") and len(self._tab_frames) > 2:
                 process_tab = self._tab_frames[2]
-                can_use_ai = auth_client.user_info.get("can_use_ai", False)
                 if hasattr(process_tab, "_sw_dubbing"):
-                    if not can_use_ai:
+                    if is_expired and not has_custom_key:
                         process_tab._sw_dubbing.deselect()
-                        process_tab._sw_dubbing.configure(state="disabled", text="🎙️ Thuyết minh AI (Cần gói Pro+)")
+                        process_tab._sw_dubbing.configure(state="disabled", text="🎙️ Thuyết minh AI (Đã khóa)")
                     else:
                         process_tab._sw_dubbing.configure(state="normal", text="🎙️ Thuyết minh AI (Đọc Vietsub tự động)")
                         
@@ -3251,8 +3977,8 @@ class App(ctk.CTk):
                     dashboard_tab.refresh_stats(silent=True)
                     
             # Update Settings UI based on role
-            if hasattr(self, "_tab_frames") and len(self._tab_frames) > 5:
-                settings_tab = self._tab_frames[5]
+            if hasattr(self, "_tab_frames") and len(self._tab_frames) > 7:
+                settings_tab = self._tab_frames[7]
                 if hasattr(settings_tab, "refresh_ui"):
                     settings_tab.refresh_ui()
                     
@@ -3269,13 +3995,47 @@ class App(ctk.CTk):
                 auto_tab = self._tab_frames[4]
                 if hasattr(auto_tab, "_refresh_accounts"):
                     auto_tab._refresh_accounts()
+                    
+            # Update AccountsTab
+            if hasattr(self, "_tab_frames") and len(self._tab_frames) > 5:
+                acc_tab = self._tab_frames[5]
+                if hasattr(acc_tab, "_load_accounts"):
+                    acc_tab._load_accounts()
+                if hasattr(acc_tab, "_load_yt_accounts"):
+                    acc_tab._load_yt_accounts()
+                    
+            # Update FarmTab accounts
+            if hasattr(self, "_tab_frames") and len(self._tab_frames) > 6:
+                farm_tab = self._tab_frames[6]
+                if hasattr(farm_tab, "_load_accounts"):
+                    farm_tab._load_accounts()
 
     def _on_login_success(self):
         auth_client.get_me()
         self.deiconify() # Hiện lại main window
+        self.after(100, lambda: self.state("zoomed"))  # Giữ full màn hình sau khi login
         self._nav_buttons[0].set_active(True)
         self._show_tab(0)
         self._update_user_ui()
+        
+        # Hiện toast thông báo nếu có
+        def _show_noti_after_login():
+            try:
+                succ, pay_info = auth_client.get_payment_info()
+                if succ and pay_info:
+                    announcement = pay_info.get("system_announcement", "").strip()
+                    version = pay_info.get("client_version", "").strip()
+                    if version and version != "1.0":
+                        show_toast(self, title="Cập Nhật Phìiên Bản Mới!",
+                                   message=f"Phìiên bản v{version} đã ra mắt.\nTải lại Tool mới để có tính năng mới & vá lỗi!",
+                                   type_="update", duration=15)
+                    elif announcement:
+                        show_toast(self, title="Thông Báo Hệ Thống",
+                                   message=announcement,
+                                   type_="warning", duration=12)
+            except Exception:
+                pass
+        self.after(800, _show_noti_after_login)
 
     def _do_logout(self):
         if messagebox.askyesno("Xác nhận", "Bạn có chắc muốn đăng xuất?"):
@@ -3283,15 +4043,23 @@ class App(ctk.CTk):
             self.withdraw()
             LoginWindow(self, self._on_login_success)
 
+    def _handle_sidebar_upgrade(self):
+        # Chuyển sang tab Settings
+        self._nav(7)
+        # Gọi hộp thoại thanh toán
+        if hasattr(self, "_tab_frames") and len(self._tab_frames) > 7:
+            self._tab_frames[7]._show_payment_dialog()
+
     # ── Sidebar ──────────────────────────────────────────────────────────────
     def _build_sidebar(self):
         sidebar = ctk.CTkFrame(self, width=220, fg_color=BG_SIDEBAR, corner_radius=0)
         sidebar.grid(row=0, column=0, sticky="nsew")
-        sidebar.grid_rowconfigure(97, weight=1)  # pushes bottom items down
+        sidebar.grid_rowconfigure(2, weight=1)  # Nav scroll chiếm hết không gian còn lại
+        sidebar.grid_columnconfigure(0, weight=1)
 
         # Logo
         logo = ctk.CTkFrame(sidebar, fg_color="transparent")
-        logo.grid(row=0, column=0, sticky="ew", padx=16, pady=(30, 24))
+        logo.grid(row=0, column=0, sticky="ew", padx=16, pady=(24, 12))
         ctk.CTkLabel(
             logo, text="✨",
             font=("Segoe UI", 32), text_color=ACCENT
@@ -3303,41 +4071,86 @@ class App(ctk.CTk):
 
         # Separator
         ctk.CTkFrame(sidebar, height=1, fg_color="#1E293B").grid(
-            row=1, column=0, sticky="ew", padx=20, pady=(0, 20)
+            row=1, column=0, sticky="ew", padx=16, pady=(0, 8)
         )
+
+        # ── Scrollable Nav Area ────────────────────────────────────────────────
+        nav_scroll = ctk.CTkScrollableFrame(
+            sidebar, fg_color="transparent",
+            scrollbar_button_color=BORDER,
+            scrollbar_button_hover_color=ACCENT
+        )
+        nav_scroll.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
+        nav_scroll.grid_columnconfigure(0, weight=1)
 
         # Nav buttons
         self._nav_buttons: list[SidebarButton] = []
         for i, (icon, label, _) in enumerate(self.TABS):
-            btn = SidebarButton(sidebar, icon=icon, text=label,
+            btn = SidebarButton(nav_scroll, icon=icon, text=label,
                                 command=lambda idx=i: self._nav(idx))
-            btn.grid(row=i + 2, column=0, sticky="ew", padx=12, pady=3)
+            btn.grid(row=i, column=0, sticky="ew", padx=12, pady=3)
             self._nav_buttons.append(btn)
+        
+        self._nav_scroll = nav_scroll
+        
+        # ── Bottom fixed area ──────────────────────────────────────────────────
+        bottom = ctk.CTkFrame(sidebar, fg_color="transparent")
+        bottom.grid(row=3, column=0, sticky="ew")
+        bottom.grid_columnconfigure(0, weight=1)
 
         # Premium User Profile Card
-        self.user_card = ctk.CTkFrame(sidebar, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color="#334155")
-        self.user_card.grid(row=98, column=0, pady=(20, 10), padx=12, sticky="ew")
+        self.user_card = ctk.CTkFrame(bottom, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color="#334155")
+        self.user_card.grid(row=0, column=0, pady=(8, 6), padx=12, sticky="ew")
         
         self.lbl_user_info = ctk.CTkLabel(
             self.user_card, text="👤  Chưa đăng nhập",
             font=("Segoe UI", 12), text_color=TEXT_MAIN, justify="left"
         )
         self.lbl_user_info.pack(padx=12, pady=12, anchor="w")
+        
+        self.btn_upgrade_sidebar = ctk.CTkButton(
+            self.user_card, text="💎 Nâng Cấp VIP", height=32,
+            font=("Segoe UI", 12, "bold"),
+            fg_color=ACCENT, hover_color=ACCENT_HOVER, corner_radius=6,
+            command=self._handle_sidebar_upgrade
+        )
+        self.btn_upgrade_sidebar.pack(padx=12, pady=(0, 12), fill="x")
 
         # Logout button
         btn_logout = ctk.CTkButton(
-            sidebar, text="🚪 Đăng xuất", height=40,
+            bottom, text="🚪 Đăng xuất", height=40,
             font=("Segoe UI", 13, "bold"),
             fg_color="#EF4444", hover_color="#B91C1C", corner_radius=8,
             command=self._do_logout
         )
-        btn_logout.grid(row=99, column=0, pady=(0, 20), padx=12, sticky="ew")
+        btn_logout.grid(row=1, column=0, pady=(0, 6), padx=12, sticky="ew")
+
+        # Support info
+        import webbrowser
+        support_frame = ctk.CTkFrame(bottom, fg_color="transparent")
+        support_frame.grid(row=2, column=0, sticky="ew")
+        
+        ctk.CTkLabel(support_frame, text="📞 Hotline hỗ trợ:", font=("Segoe UI", 11, "bold"), text_color=TEXT_DIM).pack(anchor="w", padx=16, pady=(2, 4))
+        
+        self.btn_zalo = ctk.CTkButton(
+            support_frame, text="💬 Zalo: 0866655803", font=("Segoe UI", 11, "bold"),
+            fg_color="#0068FF", hover_color="#0055D4", height=28,
+            command=lambda: webbrowser.open("https://zalo.me/0866655803")
+        )
+        self.btn_zalo.pack(anchor="w", padx=16, pady=2, fill="x")
+        
+        self.btn_tele = ctk.CTkButton(
+            support_frame, text="✈️ Telegram: @hoannm", font=("Segoe UI", 11, "bold"),
+            fg_color="#24A1DE", hover_color="#1D84B5", height=28,
+            command=lambda: webbrowser.open("https://t.me/hoannm")
+        )
+        self.btn_tele.pack(anchor="w", padx=16, pady=2, fill="x")
 
         # Bottom: version
         ctk.CTkLabel(
-            sidebar, text="v1.0.0 (Premium)",
+            bottom, text="v1.0.0 (Premium)",
             font=("Segoe UI", 10), text_color=TEXT_DIM,
-        ).grid(row=100, column=0, pady=12)
+        ).grid(row=3, column=0, pady=(4, 10))
 
     # ── Content area ─────────────────────────────────────────────────────────
     def _build_content(self):
@@ -3368,6 +4181,29 @@ class App(ctk.CTk):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Entry point
 # ═══════════════════════════════════════════════════════════════════════════════
+def _cleanup_zombie_browsers():
+    """Dọn dẹp các cửa sổ Chrome/Edge do Playwright sinh ra bị kẹt."""
+    try:
+        import psutil
+        count = 0
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                name = proc.info.get('name', '').lower()
+                if name in ('chrome.exe', 'msedge.exe'):
+                    cmdline = proc.info.get('cmdline') or []
+                    cmd_str = " ".join(cmdline).lower()
+                    if ".profiles" in cmd_str or "tiktok-upload-video" in cmd_str:
+                        proc.kill()
+                        count += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        
+        if count > 0:
+            print(f"Đã tự động dọn dẹp {count} tiến trình Chrome/Edge bị kẹt từ lần chạy trước.")
+    except Exception as e:
+        print(f"Lỗi dọn dẹp: {e}")
+
 if __name__ == "__main__":
+    _cleanup_zombie_browsers()
     app = App()
     app.mainloop()

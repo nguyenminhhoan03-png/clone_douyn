@@ -58,8 +58,9 @@ _ANTI_DETECT_SCRIPT = """
 class TikTokUploader:
     """Tự động upload video lên TikTok qua Playwright browser automation."""
 
-    def __init__(self, db: DatabaseManager = None, cookies_file: str = None, proxy: str = None, window_idx: int = 0):
+    def __init__(self, db: DatabaseManager = None, cookies_file: str = None, proxy: str = None, window_idx: int = 0, username: str = None):
         self.db = db or DatabaseManager()
+        self.current_username = username
         self.config = TIKTOK_CONFIG
         self.cookies_file = cookies_file or self.config.get("cookies_file")
         self.proxy = proxy  # Format: "http://user:pass@ip:port" hoặc "socks5://ip:port"
@@ -156,20 +157,10 @@ class TikTokUploader:
         profile_dir.mkdir(parents=True, exist_ok=True)
         
         try:
-            self.context = await self._playwright.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                channel="chrome", 
-                no_viewport=True,
-                user_agent=fp_user_agent,
-                locale=fp_locale,
-                timezone_id=fp_timezone,
-                **launch_kwargs
-            )
-        except Exception:
             try:
                 self.context = await self._playwright.chromium.launch_persistent_context(
                     user_data_dir=str(profile_dir),
-                    channel="msedge", 
+                    channel="chrome", 
                     no_viewport=True,
                     user_agent=fp_user_agent,
                     locale=fp_locale,
@@ -177,15 +168,31 @@ class TikTokUploader:
                     **launch_kwargs
                 )
             except Exception:
-                logger.warning("Không tìm thấy Chrome/Edge, dùng Chromium mặc định")
-                self.context = await self._playwright.chromium.launch_persistent_context(
-                    user_data_dir=str(profile_dir),
-                    no_viewport=True,
-                    user_agent=fp_user_agent,
-                    locale=fp_locale,
-                    timezone_id=fp_timezone,
-                    **launch_kwargs
-                )
+                try:
+                    self.context = await self._playwright.chromium.launch_persistent_context(
+                        user_data_dir=str(profile_dir),
+                        channel="msedge", 
+                        no_viewport=True,
+                        user_agent=fp_user_agent,
+                        locale=fp_locale,
+                        timezone_id=fp_timezone,
+                        **launch_kwargs
+                    )
+                except Exception:
+                    logger.warning("Không tìm thấy Chrome/Edge, dùng Chromium mặc định")
+                    self.context = await self._playwright.chromium.launch_persistent_context(
+                        user_data_dir=str(profile_dir),
+                        no_viewport=True,
+                        user_agent=fp_user_agent,
+                        locale=fp_locale,
+                        timezone_id=fp_timezone,
+                        **launch_kwargs
+                    )
+        except Exception as e:
+            err_str = str(e).lower()
+            if "in use" in err_str or "locked" in err_str:
+                raise Exception("Trình duyệt cũ chưa được đóng hẳn (Thư mục Profile đang bị khóa). Vui lòng tắt thủ công các cửa sổ Chrome đang mở hoặc chạy Task Manager để End Task 'chrome.exe' rồi thử lại!")
+            raise e
 
         logger.info(
             f"🎭 Fingerprint: {fp_viewport['width']}x{fp_viewport['height']} | "
@@ -733,7 +740,13 @@ class TikTokUploader:
         logger.info(f"  📝 Caption: {caption[:80]}...")
         return caption[:2200]
 
-    async def upload_pending_videos(self, limit: int = None, video_ids: list = None, custom_captions: dict = None) -> list:
+    async def upload_pending_videos(
+        self, 
+        limit: int = None, 
+        video_ids: list = None, 
+        custom_captions: dict = None,
+        cancel_check: Optional[Callable[[], bool]] = None
+    ) -> list:
         """
         Upload tất cả video pending lên TikTok.
         Trả về list các video_id đã upload thành công.
@@ -776,6 +789,10 @@ class TikTokUploader:
         interval = self.config.get("post_interval_hours", (3, 4))
 
         for i, video in enumerate(videos):
+            if cancel_check and cancel_check():
+                logger.warning("Upload bị hủy bởi người dùng!")
+                break
+                
             logger.info(f"\n[{i + 1}/{len(videos)}] Uploading video ID: {video['video_id']}")
 
             # Tạo caption
@@ -800,6 +817,7 @@ class TikTokUploader:
                     crawled_video_id=video["id"],
                     caption=caption,
                     hashtags=" ".join(hashtags),
+                    username=self.current_username
                 )
                 uploaded_ids.append(video["video_id"])
                 
@@ -822,6 +840,9 @@ class TikTokUploader:
 
             # Delay giữa các lần post
             if i < len(videos) - 1:
+                if cancel_check and cancel_check():
+                    break
+                    
                 # Đọc cấu hình delay (tính bằng phút) hoặc mặc định random 15-30 giây nếu không cấu hình (hoặc bằng 0)
                 delay_mins = self.config.get("post_delay_minutes", 0)
                 if delay_mins > 0:
@@ -833,7 +854,11 @@ class TikTokUploader:
                     wait_seconds = random.randint(15, 30)
                     
                 logger.info(f"  ⏳ Waiting {wait_seconds} seconds before next post...")
-                await asyncio.sleep(wait_seconds)
+                # Ngủ chia nhỏ để có thể dừng ngang được
+                for _ in range(wait_seconds):
+                    if cancel_check and cancel_check():
+                        break
+                    await asyncio.sleep(1)
 
         logger.info(f"\n📊 Upload summary: {len(uploaded_ids)}/{len(videos)} successful")
         return uploaded_ids
@@ -854,7 +879,7 @@ class TikTokUploader:
             update_callback: Hàm callback để cập nhật log ra giao diện.
         """
         try:
-            if not self.browser:
+            if not self.page:
                 await self._init_browser()
 
             logger.info(f"Bắt đầu nuôi nick {self.cookies_file} trong {duration_minutes} phút...")
@@ -935,7 +960,14 @@ class TikTokUploader:
                                 box = await like_btns.nth(i).bounding_box()
                                 # Nút tim phải nằm trong vùng nhìn thấy của màn hình (từ 0 đến vh)
                                 if box and 0 <= box['y'] <= vh:
-                                    await like_btns.nth(i).click(force=True)
+                                    # Mô phỏng thao tác di chuột và click thật để vượt bot detection
+                                    target_x = box['x'] + box['width'] / 2
+                                    target_y = box['y'] + box['height'] / 2
+                                    
+                                    await self.page.mouse.move(target_x, target_y, steps=10)
+                                    await asyncio.sleep(random.uniform(0.1, 0.3))
+                                    await self.page.mouse.click(target_x, target_y, delay=random.randint(50, 150))
+                                    
                                     liked_count += 1
                                     like_msg = f"❤️ Đã thả tim video thứ {video_count}"
                                     logger.info(like_msg)
@@ -1002,6 +1034,151 @@ class TikTokUploader:
             if update_callback:
                 update_callback(err, "ERROR")
             return False
+
+    async def execute_farm_flow(
+        self,
+        flow: dict,
+        update_callback: Optional[Callable[[str, str], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None
+    ) -> bool:
+        """Thực thi một Kịch bản nuôi (Farm Flow) với nhiều bước."""
+        try:
+            if not self.page:
+                await self._init_browser()
+                
+            steps = flow.get("steps", [])
+            if not steps:
+                if update_callback: update_callback("Kịch bản trống!", "ERROR")
+                return False
+                
+            if update_callback: update_callback(f"🚀 Bắt đầu chạy Kịch bản: {flow.get('name')}", "INFO")
+                
+            for idx, step in enumerate(steps):
+                if cancel_check and cancel_check():
+                    break
+                    
+                step_type = step.get("type")
+                if update_callback: update_callback(f"--- Bước {idx+1}: {step_type} ---", "INFO")
+                
+                if step_type == "scroll_foryou":
+                    await self.nurture_account(
+                        duration_minutes=step.get("duration", 10),
+                        like_ratio=step.get("like_ratio", 0.2),
+                        update_callback=update_callback,
+                        cancel_check=cancel_check
+                    )
+                elif step_type == "search_and_interact":
+                    await self._action_search_and_interact(step, update_callback, cancel_check)
+                elif step_type == "rest":
+                    duration = step.get("duration", 5)
+                    if update_callback: update_callback(f"💤 Bắt đầu ngâm máy {duration} phút...", "INFO")
+                    
+                    end_time = time.time() + (duration * 60)
+                    while time.time() < end_time:
+                        if cancel_check and cancel_check(): break
+                        await asyncio.sleep(2)
+                        
+            if update_callback: update_callback(f"🎉 Hoàn thành Kịch bản: {flow.get('name')}", "SUCCESS")
+            return True
+        except Exception as e:
+            logger.error(f"Lỗi khi chạy Flow: {e}")
+            if update_callback: update_callback(f"Lỗi Kịch bản: {e}", "ERROR")
+            return False
+
+    async def _action_search_and_interact(self, step, update_callback, cancel_check):
+        import urllib.parse
+        keyword = step.get("keyword", "")
+        watch_count = int(step.get("watch_count", 3))
+        like_ratio = float(step.get("like_ratio", 0.5))
+        follow_ratio = float(step.get("follow_ratio", 0.1))
+        
+        if not keyword:
+            if update_callback: update_callback("Từ khóa trống, bỏ qua tìm kiếm.", "WARNING")
+            return
+            
+        if update_callback: update_callback(f"🔍 Tìm kiếm từ khóa: '{keyword}'", "INFO")
+        
+        try:
+            url = f"https://www.tiktok.com/search/video?q={urllib.parse.quote(keyword)}"
+            await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            pass
+            
+        await self._random_delay(3, 5)
+        
+        try:
+            # Scroll nhẹ để load nếu mạng chậm
+            await self.page.evaluate("window.scrollBy(0, 300);")
+            await asyncio.sleep(2)
+            
+            # Thử nhiều cách xác định Video đầu tiên vì TikTok hay đổi DOM
+            first_video = None
+            locators_to_try = [
+                "[data-e2e='search-card-video-link']",
+                "[data-e2e='search_video-item'] a",
+                "a:has(video)",
+                "div[class*='DivItemContainer'] a",
+                "[data-e2e='search-card-user-link']"
+            ]
+            
+            for loc in locators_to_try:
+                elements = self.page.locator(loc)
+                if await elements.count() > 0:
+                    first_video = elements.first
+                    break
+                    
+            if first_video:
+                await first_video.click()
+                await self._random_delay(2, 4)
+            else:
+                if update_callback: update_callback(f"Không tìm thấy video nào cho từ khóa '{keyword}'", "WARNING")
+                return
+                
+            # Đã mở Video Modal, bắt đầu xem và lướt
+            for i in range(watch_count):
+                if cancel_check and cancel_check(): break
+                
+                watch_time = random.uniform(8.0, 35.0)
+                if update_callback: update_callback(f"Đang xem video tìm kiếm thứ {i+1} (chờ {int(watch_time)}s)...", "INFO")
+                await asyncio.sleep(watch_time)
+                
+                # Thả tim
+                if random.random() < like_ratio:
+                    try:
+                        like_btn = self.page.locator("[data-e2e='browse-like-icon']").first
+                        if await like_btn.count() > 0:
+                            await like_btn.click()
+                            if update_callback: update_callback("❤️ Đã thả tim video tìm kiếm!", "SUCCESS")
+                            await self._random_delay(1, 2)
+                    except Exception:
+                        pass
+                        
+                # Follow
+                if random.random() < follow_ratio:
+                    try:
+                        follow_btn = self.page.locator("[data-e2e='browse-follow']").first
+                        if await follow_btn.count() > 0 and await follow_btn.is_visible():
+                            await follow_btn.click()
+                            if update_callback: update_callback("✅ Đã bấm Follow người đăng!", "SUCCESS")
+                            await self._random_delay(1, 2)
+                    except Exception:
+                        pass
+                
+                # Next video (nhấn nút xuống trên bàn phím)
+                if i < watch_count - 1:
+                    await self.page.keyboard.press("ArrowDown")
+                    await self._random_delay(2, 4)
+                    
+            # Đóng modal
+            try:
+                close_btn = self.page.locator("[data-e2e='browse-close']").first
+                if await close_btn.count() > 0:
+                    await close_btn.click()
+            except Exception:
+                pass
+                
+        except Exception as e:
+            if update_callback: update_callback(f"Lỗi tương tác tìm kiếm: {e}", "ERROR")
 
     async def close(self):
         """Đóng browser."""

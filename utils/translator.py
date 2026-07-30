@@ -210,7 +210,7 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
         
         logger.info("Đang gửi danh sách text lên Backend Proxy (Gemini)...")
         
-        text = auth_client.generate_ai(prompt)
+        text = auth_client.generate_ai(prompt, api_key=api_key)
         if text:
             logger.info("Gemini đã dịch xong kịch bản (Chuẩn ngữ cảnh 100%)")
             return text.strip()
@@ -241,7 +241,8 @@ def generate_youtube_metadata_with_gemini(original_title: str, api_keys: list) -
     )
     
     try:
-        text = auth_client.generate_ai(prompt)
+        custom_key = api_keys[0] if (api_keys and len(api_keys) > 0) else None
+        text = auth_client.generate_ai(prompt, api_key=custom_key)
         if text.startswith("```json"):
             text = text[7:]
         elif text.startswith("```"):
@@ -258,7 +259,7 @@ def generate_youtube_metadata_with_gemini(original_title: str, api_keys: list) -
         
     return None
 
-def summarize_review_with_gemini(full_transcript: str) -> str:
+def summarize_review_with_gemini(full_transcript: str, api_keys: list = None) -> str:
     """
     Tóm tắt toàn bộ transcript thành một kịch bản Review Phim lôi cuốn.
     Sử dụng Gemini thông qua Backend Proxy.
@@ -279,7 +280,8 @@ def summarize_review_with_gemini(full_transcript: str) -> str:
     
     try:
         logger.info("Đang gửi toàn bộ Transcript cho Gemini để viết kịch bản Review Phim...")
-        text = auth_client.generate_ai(prompt)
+        custom_key = api_keys[0] if (api_keys and len(api_keys) > 0) else None
+        text = auth_client.generate_ai(prompt, api_key=custom_key)
         if text:
             logger.info("Gemini đã viết xong kịch bản Review Phim!")
             return text.strip()

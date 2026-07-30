@@ -13,7 +13,7 @@ from typing import Optional
 import httpx
 from loguru import logger
 
-from config.settings import DOUYIN_CONFIG, DOWNLOADS_DIR
+from config.settings import DOUYIN_CONFIG, get_user_downloads_dir
 from database.db_manager import DatabaseManager
 
 
@@ -476,7 +476,7 @@ class DouyinCrawler:
         direct_url      = video_info.get("no_watermark_url", "")
         ytdlp_url       = video_info.get("_ytdlp_url") or video_info.get("source_url")
 
-        save_dir = Path(save_dir) if save_dir else DOWNLOADS_DIR
+        save_dir = Path(save_dir) if save_dir else get_user_downloads_dir(self.current_username)
         save_dir.mkdir(parents=True, exist_ok=True)
         save_path = save_dir / f"{video_id}.mp4"
 

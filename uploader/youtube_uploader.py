@@ -37,8 +37,9 @@ YOUTUBE_CATEGORIES = {
 class YouTubeUploader:
     """Tự động upload video lên YouTube qua Google Data API v3."""
 
-    def __init__(self, db: DatabaseManager = None, token_file: str = None):
+    def __init__(self, db: DatabaseManager = None, token_file: str = None, username: str = None):
         self.db = db or DatabaseManager()
+        self.current_username = username
         self.config = YOUTUBE_CONFIG
         self.token_file = token_file or str(COOKIES_DIR / "youtube_1.json")
         self._youtube_service = None
@@ -336,6 +337,7 @@ class YouTubeUploader:
         limit: int = None,
         video_ids: list = None,
         custom_captions: dict = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> list:
         """
         Upload tất cả video pending lên YouTube.
@@ -372,6 +374,10 @@ class YouTubeUploader:
         category = self.config.get("default_category", "22")
 
         for i, video in enumerate(videos):
+            if cancel_check and cancel_check():
+                logger.warning("Upload YouTube bị hủy bởi người dùng!")
+                break
+                
             logger.info(f"\n[{i + 1}/{len(videos)}] Uploading to YouTube: {video['video_id']}")
 
             # Tạo metadata
@@ -402,7 +408,9 @@ class YouTubeUploader:
                     crawled_video_id=video["id"],
                     caption=title,
                     hashtags=" ".join(tags),
+                    tiktok_video_id=video["video_id"],
                     platform="youtube",
+                    username=self.current_username
                 )
                 uploaded_ids.append(video["video_id"])
 
@@ -417,13 +425,18 @@ class YouTubeUploader:
                                 os.remove(p)
                                 cleaned_files += 1
                             except Exception as e:
-                                logger.warning(f"  ⚠️ Lỗi khi xóa file {p}: {e}")
+                                # Lỗi thường gặp trên Windows do file vẫn đang bị thư viện Google tạm giữ (ngậm file)
+                                # Dùng debug thay vì warning để tránh làm user hoang mang tưởng upload xịt
+                                logger.debug(f"Chưa thể xóa {p} do file đang bị khóa: {e}")
 
                     if cleaned_files > 0:
                         logger.info(f"  🧹 Đã xóa {cleaned_files} file cục bộ.")
 
             # Delay giữa các lần upload
             if i < len(videos) - 1:
+                if cancel_check and cancel_check():
+                    break
+                    
                 delay_mins = self.config.get("post_delay_minutes", 0)
                 if delay_mins > 0:
                     wait_seconds = int(delay_mins * 60)
@@ -432,7 +445,10 @@ class YouTubeUploader:
                 else:
                     wait_seconds = random.randint(15, 30)
                 logger.info(f"  ⏳ Waiting {wait_seconds}s before next YouTube upload...")
-                await asyncio.sleep(wait_seconds)
+                for _ in range(wait_seconds):
+                    if cancel_check and cancel_check():
+                        break
+                    await asyncio.sleep(1)
 
         logger.info(f"\n📊 YouTube upload summary: {len(uploaded_ids)}/{len(videos)} successful")
         return uploaded_ids

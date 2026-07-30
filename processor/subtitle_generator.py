@@ -88,7 +88,7 @@ class SubtitleGenerator:
                     logger.info("Chế độ Tóm tắt Review Phim: Gom toàn bộ text...")
                     from utils.translator import summarize_review_with_gemini
                     full_text = " ".join([d["original_text"] for d in segment_data])
-                    review_script = summarize_review_with_gemini(full_text)
+                    review_script = summarize_review_with_gemini(full_text, api_keys=gemini_keys)
                     
                     if review_script:
                         end_time = segment_data[-1]["end_time"]

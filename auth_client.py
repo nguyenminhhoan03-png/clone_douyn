@@ -5,10 +5,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
-API_PORT = os.getenv("API_PORT", "8000")
+API_PORT = os.getenv("API_PORT", "8888")
+API_HOST = os.getenv("API_HOST", "103.77.242.146")
 
 # Cấu hình API Server
-API_BASE_URL = f"http://localhost:{API_PORT}"
+API_BASE_URL = f"http://{API_HOST}:{API_PORT}"
 SESSION_FILE = Path(__file__).parent / "config" / "session.json"
 
 class AuthClient:
@@ -59,6 +60,23 @@ class AuthClient:
         except Exception as e:
             return False, str(e)
 
+    def register(self, username, password):
+        try:
+            resp = requests.post(f"{API_BASE_URL}/register", json={
+                "username": username,
+                "password": password,
+                "role": "user"
+            }, timeout=5)
+            
+            if resp.status_code == 200:
+                return True, "Đăng ký thành công! Bạn có thể đăng nhập."
+            else:
+                return False, resp.json().get("detail", "Đăng ký thất bại")
+        except requests.exceptions.ConnectionError:
+            return False, "Không thể kết nối đến Máy chủ (Server đang tắt?)"
+        except Exception as e:
+            return False, str(e)
+
     def get_me(self):
         if not self.token:
             return False, "Not logged in"
@@ -97,13 +115,15 @@ class AuthClient:
         except Exception as e:
             return False, str(e)
 
-    def generate_ai(self, prompt):
+    def generate_ai(self, prompt, api_key=None):
         if not self.token:
             raise Exception("Chưa đăng nhập! Không thể dùng AI.")
             
-        resp = requests.post(f"{API_BASE_URL}/ai/generate", json={
-            "prompt": prompt
-        }, headers={
+        payload = {"prompt": prompt}
+        if api_key:
+            payload["api_key"] = api_key
+            
+        resp = requests.post(f"{API_BASE_URL}/ai/generate", json=payload, headers={
             "Authorization": f"Bearer {self.token}"
         }, timeout=15)
         
@@ -122,26 +142,26 @@ class AuthClient:
         except Exception as e:
             return False, str(e)
 
-    def admin_create_user(self, username, password, role="user", plan_name="Free"):
+    def admin_create_user(self, username, password, role="user", days_to_add=30):
         if not self.token: return False, "Not logged in"
         try:
             resp = requests.post(f"{API_BASE_URL}/admin/users", json={
                 "username": username,
                 "password": password,
                 "role": role,
-                "plan_name": plan_name
+                "days_to_add": days_to_add
             }, headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
             if resp.status_code == 200: return True, resp.json()
             return False, resp.json().get("detail", "Error")
         except Exception as e:
             return False, str(e)
 
-    def admin_update_user(self, user_id, password=None, role=None, plan_name=None):
+    def admin_update_user(self, user_id, password=None, role=None, days_to_add=None):
         if not self.token: return False, "Not logged in"
         data = {}
         if password: data["password"] = password
         if role: data["role"] = role
-        if plan_name: data["plan_name"] = plan_name
+        if days_to_add: data["days_to_add"] = days_to_add
         try:
             resp = requests.put(f"{API_BASE_URL}/admin/users/{user_id}", json=data, 
                               headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
@@ -157,6 +177,34 @@ class AuthClient:
                                  headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
             if resp.status_code == 200: return True, resp.json()
             return False, resp.json().get("detail", "Error")
+        except Exception as e:
+            return False, str(e)
+
+    def admin_get_config(self):
+        if not self.token: return False, "Not logged in"
+        try:
+            resp = requests.get(f"{API_BASE_URL}/admin/config", 
+                              headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
+            if resp.status_code == 200: return True, resp.json()
+            return False, resp.json().get("detail", "Error")
+        except Exception as e:
+            return False, str(e)
+
+    def admin_save_config(self, data):
+        if not self.token: return False, "Not logged in"
+        try:
+            resp = requests.put(f"{API_BASE_URL}/admin/config", json=data,
+                              headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
+            if resp.status_code == 200: return True, resp.json()
+            return False, resp.json().get("detail", "Error")
+        except Exception as e:
+            return False, str(e)
+            
+    def get_payment_info(self):
+        try:
+            resp = requests.get(f"{API_BASE_URL}/payment/info", timeout=5)
+            if resp.status_code == 200: return True, resp.json()
+            return False, "Error fetching payment info"
         except Exception as e:
             return False, str(e)
 
