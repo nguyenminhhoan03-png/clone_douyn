@@ -5,11 +5,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
-API_PORT = os.getenv("API_PORT", "8888")
-API_HOST = os.getenv("API_HOST", "103.77.242.146")
 
-# Cấu hình API Server
-API_BASE_URL = f"http://{API_HOST}:{API_PORT}"
+# Cho phép đọc thẳng URL từ .env (để dùng được domain như http://douyn-api.muabanwebsite.io.vn)
+API_BASE_URL = os.getenv("API_BASE_URL")
+if not API_BASE_URL:
+    # Nếu không có file .env đi kèm file EXE, mặc định sẽ gọi lên subdomain này:
+    API_BASE_URL = "http://douyn-api.muabanwebsite.io.vn"
 SESSION_FILE = Path(__file__).parent / "config" / "session.json"
 
 class AuthClient:
@@ -62,10 +63,27 @@ class AuthClient:
 
     def register(self, username, password):
         try:
+            import uuid
+            import hashlib
+            
+            import platform
+            
+            mac = str(uuid.getnode())
+            try:
+                if platform.system() == "Windows":
+                    import winreg
+                    registry = winreg.ConnectRegistry(None, winreg.HKEY_LOCAL_MACHINE)
+                    key = winreg.OpenKey(registry, r"SOFTWARE\Microsoft\Cryptography")
+                    mac, _ = winreg.QueryValueEx(key, "MachineGuid")
+            except:
+                pass
+            hwid = hashlib.md5(mac.encode()).hexdigest()
+            
             resp = requests.post(f"{API_BASE_URL}/register", json={
                 "username": username,
                 "password": password,
-                "role": "user"
+                "role": "user",
+                "hwid": hwid
             }, timeout=5)
             
             if resp.status_code == 200:
@@ -92,6 +110,28 @@ class AuthClient:
             else:
                 self.clear_session()
                 return False, "Session expired"
+        except Exception as e:
+            return False, str(e)
+
+    def sync_douyin_cookie(self):
+        if not self.token:
+            return False, "Not logged in"
+            
+        try:
+            resp = requests.get(f"{API_BASE_URL}/api/system/douyin-cookie", headers={
+                "Authorization": f"Bearer {self.token}"
+            }, timeout=10)
+            
+            if resp.status_code == 200:
+                cookie_str = resp.json().get("cookie", "")
+                if cookie_str:
+                    from config.settings import COOKIES_DIR
+                    cookie_path = COOKIES_DIR / "douyin_cookies.txt"
+                    # Lưu file cookie đè lên bản cũ
+                    with open(cookie_path, "w", encoding="utf-8") as f:
+                        f.write(cookie_str)
+                    return True, "Synced"
+            return False, "Failed to sync"
         except Exception as e:
             return False, str(e)
 
@@ -131,6 +171,23 @@ class AuthClient:
             return resp.json().get("text", "")
         else:
             raise Exception(f"Lỗi AI Server: {resp.text}")
+
+    # ── TELEMETRY ────────────────────────────────────────────────────────────
+    def send_telemetry(self, action_type: str, details: str = None):
+        """Gửi log hoạt động ngầm lên server (Non-blocking)"""
+        if not self.token: return
+
+        def _do_send():
+            try:
+                requests.post(f"{API_BASE_URL}/api/telemetry", json={
+                    "action_type": action_type,
+                    "details": details
+                }, headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
+            except:
+                pass # Bỏ qua mọi lỗi để không ảnh hưởng app chính
+                
+        import threading
+        threading.Thread(target=_do_send, daemon=True).start()
 
     # ── ADMIN APIs ───────────────────────────────────────────────────────────
     def admin_get_users(self):
@@ -195,6 +252,24 @@ class AuthClient:
         try:
             resp = requests.put(f"{API_BASE_URL}/admin/config", json=data,
                               headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
+            if resp.status_code == 200: return True, resp.json()
+            return False, resp.json().get("detail", "Error")
+        except Exception as e:
+            return False, str(e)
+
+    def admin_get_stats(self):
+        if not self.token: return False, "Not logged in"
+        try:
+            resp = requests.get(f"{API_BASE_URL}/admin/stats", headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
+            if resp.status_code == 200: return True, resp.json()
+            return False, resp.json().get("detail", "Error")
+        except Exception as e:
+            return False, str(e)
+
+    def admin_get_logs(self, limit=100):
+        if not self.token: return False, "Not logged in"
+        try:
+            resp = requests.get(f"{API_BASE_URL}/api/admin/logs?limit={limit}", headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
             if resp.status_code == 200: return True, resp.json()
             return False, resp.json().get("detail", "Error")
         except Exception as e:

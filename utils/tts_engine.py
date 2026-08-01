@@ -29,6 +29,9 @@ from loguru import logger
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+# Note: subprocess.Popen đã được patch toàn cục trong gui.py (entry point)
+# để ẩn mọi cửa sổ console đen trên Windows.
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants / Tuning knobs – chỉnh ở đây, không cần sửa sâu trong code
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,18 +202,21 @@ def _run_ffmpeg_atempo(temp_file: str, speed_factor: float) -> Optional[str]:
         half = math.sqrt(speed_factor)
         atempo_chain = f"atempo={half:.4f},atempo={half:.4f}"
 
+    from processor.video_processor import FFMPEG_BIN
     cmd = [
-        "ffmpeg", "-y", "-i", temp_file,
+        FFMPEG_BIN, "-y", "-i", temp_file,
         "-filter:a", atempo_chain,
         "-q:a", "2",  # VBR quality thay vì default → nhanh hơn và nhỏ hơn
         fast_file,
     ]
     try:
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         subprocess.run(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True,
+            creationflags=creationflags,
         )
         return fast_file if os.path.exists(fast_file) and os.path.getsize(fast_file) > 0 else None
     except Exception as exc:
@@ -452,6 +458,8 @@ def mix_audio_tracks(
     try:
         import math
         from pydub import AudioSegment
+        from processor.video_processor import FFMPEG_BIN
+        AudioSegment.converter = FFMPEG_BIN
 
         original = AudioSegment.from_file(original_audio_path)
         voiceover = AudioSegment.from_mp3(voiceover_audio_path)
@@ -462,32 +470,34 @@ def mix_audio_tracks(
 
         original = original[: len(voiceover)]
 
-        # --- Audio Ducking Logic ---
-        # Tính toán mức giảm dB
-        if original_volume > 0:
-            db_reduction = 20 * math.log10(original_volume)
+        # --- Xử lý Âm lượng (Ducking + Global Volume) ---
+        # Người dùng muốn âm lượng gốc là original_volume (vd 15%)
+        # Lỗi cũ: Lúc AI không nói, âm lượng vọt lên 100% khiến video bị ồn, giọng gốc chèn lấn.
+        # Fix: Hạ toàn cục âm lượng gốc xuống mức user chọn.
+        if original_volume <= 0:
+            base_reduction = -100.0  # Mute hoàn toàn
         else:
-            db_reduction = -100.0 # Mute
+            base_reduction = 20 * math.log10(original_volume)
+
+        # Hạ âm lượng toàn cục
+        original = original + base_reduction
 
         chunk_size_ms = 50
         ducked_original_chunks = []
-        
-        # Ngưỡng RMS để coi là có giọng nói (im lặng thường có RMS rất thấp < 50)
-        # Tùy thuộc vào voiceover, có thể tinh chỉnh. TTS im lặng có RMS = 0
         silence_threshold = 10 
+        
+        # Ducking thêm -8dB khi AI đang nói để làm nổi bật giọng AI hơn nữa
+        ducking_reduction = -8.0 if original_volume > 0 else 0
 
         for i in range(0, len(original), chunk_size_ms):
             orig_chunk = original[i:i+chunk_size_ms]
             vo_chunk = voiceover[i:i+chunk_size_ms]
             
-            # Nếu voiceover có tiếng (RMS > threshold) thì hạ volume original_chunk
             if vo_chunk.rms > silence_threshold:
-                ducked_original_chunks.append(orig_chunk + db_reduction)
+                ducked_original_chunks.append(orig_chunk + ducking_reduction)
             else:
-                # Không có giọng nói -> Giữ nguyên 100% âm thanh gốc
                 ducked_original_chunks.append(orig_chunk)
 
-        # Nối lại
         ducked_original = ducked_original_chunks[0]
         for c in ducked_original_chunks[1:]:
             ducked_original += c

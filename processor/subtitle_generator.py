@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 from loguru import logger
 
 from utils.translator import translate_text
@@ -30,15 +30,22 @@ class SubtitleGenerator:
                 self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8")
                 logger.info("Whisper model loaded on CPU!")
 
-    def generate_srt(self, video_path: str, output_srt_path: str, src_lang: str = "zh", target_lang: str = "vi") -> Optional[str]:
+    def generate_srt(self, video_path: str, output_srt_path: str, src_lang: str = "zh", target_lang: str = "vi", progress_cb: Optional[Callable] = None) -> Optional[str]:
         """
         Nhận diện giọng nói từ video, dịch và tạo file .srt.
         """
         try:
-            self._load_model()
+            try:
+                self._load_model()
+            except Exception as e:
+                if progress_cb: progress_cb(10, f"Lỗi load model AI (Cần cài đặt đúng thư viện hoặc thiết lập GPU): {str(e)[:100]}")
+                logger.error(f"Lỗi load model AI: {e}")
+                return None
+                
             video_path_obj = Path(video_path)
             if not video_path_obj.exists():
                 logger.error(f"Video không tồn tại: {video_path}")
+                if progress_cb: progress_cb(10, "Lỗi: Video gốc không tồn tại để dịch AI.")
                 return None
             
             logger.info(f"Transcribing audio from: {video_path_obj.name}")
@@ -72,12 +79,17 @@ class SubtitleGenerator:
                     
             if not segment_data:
                 logger.warning("Không nhận diện được giọng nói trong video.")
+                if progress_cb: progress_cb(10, "Cảnh báo: Video không có giọng nói hoặc AI không nghe rõ.")
                 return None
                 
             gemini_keys = PROCESSOR_CONFIG.get("gemini_api_keys", [])
             # Fallback tương thích ngược với file config cũ
             if not gemini_keys and PROCESSOR_CONFIG.get("gemini_api_key"):
                 gemini_keys = [PROCESSOR_CONFIG.get("gemini_api_key")]
+                
+            # Senior fix: Nếu người dùng không nhập key cá nhân, tự động mượn sức mạnh AI từ Server (SaaS)
+            if not gemini_keys or len(gemini_keys) == 0:
+                gemini_keys = [None]
                 
             use_google_fallback = True
             

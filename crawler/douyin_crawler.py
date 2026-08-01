@@ -261,7 +261,8 @@ class DouyinCrawler:
 
         logger.info(f"Video ID: {video_id} | URL: {video_url}")
 
-        if self.db.is_duplicate(video_id, username=self.current_username):
+        unique_vid = f"{self.current_username}_{video_id}" if self.current_username else video_id
+        if self.db.is_duplicate(unique_vid, username=self.current_username):
             logger.info(f"Video already crawled: {video_id}")
             return None
 
@@ -548,8 +549,14 @@ class DouyinCrawler:
             logger.warning(f"Could not download: {video_url}")
             return None
 
+        import time
+        base_vid = video_info["video_id"]
+        timestamp = int(time.time() * 1000)
+        # Gắn thêm timestamp để cho phép crawl cùng 1 video nhiều lần (đáp ứng nghiệp vụ phân luồng nhiều bản sao)
+        unique_vid = f"{self.current_username}_{base_vid}_{timestamp}" if self.current_username else f"{base_vid}_{timestamp}"
+        
         row_id = self.db.add_crawled_video(
-            video_id=video_info["video_id"],
+            video_id=unique_vid,
             source_url=video_info["source_url"],
             title=video_info["title"],
             author=video_info["author"],
@@ -561,7 +568,8 @@ class DouyinCrawler:
         )
 
         if row_id > 0:
-            self.db.update_video_status(video_info["video_id"], "downloaded")
+            self.db.update_video_status(unique_vid, "downloaded")
+            video_info["video_id"] = unique_vid
             video_info["download_path"] = download_path
             video_info["db_id"] = row_id
             return video_info
@@ -652,7 +660,8 @@ class DouyinCrawler:
                         
                         video_url = f"https://www.douyin.com/video/{aweme.get('aweme_id', '')}"
                         video_id = str(aweme.get("aweme_id", ""))
-                        if self.db.is_duplicate(video_id, username=self.current_username): continue
+                        unique_vid = f"{self.current_username}_{video_id}" if self.current_username else video_id
+                        if self.db.is_duplicate(unique_vid, username=self.current_username): continue
                         
                         video_data = await self.get_video_info(video_url)
                         if not video_data: continue
@@ -660,7 +669,7 @@ class DouyinCrawler:
                         download_path = await self.download_video(video_data)
                         if download_path:
                             self.db.add_crawled_video(
-                                video_id=video_data["video_id"],
+                                video_id=unique_vid,
                                 source_url=video_data["source_url"],
                                 title=video_data["title"],
                                 author=video_data["author"],
@@ -670,7 +679,8 @@ class DouyinCrawler:
                                 duration=video_data["duration"],
                                 username=self.current_username,
                             )
-                            self.db.update_video_status(video_data["video_id"], "downloaded")
+                            self.db.update_video_status(unique_vid, "downloaded")
+                            video_data["video_id"] = unique_vid
                             video_data["download_path"] = download_path
                             results.append(video_data)
                         await self._async_random_delay()

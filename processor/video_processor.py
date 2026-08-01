@@ -16,9 +16,18 @@ from typing import Optional, Callable
 
 from loguru import logger
 
-from config.settings import PROCESSOR_CONFIG, get_user_processed_dir, MUSIC_DIR
+from config.settings import PROCESSOR_CONFIG, get_user_processed_dir, MUSIC_DIR, BASE_DIR
 from database.db_manager import DatabaseManager
 from processor.subtitle_generator import SubtitleGenerator
+
+def get_bin_path(name: str) -> str:
+    path = BASE_DIR / f"{name}.exe"
+    if path.exists():
+        return str(path)
+    return name
+
+FFPROBE_BIN = get_bin_path("ffprobe")
+FFMPEG_BIN = get_bin_path("ffmpeg")
 
 
 class VideoProcessor:
@@ -68,45 +77,46 @@ class VideoProcessor:
 
     def _get_video_duration(self, input_path: str) -> float:
         """Lấy thời lượng video bằng ffprobe."""
-        cmd = [
-            "ffprobe", "-v", "error", "-show_entries",
-            "format=duration", "-of",
-            "default=noprint_wrappers=1:nokey=1", input_path
-        ]
+        cmd = [FFPROBE_BIN, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", input_path]
         try:
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
             return float(result.stdout.strip())
-        except Exception:
-            return 0.0
+        except:
+            return -1.0
 
     def _get_video_height(self, input_path: str) -> int:
-        cmd = [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=height", "-of",
-            "default=noprint_wrappers=1:nokey=1", input_path
-        ]
+        cmd = [FFPROBE_BIN, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height", "-of", "default=noprint_wrappers=1:nokey=1", input_path]
         try:
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
             return int(result.stdout.strip())
-        except Exception:
-            return 720 # Fallback 720p
+        except:
+            return 1920 # Fallback 1080p portrait (1080x1920)
 
     def process_video(self, input_path: str, title: str = None,
-                      output_path: str = None) -> Optional[str]:
+                      output_path: str = None, progress_cb: Optional[Callable] = None) -> Optional[str]:
         input_path = Path(input_path)
         if not input_path.exists():
-            logger.error(f"Video file not found: {input_path}")
+            msg = f"Lỗi: Không tìm thấy file gốc {input_path.name}"
+            logger.error(msg)
+            if progress_cb: progress_cb(0, msg)
             return None
 
         if not output_path:
             output_path = get_user_processed_dir(self.current_username) / f"processed_{input_path.name}"
         output_path = Path(output_path)
 
+        if progress_cb:
+            progress_cb(5, "Đang chuẩn bị...")
+            
         logger.info(f"Processing video: {input_path.name} (Native FFmpeg)")
         
         video_duration = self._get_video_duration(str(input_path))
         if video_duration <= 0:
-            logger.error("Could not read video duration.")
+            msg = "Lỗi: Không thể đọc thời lượng video (Thiếu ffprobe hoặc file lỗi)"
+            logger.error(msg)
+            if progress_cb: progress_cb(0, msg)
             return None
 
         inputs = ["-i", str(input_path)]
@@ -153,15 +163,32 @@ class VideoProcessor:
         has_subtitles = False
         srt_path = None
         if self.config.get("auto_subtitle") and self.subtitle_generator:
+            if progress_cb:
+                progress_cb(10, "Đang dịch AI...")
             srt_path = get_user_processed_dir(self.current_username) / f"{input_path.stem}.srt"
             logger.info(f"  Running AI to transcribe & translate subtitles...")
-            generated_srt = self.subtitle_generator.generate_srt(
-                str(input_path), str(srt_path), src_lang="zh", target_lang="vi"
-            )
+            
+            try:
+                generated_srt = self.subtitle_generator.generate_srt(
+                    str(input_path), str(srt_path), src_lang="zh", target_lang="vi", progress_cb=progress_cb
+                )
+            except Exception as e:
+                generated_srt = None
+                if progress_cb: progress_cb(10, f"Lỗi nghiêm trọng Subtitle AI: {str(e)[:100]}")
+                
             if generated_srt:
-                # Dùng bản clean (không có tag M/F) để chèn lên màn hình
                 clean_srt_path = str(srt_path).replace('.srt', '_clean.srt')
-                srt_path_unix = str(clean_srt_path).replace("\\", "/").replace(":", "\\:")
+                
+                # Sử dụng đường dẫn tương đối để tránh lỗi dấu hai chấm (:) của ổ đĩa trên Windows trong FFmpeg filter
+                rel_srt_path = os.path.relpath(clean_srt_path, os.getcwd())
+                clean_srt_str = str(rel_srt_path).replace("\\", "/")
+                
+                # Escape các ký tự đặc biệt còn lại (nếu có trong tên file)
+                for char in [" ", ",", "="]:
+                    clean_srt_str = clean_srt_str.replace(char, f"\\{char}")
+                    
+                srt_path_unix = clean_srt_str
+                
                 # Lấy cấu hình vùng mờ để tính tọa độ
                 blur_height = self.config.get("blur_height", 0.15)
                 blur_pos = self.config.get("blur_position", "bottom")
@@ -185,9 +212,12 @@ class VideoProcessor:
 
                 # Style đoản kịch chuyên nghiệp (Trắng tinh tế, viền mỏng, đổ bóng nhẹ)
                 style = f"FontName=Arial,FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Alignment={alignment},MarginV={margin_v},Bold=1,BorderStyle=1,Outline=1.2,Shadow=0.5"
-                filters.append(f"subtitles='{srt_path_unix}':force_style='{style}'")
+                filters.append(f"subtitles={srt_path_unix}:force_style='{style}'")
                 has_subtitles = True
                 logger.debug("  ✓ Subtitles applied")
+            else:
+                if progress_cb: progress_cb(10, "Lỗi: Không thể tạo Phụ đề (Bỏ qua Sub & Voice)")
+                logger.warning("Subtitle generation failed or returned None, skipping subtitles.")
 
         # 6. Speed (Phải áp dụng sau subtitles để sub được scale đúng tốc độ cùng với video)
         speed_range = self.config.get("speed_range", (0.97, 1.03))
@@ -204,6 +234,7 @@ class VideoProcessor:
         
         if self.config.get("ai_dubbing") and has_subtitles and srt_path and srt_path.exists():
             from utils.tts_engine import generate_voiceover_from_srt, mix_audio_tracks
+            if progress_cb: progress_cb(30, "Đang đọc thuyết minh (TTS)...")
             logger.info("  🎙️ Generating AI Vietnamese voiceover...")
             voiceover_path = get_user_processed_dir(self.current_username) / f"{input_path.stem}_voiceover.mp3"
             
@@ -217,25 +248,32 @@ class VideoProcessor:
             )
             
             if vo_result:
+                if progress_cb: progress_cb(60, "Đang ghép nhạc...")
                 mixed_audio_path = get_user_processed_dir(self.current_username) / f"{input_path.stem}_mixed.mp3"
-                orig_vol = self.config.get("original_audio_volume", 0.35)
                 
-                bg_music_path = self._get_random_music() if self.config.get("replace_audio") else None
-                from utils.tts_engine import mix_audio_tracks
+                # config values
+                bg_vol = self.config.get("bg_music_volume", 0.15)
+                mute_original = self.config.get("mute_original_audio", False)
+                replace_audio = self.config.get("replace_audio", True)
+                
+                bg_music_path = self._get_random_music() if replace_audio else None
                 
                 if bg_music_path:
-                    # REVIEW PHIM STYLE: Dùng nhạc nền random + Audio Ducking
+                    # REVIEW PHIM STYLE: Dùng nhạc nền random + Voiceover.
+                    # Nhạc nền random KHÔNG BỊ MUTE bởi tùy chọn Tắt tiếng video gốc.
                     logger.info("  🎵 Review Phim Style: Mixing AI voiceover with background music (Ducking)...")
                     mixed = mix_audio_tracks(
                         str(bg_music_path), str(voiceover_path),
-                        str(mixed_audio_path), original_volume=orig_vol,
+                        str(mixed_audio_path), original_volume=bg_vol,
                     )
                 else:
-                    # ĐOẢN KỊCH STYLE: Dùng âm thanh gốc + Audio Ducking
-                    logger.info("  🎵 Đoản Kịch Style: Mixing AI voiceover with ORIGINAL VIDEO AUDIO (Ducking)...")
+                    # ĐOẢN KỊCH STYLE: Dùng âm thanh gốc + Voiceover
+                    # Nếu người dùng chọn Tắt âm thanh gốc thì mute hoàn toàn (0.0), nếu không thì dùng bg_vol
+                    target_vol = 0.0 if mute_original else bg_vol
+                    logger.info(f"  🎵 Đoản Kịch Style: Mixing AI voiceover with ORIGINAL VIDEO AUDIO (vol={target_vol})...")
                     mixed = mix_audio_tracks(
                         str(input_path), str(voiceover_path),
-                        str(mixed_audio_path), original_volume=orig_vol,
+                        str(mixed_audio_path), original_volume=target_vol,
                     )
                     
                 if mixed:
@@ -264,7 +302,7 @@ class VideoProcessor:
             logger.info(f"  🏷️ YouTube Bypass: Adding Logo Watermark ({Path(logo_path).name})")
                 
         # Xây dựng lệnh FFmpeg cuối cùng
-        cmd = ["ffmpeg", "-y"] + inputs
+        cmd = [FFMPEG_BIN, "-y"] + inputs
         
         # Build filter complex
         filter_complex = ""
@@ -348,18 +386,62 @@ class VideoProcessor:
             str(output_path)
         ])
 
+        if progress_cb:
+            progress_cb(70, "Đang render Video...")
+
         logger.info(f"  Exporting with FFmpeg: {output_path.name}...")
         try:
-            # Chạy FFmpeg ẩn đi output, nếu lỗi thì bắt output
-            result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            import re
+            creationflags = 0
+            if os.name == 'nt':
+                creationflags = subprocess.CREATE_NO_WINDOW
+                
+            # Chạy FFmpeg ẩn đi output, bắt stderr để đọc thời gian thực
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
+            
+            time_pattern = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
+            
+            for line in process.stderr:
+                match = time_pattern.search(line)
+                if match and progress_cb:
+                    h, m, s = match.groups()
+                    current_time = int(h) * 3600 + int(m) * 60 + float(s)
+                    
+                    if video_duration > 0:
+                        # Map ffmpeg time (0 -> duration) to progress (70 -> 99)
+                        ffmpeg_progress = min(1.0, current_time / video_duration)
+                        final_progress = 70 + (ffmpeg_progress * 29)
+                        progress_cb(final_progress, "Đang render Video...")
+                        
+            process.wait()
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(process.returncode, cmd, stderr=process.stderr.read() if not process.stderr.closed else "")
+                
+            if not output_path.exists():
+                raise Exception(f"FFmpeg chạy xong nhưng không tạo được file ở {output_path.name}")
+                
             file_size = output_path.stat().st_size / 1024 / 1024
+            if file_size <= 0:
+                raise Exception("Lỗi: FFmpeg xuất ra file 0KB (Dữ liệu hỏng hoặc rỗng)")
+                
             logger.info(f"  ✅ Done: {output_path.name} ({file_size:.1f} MB)")
         except subprocess.CalledProcessError as e:
-            logger.error(f"FFmpeg failed: {e.stderr.decode('utf-8', errors='ignore')}")
+            err_msg = e.stderr if hasattr(e, 'stderr') else str(e)
+            logger.error(f"FFmpeg failed: {err_msg}")
+            if progress_cb: progress_cb(0, f"Lỗi FFmpeg: {err_msg[:200]}")
+            return None
+        except Exception as e:
+            logger.error(f"FFmpeg process error: {str(e)}")
+            if progress_cb: progress_cb(0, f"Lỗi hệ thống FFmpeg: {str(e)[:200]}")
             return None
         finally:
             if srt_path and srt_path.exists():
                 try: srt_path.unlink()
+                except: pass
+                # Dọn cả file _clean.srt
+                clean_srt = Path(str(srt_path).replace('.srt', '_clean.srt'))
+                try:
+                    if clean_srt.exists(): clean_srt.unlink()
                 except: pass
             if has_dubbing and mixed_audio_path:
                 try: Path(mixed_audio_path).unlink()
@@ -367,11 +449,13 @@ class VideoProcessor:
 
         return str(output_path)
 
-    def process_downloaded_videos(self, titles: dict = None, limit: int = 10, video_ids: list = None, cancel_check: Optional[Callable[[], bool]] = None) -> list:
+    def process_downloaded_videos(self, titles: dict = None, limit: int = 10, video_ids: list = None, cancel_check: Optional[Callable[[], bool]] = None, progress_callback: Optional[Callable] = None) -> list:
         if video_ids:
             # Lấy không giới hạn nếu người dùng đã tick chọn cụ thể
             videos = self.db.get_downloaded_videos(limit=999999)
+            if progress_callback: progress_callback("SYS", 0, f"[DEBUG] DB trả về {len(videos)} videos. Lọc theo {len(video_ids)} IDs...")
             videos = [v for v in videos if v["video_id"] in video_ids]
+            if progress_callback: progress_callback("SYS", 0, f"[DEBUG] Sau lọc còn {len(videos)} videos hợp lệ.")
         else:
             videos = self.db.get_downloaded_videos(limit=limit)
             
@@ -388,13 +472,28 @@ class VideoProcessor:
                 
             video_id = video["video_id"]
             title = titles.get(video_id) or self._generate_title(video)
-            processed_path = self.process_video(input_path=video["download_path"], title=title)
-            if processed_path:
-                self.db.update_translated_title(video_id, title)
-                self.db.update_video_status(video_id=video_id, status="processed", processed_path=processed_path)
-                results.append(processed_path)
-            else:
-                self.db.update_video_status(video_id=video_id, status="failed", error_message="Processing failed")
+            
+            # Wrap progress callback for this specific video
+            # SENIOR FIX: vid=video_id để "đóng băng" giá trị tại thời điểm tạo closure
+            def cb(pct, status, vid=video_id):
+                if progress_callback:
+                    progress_callback(vid, pct, status)
+                    
+            try:
+                processed_path = self.process_video(input_path=video["download_path"], title=title, progress_cb=cb)
+                if processed_path:
+                    self.db.update_translated_title(video_id, title)
+                    self.db.update_video_status(video_id=video_id, status="processed", processed_path=processed_path)
+                    cb(100, "Hoàn thành!")
+                    results.append(processed_path)
+                else:
+                    self.db.update_video_status(video_id=video_id, status="failed", error_message="Processing failed")
+                    cb(0, "Lỗi xử lý!")
+            except Exception as e:
+                import traceback
+                logger.error(f"Lỗi không xác định khi xử lý video {video_id}: {traceback.format_exc()}")
+                self.db.update_video_status(video_id=video_id, status="failed", error_message=str(e))
+                cb(0, f"Lỗi Code: {str(e)[:100]}")
 
         logger.info(f"Processed {len(results)}/{len(videos)} videos")
         return results

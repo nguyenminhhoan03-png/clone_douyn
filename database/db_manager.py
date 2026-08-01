@@ -38,7 +38,7 @@ class DatabaseManager:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS crawled_videos (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    video_id TEXT UNIQUE NOT NULL,
+                    video_id TEXT NOT NULL,
                     source_url TEXT NOT NULL,
                     title TEXT,
                     author TEXT,
@@ -50,7 +50,11 @@ class DatabaseManager:
                     status TEXT DEFAULT 'pending',
                     crawled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     processed_at TIMESTAMP,
-                    error_message TEXT
+                    error_message TEXT,
+                    username TEXT,
+                    title_vi TEXT,
+                    custom_caption TEXT,
+                    UNIQUE(video_id, username)
                 )
             """)
 
