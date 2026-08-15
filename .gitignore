@@ -35,3 +35,36 @@ music/*.wav
 .DS_Store
 Thumbs.db
 desktop.ini
+
+/cookies/
+/config/
+/driver/
+/.*profiles/
+/dist/
+/user_data/
+
+# PyInstaller & Build artifacts
+/build/
+*.exe
+*.pkg
+warn-*.txt
+xref-*.html
+*.spec
+
+# Debug and temporary files
+/debug/
+/scratch/
+.agent-skills/
+temp_name.txt
+test_output.txt
+*.vtt
+test_*.py
+ps.bat
+
+# Test audio files at root
+/*.mp3
+/*.m4a
+
+# Session and ENV
+config/session.json
+.env

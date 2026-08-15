@@ -36,10 +36,10 @@ if sys.platform == 'win32':
 # Constants / Tuning knobs – chỉnh ở đây, không cần sửa sâu trong code
 # ─────────────────────────────────────────────────────────────────────────────
 _MAX_CONCURRENCY = 2          # Giảm xuống 2 để tránh bị Microsoft Rate Limit / Ban IP
-_PER_REQUEST_TIMEOUT = 25.0   # Tăng nhẹ timeout
-_MAX_RETRIES = 5              # Số lần retry tối đa mỗi segment
-_CHUNK_MAX_CHARS = 150        # Câu dài hơn sẽ bị split thành nhiều chunk
-_THROTTLE_AFTER_SUCCESS = 1.0 # Ngủ 1s sau mỗi success để tránh spam request liên tục
+_MAX_RETRIES = 8              # Tăng số lần thử lại lên 8 để chống rớt mạng TTS
+_PER_REQUEST_TIMEOUT = 30.0   # Tăng timeout lên 30s do server Microsoft đôi khi phản hồi rất chậm
+_CHUNK_MAX_CHARS = 100        # Chia nhỏ câu để an toàn hơn
+_THROTTLE_AFTER_SUCCESS = 0.35 # Nghỉ 0.5s sau mỗi chunk thành công
 _FFMPEG_WORKERS = 4           # ThreadPoolExecutor workers cho FFmpeg atempo
 
 
@@ -126,6 +126,62 @@ def _split_into_chunks(text: str, max_chars: int = _CHUNK_MAX_CHARS) -> list[str
     return [c for c in chunks if c]
 
 
+def _fetch_vbee_chunk_sync(text: str, voice_id: str, out_file: str) -> bool:
+    import requests
+    import os
+    import time
+    
+    app_id = ""
+    token = ""
+    
+    vbee_key = os.environ.get("VBEE_API_KEY", "")
+    if ":" in vbee_key:
+        app_id, token = vbee_key.split(":", 1)
+    else:
+        token = vbee_key
+    
+    api_url = "https://vbee.vn/api/v1/convert-tts"
+    headers = {
+        "Content-Type": "application/json",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if app_id:
+        headers["App-Id"] = app_id
+        
+    data = {
+        "input_text": text,
+        "text": text,
+        "voice": voice_id.replace("vbee-", ""),
+        "speed": 1.0,
+        "bit_rate": 128000,
+        "audio_type": "mp3"
+    }
+    
+    try:
+        resp = requests.post(api_url, json=data, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            try:
+                result = resp.json()
+                if "audioData" in result:
+                    import base64
+                    with open(out_file, "wb") as f:
+                        f.write(base64.b64decode(result["audioData"]))
+                    return True
+                
+                audio_url = result.get("audio_url") or result.get("download_url") or result.get("audio_link") or result.get("url")
+                if audio_url:
+                    r2 = requests.get(audio_url, timeout=15)
+                    if r2.status_code == 200:
+                        with open(out_file, "wb") as f:
+                            f.write(r2.content)
+                        return True
+            except:
+                pass
+        return False
+    except Exception as e:
+        return False
+
 async def _fetch_single_chunk(
     sem: asyncio.Semaphore,
     edge_tts,
@@ -135,6 +191,10 @@ async def _fetch_single_chunk(
     out_file: str,
     label: str,
 ) -> bool:
+    if voice.startswith("vbee-"):
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _fetch_vbee_chunk_sync, text, voice, out_file)
+
     """
     Tải 1 chunk text về file .mp3 với retry + exponential backoff.
     Trả về True nếu thành công.
@@ -261,18 +321,44 @@ async def _async_generate_voiceover(
             continue
 
         # Phân tích Tag để chuyển đổi giọng nói (Multi-speaker Dubbing)
-        current_voice = voice if voice != "Multi" else "vi-VN-HoaiMyNeural"
+        current_voice = voice
+        is_vbee = "vbee" in current_voice.lower()
+        
+        # Đặt giọng mặc định nếu user chọn chế độ Đa giọng
+        if current_voice == "Multi":
+            current_voice = "vi-VN-HoaiMyNeural"
+        elif current_voice == "vbee-multi":
+            current_voice = "vbee-hn_female_ngochuyen_vdc_cg"
+
         import re
-        match = re.search(r'\[([MFNmf])\]', raw_text)
+        # Bắt các định dạng tag đa dạng mà AI có thể sinh ra: [M], (M), [Nam], [Nữ], v.v.
+        match = re.search(r'\[\s*(M|F|N|Nam|Nữ|Nu)\s*\]|\(\s*(M|F|N|Nam|Nữ|Nu)\s*\)', raw_text, re.IGNORECASE)
         if match:
-            tag = match.group(1).upper()
-            if tag == 'M':
-                current_voice = "vi-VN-NamMinhNeural"
-            elif tag == 'F' or tag == 'N':
-                current_voice = "vi-VN-HoaiMyNeural"
+            raw_tag = (match.group(1) or match.group(2)).upper()
+            if 'M' in raw_tag or 'NAM' in raw_tag:
+                tag = 'M'
+            elif 'F' in raw_tag or 'NỮ' in raw_tag or 'NU' in raw_tag:
+                tag = 'F'
+            else:
+                tag = 'N'
+                
+            # CHỈ đổi giọng nếu user chọn chế độ Đa giọng (Multi hoặc vbee-multi)
+            if voice in ("Multi", "vbee-multi"):
+                if is_vbee:
+                    if tag == 'M':
+                        current_voice = "vbee-sg_male_minhhoang_vdc_cg"
+                    elif tag in ('F', 'N'):
+                        current_voice = "vbee-hn_female_ngochuyen_vdc_cg"
+                else:
+                    if tag == 'M':
+                        current_voice = "vi-VN-NamMinhNeural"
+                    elif tag in ('F', 'N'):
+                        current_voice = "vi-VN-HoaiMyNeural"
             
-            # Xóa tag khỏi text
-            raw_text = re.sub(r'\[[MFNmf]\]', '', raw_text).strip()
+            # Xóa tag khỏi text để TTS không đọc nhầm
+            raw_text = re.sub(r'\[\s*(M|F|N|Nam|Nữ|Nu)\s*\]|\(\s*(M|F|N|Nam|Nữ|Nu)\s*\)', '', raw_text, flags=re.IGNORECASE).strip()
+            # Xóa luôn dấu hai chấm dư thừa ở đầu (nếu có, VD: "[Nam]: Chào")
+            raw_text = re.sub(r'^:\s*', '', raw_text).strip()
 
         start_ms = sub.start.ordinal
         end_ms = sub.end.ordinal
@@ -498,9 +584,9 @@ def mix_audio_tracks(
             else:
                 ducked_original_chunks.append(orig_chunk)
 
-        ducked_original = ducked_original_chunks[0]
-        for c in ducked_original_chunks[1:]:
-            ducked_original += c
+        # Dùng kỹ thuật _spawn nối raw_data để tăng tốc nối hàng nghìn chunk từ O(N^2) xuống O(1), chống treo máy với video dài
+        raw_data = b"".join([c._data for c in ducked_original_chunks])
+        ducked_original = original._spawn(raw_data)
 
         # Tăng volume voiceover nhẹ để giọng TTS nổi bật rõ
         voiceover = voiceover + 2.0  # +2 dB

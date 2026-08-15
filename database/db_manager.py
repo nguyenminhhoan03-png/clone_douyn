@@ -214,7 +214,26 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_pending_videos(self, limit: int = 5, username: str = None) -> list:
+    def get_authors(self, status: str = None, username: str = None) -> list:
+        """Lấy danh sách các tác giả duy nhất."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            query = "SELECT DISTINCT author FROM crawled_videos WHERE author IS NOT NULL AND author != ''"
+            params = []
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+            if username:
+                query += " AND username = ?"
+                params.append(username)
+            query += " ORDER BY author ASC"
+            cursor.execute(query, tuple(params))
+            return [row["author"] for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def get_pending_videos(self, limit: int = 5, username: str = None, author: str = None) -> list:
         """Lấy danh sách video đã processed, chưa post."""
         conn = self._get_connection()
         try:
@@ -228,7 +247,10 @@ class DatabaseManager:
             if username:
                 query += " AND username = ?"
                 params.append(username)
-            query += " ORDER BY crawled_at DESC LIMIT ?"
+            if author:
+                query += " AND author = ?"
+                params.append(author)
+            query += " ORDER BY processed_at DESC, crawled_at DESC LIMIT ?"
             params.append(limit)
             
             cursor.execute(query, tuple(params))
@@ -236,7 +258,7 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_downloaded_videos(self, limit: int = 10, username: str = None) -> list:
+    def get_downloaded_videos(self, limit: int = 10, username: str = None, author: str = None) -> list:
         """Lấy danh sách video đã download, chưa processed."""
         conn = self._get_connection()
         try:
@@ -246,7 +268,10 @@ class DatabaseManager:
             if username:
                 query += " AND username = ?"
                 params.append(username)
-            query += " ORDER BY crawled_at DESC LIMIT ?"
+            if author:
+                query += " AND author = ?"
+                params.append(author)
+            query += " ORDER BY id DESC LIMIT ?"
             params.append(limit)
             
             cursor.execute(query, tuple(params))
@@ -254,7 +279,7 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_all_videos(self, status: str = None, limit: int = 50, username: str = None) -> list:
+    def get_all_videos(self, status: str = None, limit: int = 50, username: str = None, author: str = None) -> list:
         """Lấy tất cả video với optional status filter."""
         conn = self._get_connection()
         try:
@@ -267,8 +292,11 @@ class DatabaseManager:
             if username:
                 query += " AND username = ?"
                 params.append(username)
+            if author:
+                query += " AND author = ?"
+                params.append(author)
                 
-            query += " ORDER BY crawled_at DESC LIMIT ?"
+            query += " ORDER BY id DESC LIMIT ?"
             params.append(limit)
             
             cursor.execute(query, tuple(params))
@@ -325,6 +353,7 @@ class DatabaseManager:
             if username:
                 query += " AND username = ?"
                 params.append(username)
+
                 
             cursor.execute(query, tuple(params))
             return cursor.fetchone()[0]

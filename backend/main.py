@@ -151,19 +151,61 @@ def track_usage(req: TrackRequest, current_user: models.User = Depends(get_curre
 
 class PromptRequest(BaseModel):
     prompt: str
+    api_key: str = None
+    key_type: str = None  # "groq" hoặc "gemini"
 
 @app.post("/ai/generate")
 def proxy_gemini_api(req: PromptRequest, current_user: models.User = Depends(get_current_user)):
     if not current_user.plan or not current_user.plan.can_use_ai_script:
         raise HTTPException(status_code=403, detail="Tính năng AI chỉ dành cho gói Pro và VIP. Vui lòng nâng cấp.")
-        
-    # Ở đây Backend sẽ dùng Key Gemini riêng (được giấu kín trên server)
+    
     import os
+    
+    # Nếu client gửi API Key riêng (Groq hoặc Gemini)
+    if req.api_key:
+        if req.key_type == "groq" or req.api_key.startswith("gsk_"):
+            # Gọi Groq API (OpenAI-compatible)
+            try:
+                import requests as http_requests
+                resp = http_requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    json={
+                        "model": "llama-3.3-70b-versatile",
+                        "messages": [{"role": "user", "content": req.prompt}],
+                        "temperature": 0.3,
+                        "max_tokens": 4096
+                    },
+                    headers={
+                        "Authorization": f"Bearer {req.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    return {"text": resp.json()["choices"][0]["message"]["content"]}
+                else:
+                    raise HTTPException(status_code=resp.status_code, detail=f"Groq API Error: {resp.text}")
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Groq Error: {str(e)}")
+        else:
+            # Gọi Gemini API với key của client
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=req.api_key)
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(req.prompt)
+                return {"text": response.text}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Gemini Error: {str(e)}")
+    
+    # Fallback: Dùng Server Gemini Key
     import google.generativeai as genai
     
     server_api_key = os.getenv("SERVER_GEMINI_API_KEY", "")
     if not server_api_key:
-        raise HTTPException(status_code=500, detail="Server API Key not configured")
+        raise HTTPException(status_code=500, detail="Chưa cấu hình API Key (GROQ hoặc GEMINI)")
         
     try:
         genai.configure(api_key=server_api_key)

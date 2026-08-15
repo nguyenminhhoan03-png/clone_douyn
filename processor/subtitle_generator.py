@@ -1,15 +1,91 @@
 import os
+import time
+import re
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 from loguru import logger
 
 from utils.translator import translate_text
 
 
+class _KeyManager:
+    """
+    Senior-level Round-Robin API Key Manager.
+    
+    Features:
+    - Round-Robin: phân tải đều giữa các keys (nhớ vị trí giữa các lần gọi)
+    - Cooldown Tracking: key bị rate limit → tự động bỏ qua đến khi hết cooldown
+    - Auto-Wait: nếu TẤT CẢ keys đều đang cooldown → tự chờ đến key sớm nhất
+    - Parse wait time: đọc thời gian chờ từ error message của Groq
+    """
+    
+    def __init__(self):
+        self._index = 0
+        self._cooldowns = {}  # key_hash -> timestamp khi hết cooldown
+    
+    def _hash(self, key):
+        """Hash key để log không lộ API key."""
+        return key[-6:] if key else "none"
+    
+    def get_next_key(self, keys: List[str]) -> Optional[str]:
+        """
+        Lấy key tiếp theo chưa bị cooldown.
+        Nếu tất cả đang cooldown → chờ key sớm nhất rồi trả về.
+        """
+        if not keys:
+            return None
+        
+        now = time.time()
+        
+        # Thử tìm key chưa bị cooldown
+        for _ in range(len(keys)):
+            key = keys[self._index % len(keys)]
+            self._index = (self._index + 1) % len(keys)
+            
+            cooldown_until = self._cooldowns.get(self._hash(key), 0)
+            if now >= cooldown_until:
+                return key
+        
+        # Tất cả keys đang cooldown → chờ key hết cooldown sớm nhất
+        if self._cooldowns:
+            min_wait = min(self._cooldowns.values()) - now
+            if min_wait > 0:
+                logger.info(f"⏳ Tất cả keys đang cooldown. Tự động chờ {min_wait:.1f}s...")
+                time.sleep(min_wait + 0.5)  # +0.5s buffer
+            # Xóa cooldown đã hết hạn
+            self._cooldowns = {k: v for k, v in self._cooldowns.items() if v > time.time()}
+            return self.get_next_key(keys)
+        
+        return keys[0]  # fallback
+    
+    def mark_rate_limited(self, key: str, error_msg: str = ""):
+        """
+        Đánh dấu key bị rate limit.
+        Parse thời gian chờ từ error message nếu có.
+        """
+        # Groq trả về: "Please try again in 30.595s"
+        wait_seconds = 35  # default 35s
+        match = re.search(r'try again in (\d+\.?\d*)s', error_msg)
+        if match:
+            wait_seconds = float(match.group(1)) + 2  # +2s buffer
+        
+        h = self._hash(key)
+        self._cooldowns[h] = time.time() + wait_seconds
+        logger.debug(f"  🔒 Key ...{h} cooldown {wait_seconds:.0f}s")
+    
+    def mark_success(self, key: str):
+        """Xóa cooldown cho key thành công."""
+        self._cooldowns.pop(self._hash(key), None)
+
+
+# Singleton: 1 instance duy nhất dùng chung cho toàn bộ app
+_key_manager = _KeyManager()
+
+
 class SubtitleGenerator:
     """Tạo phụ đề tự động bằng AI cục bộ (faster-whisper) + Dịch ngôn ngữ."""
 
-    def __init__(self, model_size: str = "base"):
+    def __init__(self, model_size: str = "medium"):
         self.model_size = model_size
         self.model = None
 
@@ -51,13 +127,14 @@ class SubtitleGenerator:
             logger.info(f"Transcribing audio from: {video_path_obj.name}")
             
             # Whisper tự trích xuất audio nếu đưa file video vào
-            # Senior tip: Dùng VAD (Voice Activity Detection) để bỏ qua khoảng lặng, giảm beam_size xuống 2 để x2 tốc độ
+            # Senior+ tip: beam_size=5 cho độ chính xác cao nhất với tiếng Trung
+            # condition_on_previous_text=True để Whisper dùng ngữ cảnh câu trước suy luận câu sau (giảm lỗi đồng âm)
             segments, info = self.model.transcribe(
                 str(video_path), 
-                beam_size=2, 
+                beam_size=5, 
                 language=src_lang,
-                condition_on_previous_text=False,
-                compression_ratio_threshold=2.0,
+                condition_on_previous_text=True,
+                compression_ratio_threshold=2.4,
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500)
             )
@@ -122,35 +199,36 @@ class SubtitleGenerator:
                     else:
                         logger.warning("Lỗi khi viết kịch bản Review, chuyển về dịch nguyên bản...")
                         
-                # ─── Cách 1: Dịch ngữ cảnh bằng Gemini LLM (Senior Tip: Xoay tua API Keys chống Quota) ───
-                logger.info(f"Đã tìm thấy {len(gemini_keys)} Gemini API Keys. Đang gửi dữ liệu text cho AI dịch ngữ cảnh...")
+                # ─── Cách 1: Dịch ngữ cảnh bằng AI LLM (Smart Round-Robin Key Rotation) ───
+                ai_name = "Groq" if gemini_keys and gemini_keys[0] and gemini_keys[0].startswith("gsk_") else "Gemini"
+                logger.info(f"Đã tìm thấy {len(gemini_keys)} {ai_name} API Keys. Đang gửi dữ liệu text cho AI dịch ngữ cảnh...")
                 
-                # Senior tip: Chia nhỏ kịch bản (Chunking) để tránh AI Gemini bị ảo giác hoặc cắt xén (Truncate) khi video quá dài
                 CHUNK_SIZE = 100
                 payload_lines = []
                 for idx, data in enumerate(segment_data):
-                    # Định dạng: ID|text
                     payload_lines.append(f"{idx}|{data['original_text']}")
                 
                 translated_text = ""
                 total_chunks = (len(payload_lines) - 1) // CHUNK_SIZE + 1
                 gemini_success = True
-                current_key_idx = 0
+                
+                # Kiểm tra cấu hình xem có đang ở chế độ nhiều giọng không
+                multi_speaker_mode = PROCESSOR_CONFIG.get("tts_voice") in ("Multi", "vbee-multi")
                 
                 for i in range(0, len(payload_lines), CHUNK_SIZE):
                     chunk = payload_lines[i:i + CHUNK_SIZE]
                     chunk_text = "\n".join(chunk)
-                    
-                    import time
                     chunk_success = False
                     
-                    # Thử lần lượt các keys nếu bị lỗi Quota (429)
-                    for attempt in range(len(gemini_keys)):
-                        gemini_key = gemini_keys[current_key_idx]
-                        logger.info(f"Đang gửi lô {i//CHUNK_SIZE + 1}/{total_chunks} cho Gemini (Bằng Key {current_key_idx + 1}/{len(gemini_keys)})...")
+                    # Smart Round-Robin: thử tối đa len(keys) + 1 lần (bao gồm auto-wait)
+                    max_attempts = len(gemini_keys) + 1
+                    for attempt in range(max_attempts):
+                        gemini_key = _key_manager.get_next_key(gemini_keys)
+                        if not gemini_key:
+                            break
                         
-                        # Kiểm tra cấu hình xem có đang ở chế độ nhiều giọng không
-                        multi_speaker_mode = PROCESSOR_CONFIG.get("tts_voice") == "Multi"
+                        key_label = f"...{gemini_key[-6:]}" if gemini_key else "Server"
+                        logger.info(f"Đang gửi lô {i//CHUNK_SIZE + 1}/{total_chunks} cho {ai_name} (Key {key_label})...")
                         
                         chunk_result = translate_srt_with_gemini(
                             chunk_text, 
@@ -159,21 +237,22 @@ class SubtitleGenerator:
                         )
                         
                         if chunk_result:
+                            _key_manager.mark_success(gemini_key)
                             translated_text += chunk_result + "\n"
                             chunk_success = True
                             break
                         else:
-                            logger.warning(f"Key {current_key_idx + 1} bị lỗi hoặc hết lượt (Quota Limit)! Đang đổi sang Key khác...")
-                            current_key_idx = (current_key_idx + 1) % len(gemini_keys)
-                            time.sleep(2)  # Nghỉ một chút trước khi thử key mới
+                            # Đánh dấu key bị lỗi với cooldown
+                            _key_manager.mark_rate_limited(gemini_key)
+                            logger.warning(f"Key {key_label} bị lỗi! KeyManager tự động chọn key khác...")
                             
                     if not chunk_success:
-                        logger.warning(f"Tất cả {len(gemini_keys)} Gemini Keys đều đã hết lượt hoặc lỗi! Hủy Gemini, chuyển sang Google Translate!")
+                        logger.warning(f"Tất cả {len(gemini_keys)} API Keys đều đã hết lượt hoặc lỗi! Chuyển sang Google Translate!")
                         gemini_success = False
                         break
                         
-                    # Nghỉ 2s giữa các request thành công để tránh spam Rate Limit
-                    time.sleep(2)
+                    # Nghỉ 1s giữa các chunk thành công
+                    time.sleep(1)
                 
                 if gemini_success and translated_text.strip():
                     # Phân tích cú pháp (Parse) kết quả từ AI và ghép vào Timestamp GỐC
@@ -191,6 +270,9 @@ class SubtitleGenerator:
                     import re
                     for idx, data in enumerate(segment_data):
                         t_text = trans_dict.get(idx, data['original_text'])
+                        
+                        # LOG: Hiển thị text gốc và text dịch để User kiểm tra chất lượng
+                        logger.info(f"[Dịch Sub {idx+1}] {data['original_text']} ➔ {t_text}")
                         
                         # Bộ lọc AI ảo giác lặp từ (Senior tip)
                         if len(t_text) > 40:
@@ -228,7 +310,7 @@ class SubtitleGenerator:
                             
                         use_google_fallback = False
                     else:
-                        logger.warning("Không có nội dung SRT nào được tạo ra từ Gemini sau khi lọc. Fallback Google Translate.")
+                        logger.warning("Không có nội dung SRT nào được tạo ra từ AI sau khi lọc. Fallback Google Translate.")
                         
             if use_google_fallback:
                 # ─── Cách 2: Dịch từng câu bằng Google Dịch (Fallback) ───

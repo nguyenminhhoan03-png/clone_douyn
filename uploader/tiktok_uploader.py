@@ -443,7 +443,7 @@ class TikTokUploader:
 
         return None
 
-    async def _wait_for_upload_complete(self, timeout: int = 300):
+    async def _wait_for_upload_complete(self, timeout: int = 30):
         """Đợi video upload xong bằng cách check xem nút Post đã bấm được chưa."""
         logger.info("  ⏳ Waiting for video upload/encoding to finish before posting...")
 
@@ -1081,8 +1081,9 @@ class TikTokUploader:
             if update_callback: update_callback(f"🎉 Hoàn thành Kịch bản: {flow.get('name')}", "SUCCESS")
             return True
         except Exception as e:
-            logger.error(f"Lỗi khi chạy Flow: {e}")
-            if update_callback: update_callback(f"Lỗi Kịch bản: {e}", "ERROR")
+            import traceback
+            logger.error(f"Lỗi khi chạy Flow: {repr(e)}\n{traceback.format_exc()}")
+            if update_callback: update_callback(f"Lỗi Kịch bản: {repr(e)}", "ERROR")
             return False
 
     async def _action_search_and_interact(self, step, update_callback, cancel_check):

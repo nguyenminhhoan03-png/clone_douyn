@@ -1,0 +1,29 @@
+==================================================
+  HUONG DAN CAI DAT & SU DUNG TIKTOK UPLOADER PRO
+==================================================
+
+1. YEU CAU TRUOC KHI CHAY TOOL
+- Giai nen toan bo thu muc nay ra. KHONG duoc chay truc tiep trong file nen (WinRAR/ZIP).
+- Kiem tra xem trong thu muc da co san 2 file: "ffmpeg.exe" va "ffprobe.exe" hay chua.
+- Neu thieu 2 file nay, tinh nang edit video se bi loi. (Lien he Admin de lay link tai neu chua co).
+
+2. CACH MO TOOL
+- Click dup vao file "TikTok_Uploader_Client.exe" de mo Tool.
+- Neu Windows hien bang canh bao xanh (Windows Protect), chon "More Info" roi bam "Run anyway".
+
+3. DANG KY TAI KHOAN & GOI FREE
+- Bam vao nut "Dang Ky" tren man hinh dang nhap.
+- Dien Ten dang nhap va Mat khau (Viet lien khong dau, khong ki tu dac biet).
+- He thong se TU DONG TANG GOI FREE 1 NGAY cho ban trai nghiem!
+- LUU Y QUAN TRONG: Moi may tinh chi duoc nhan goi Free DUY NHAT 1 LAN. Neu ban co tinh tao them tai khoan thu 2 tren cung 1 may, he thong se bao loi va tu choi!
+
+4. MUA GOI & GIA HAN
+- Khi het han, tren Tool se hien thi Ma QR Code.
+- Dung App Ngan hang quet ma QR de chuyen khoan (GIU NGUYEN NOI DUNG CHUYEN KHOAN).
+- Cho 30 giay - 1 phut, tat Tool mo lai, tai khoan se duoc tu dong gia han!
+
+==================================================
+HOTRO KY THUAT
+Zalo: (Dien so Zalo cua ban vao day)
+Telegram: (Dien link Tele cua ban vao day)
+==================================================

@@ -23,6 +23,13 @@ COOKIES_DIR = BASE_DIR / "config" / "cookies"
 for dir_path in [DOWNLOADS_DIR, PROCESSED_DIR, MUSIC_DIR, LOGS_DIR, COOKIES_DIR]:
     dir_path.mkdir(parents=True, exist_ok=True)
 
+
+def get_user_processed_dir(username: str = "default") -> Path:
+    """Trả về thư mục processed riêng cho mỗi user (processed/<username>/)."""
+    user_dir = PROCESSED_DIR / username
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir
+
 # ============================================================
 # DOUYIN CRAWLER CONFIG
 # ============================================================

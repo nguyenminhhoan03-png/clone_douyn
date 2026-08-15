@@ -25,6 +25,18 @@ class AuthClient:
                 with open(SESSION_FILE, "r") as f:
                     data = json.load(f)
                     self.token = data.get("access_token")
+                    
+                if self.token:
+                    import base64
+                    parts = self.token.split(".")
+                    if len(parts) == 3:
+                        payload = parts[1]
+                        payload += "=" * ((4 - len(payload) % 4) % 4)
+                        decoded = json.loads(base64.b64decode(payload))
+                        self.user_info = {
+                            "username": decoded.get("sub", "default"),
+                            "role": decoded.get("role", "user")
+                        }
             except:
                 pass
 
@@ -155,14 +167,53 @@ class AuthClient:
         except Exception as e:
             return False, str(e)
 
-    def generate_ai(self, prompt, api_key=None):
+    def generate_ai(self, prompt, api_key=None, model=None):
+        if api_key:
+            # Make direct API calls from the client to avoid backend proxy errors
+            if api_key.startswith("gsk_"):
+                import requests as http_requests
+                groq_model = model or "llama-3.3-70b-versatile"
+                
+                # Groq has a strict 12,000 TPM limit on free tier. 
+                # Groq calculates: Requested Tokens = Input Tokens + max_tokens.
+                # Since the new prompt is huge (~3500 tokens) and subtitles are ~1000 tokens,
+                # setting max_tokens to 8000+ will result in Requested > 12000, causing an instant rejection.
+                # Setting max_tokens to 4000 is more than enough for short video subtitles and keeps total < 10000.
+                max_tokens = 4000
+                
+                resp = http_requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    json={
+                        "model": groq_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.3,
+                        "max_tokens": max_tokens
+                    },
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    return resp.json()["choices"][0]["message"]["content"]
+                else:
+                    raise Exception(f"Lỗi Groq API ({groq_model}): {resp.text}")
+            else:
+                try:
+                    import google.generativeai as genai
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel("gemini-1.5-flash")
+                    response = model.generate_content(prompt)
+                    return response.text
+                except Exception as e:
+                    raise Exception(f"Lỗi Gemini API: {str(e)}")
+
+        # Fallback: Gọi qua Backend nếu không có API Key riêng
         if not self.token:
             raise Exception("Chưa đăng nhập! Không thể dùng AI.")
             
         payload = {"prompt": prompt}
-        if api_key:
-            payload["api_key"] = api_key
-            
         resp = requests.post(f"{API_BASE_URL}/ai/generate", json=payload, headers={
             "Authorization": f"Bearer {self.token}"
         }, timeout=15)

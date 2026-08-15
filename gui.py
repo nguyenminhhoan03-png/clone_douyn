@@ -1,3 +1,4 @@
+from ui.tabs.livestream_tab import LivestreamTab
 """
 GUI Entry Point - Giao diện desktop cho Douyin Crawler & TikTok Auto-Uploader
 Yêu cầu: pip install customtkinter
@@ -913,7 +914,8 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         self._progress_labels = {} # {video_id: CTkLabel}
         self._selected_music_path = None
         self._build()
-        self.after(200, self._load_videos) # Load video khi tab mở
+        self.after(200, self._load_videos)
+        self.after(300, self._load_process_config)
 
     def _build(self):
         ctk.CTkLabel(
@@ -935,6 +937,8 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         list_header = ctk.CTkFrame(left_frame, fg_color="transparent")
         list_header.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         ctk.CTkLabel(list_header, text="Danh sách Video đã tải:", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="left")
+        self._opt_author_filter = ctk.CTkOptionMenu(list_header, values=["Tất cả Kênh"], width=130, command=lambda _: self._load_videos())
+        self._opt_author_filter.pack(side="left", padx=(10, 0))
         
         ctk.CTkButton(list_header, text="🔄 Refresh", width=60, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._load_videos).pack(side="right")
         ctk.CTkButton(list_header, text="🗑 Xóa", width=60, height=24, fg_color="#e74c3c", hover_color="#c0392b", command=self._delete_selected).pack(side="right", padx=(0, 10))
@@ -1101,7 +1105,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         voice_tools.pack(fill="x")
         self._opt_voice = ctk.CTkOptionMenu(
             voice_tools, 
-            values=["Giọng Nam", "Giọng Nữ", "Đa giọng (Đoản kịch)"], 
+            values=["Giọng Nam", "Giọng Nữ", "Đa giọng (Đoản kịch)", "Vbee - Ngọc Huyền (Nữ)", "Vbee - Mai Phương (Nữ)", "Vbee - Minh Hoàng (Nam)", "Vbee - Đa giọng (Đoản kịch)"], 
             width=140, font=("Segoe UI", 11), fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
         )
         self._opt_voice.set("Giọng Nữ")
@@ -1110,7 +1114,15 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkLabel(voice_tools, text="Tốc độ:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(0, 5))
         self._entry_tts_rate = ctk.CTkEntry(voice_tools, width=45, placeholder_text="0%", font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
         self._entry_tts_rate.insert(0, "0%")
-        self._entry_tts_rate.pack(side="left")
+        self._entry_tts_rate.pack(side="left", padx=(0, 5))
+        
+        def _on_tts_slider(val):
+            self._entry_tts_rate.delete(0, "end")
+            self._entry_tts_rate.insert(0, f"{int(val)}%")
+            
+        self._slider_tts_rate = ctk.CTkSlider(voice_tools, from_=-50, to=50, width=80, command=_on_tts_slider)
+        self._slider_tts_rate.set(0)
+        self._slider_tts_rate.pack(side="left")
 
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
 
@@ -1157,6 +1169,13 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         btn_row = ctk.CTkFrame(right_frame, fg_color="transparent")
         btn_row.grid(row=1, column=0, sticky="ew", pady=(0, 12))
 
+        ctk.CTkButton(
+            btn_row, text="💾 Lưu Cấu Hình Setup", height=36,
+            font=("Segoe UI", 12, "bold"),
+            fg_color=BORDER, hover_color=BG_CARD,
+            command=self._save_process_config,
+        ).pack(fill="x", pady=(0, 8))
+
         self._btn_process = ctk.CTkButton(
             btn_row, text="▶  Bắt đầu Xử lý", height=42,
             font=("Segoe UI", 14, "bold"),
@@ -1191,7 +1210,18 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         current_user = auth_client.user_info.get("username") if auth_client.user_info else None
         
         # Lấy 100 video tải gần nhất để hiển thị
-        videos = db.get_downloaded_videos(limit=100, username=current_user)
+        
+        author_val = self._opt_author_filter.get() if hasattr(self, "_opt_author_filter") else "Tất cả Kênh"
+        if hasattr(self, "_opt_author_filter"):
+            authors = db.get_authors(status="downloaded", username=current_user)
+            new_values = ["Tất cả Kênh"] + authors
+            self._opt_author_filter.configure(values=new_values)
+            if author_val not in new_values:
+                author_val = "Tất cả Kênh"
+                self._opt_author_filter.set("Tất cả Kênh")
+        author_filter = None if author_val == "Tất cả Kênh" else author_val
+        videos = db.get_downloaded_videos(limit=100, username=current_user, author=author_filter)
+
         
         if not videos:
             ctk.CTkLabel(self._video_list_frame, text="Không có video nào đang chờ xử lý.", text_color=TEXT_DIM).pack(pady=20)
@@ -1318,6 +1348,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         import shutil
         import uuid
         import subprocess
+
         
         db = DatabaseManager()
         current_user = auth_client.user_info.get("username") if auth_client.user_info else None
@@ -1432,6 +1463,62 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
                 
         self._log(f"Đã chuyển {count} video thẳng sang tab Upload thành công!", "SUCCESS")
         self._load_videos()
+
+    def _save_process_config(self):
+        config = {
+            "chk_trans": self._chk_trans.get(),
+            "chk_voice": self._chk_voice.get(),
+            "chk_bgm": self._chk_bgm.get(),
+            "chk_sub": self._chk_sub.get(),
+            "chk_logo": self._chk_logo.get(),
+            "chk_scale": self._chk_scale.get(),
+            "opt_platform": self._opt_platform.get(),
+            "opt_ai_mode": self._opt_ai_mode.get(),
+            "opt_voice": self._opt_voice.get(),
+            "tts_rate": self._entry_tts_rate.get()
+        }
+        from config.settings import BASE_DIR
+        try:
+            with open(BASE_DIR / "config" / "process_ui.json", "w", encoding="utf-8") as f:
+                import json
+                json.dump(config, f, ensure_ascii=False, indent=2)
+            from tkinter import messagebox
+            messagebox.showinfo("Thành công", "Đã lưu cấu hình Process chung!")
+        except Exception as e:
+            from tkinter import messagebox
+            messagebox.showerror("Lỗi", f"Lỗi lưu config: {e}")
+
+    def _load_process_config(self):
+        from config.settings import BASE_DIR
+        cfg_path = BASE_DIR / "config" / "process_ui.json"
+        if cfg_path.exists():
+            try:
+                import json
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                
+                if "chk_trans" in config: self._chk_trans.set(config["chk_trans"])
+                if "chk_voice" in config: self._chk_voice.set(config["chk_voice"])
+                if "chk_bgm" in config: self._chk_bgm.set(config["chk_bgm"])
+                if "chk_sub" in config: self._chk_sub.set(config["chk_sub"])
+                if "chk_logo" in config: self._chk_logo.set(config["chk_logo"])
+                if "chk_scale" in config: self._chk_scale.set(config["chk_scale"])
+                
+                if "opt_platform" in config: self._opt_platform.set(config["opt_platform"])
+                if "opt_ai_mode" in config: self._opt_ai_mode.set(config["opt_ai_mode"])
+                if "opt_voice" in config: self._opt_voice.set(config["opt_voice"])
+                
+                if "tts_rate" in config:
+                    self._entry_tts_rate.delete(0, "end")
+                    self._entry_tts_rate.insert(0, config["tts_rate"])
+                    # Sync slider
+                    try:
+                        rate_val = int(config["tts_rate"].replace("%",""))
+                        self._slider_tts_rate.set(rate_val)
+                    except:
+                        pass
+            except:
+                pass
 
     def _start_process(self):
         from auth_client import auth_client
@@ -1581,7 +1668,18 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         
         # Parse TTS Options
         voice_sel = self._opt_voice.get()
-        if "Đa giọng" in voice_sel:
+        if "Vbee" in voice_sel:
+            if "Ngọc Huyền" in voice_sel:
+                PROCESSOR_CONFIG["tts_voice"] = "vbee-hn_female_ngochuyen_vdc_cg"
+            elif "Mai Phương" in voice_sel:
+                PROCESSOR_CONFIG["tts_voice"] = "vbee-hn_female_maiphuong_vdc_cg"
+            elif "Minh Hoàng" in voice_sel:
+                PROCESSOR_CONFIG["tts_voice"] = "vbee-sg_male_minhhoang_vdc_cg"
+            elif "Đa giọng" in voice_sel:
+                PROCESSOR_CONFIG["tts_voice"] = "vbee-multi"
+            else:
+                PROCESSOR_CONFIG["tts_voice"] = "vbee-hn_female_ngochuyen_vdc_cg"
+        elif "Đa giọng" in voice_sel:
             PROCESSOR_CONFIG["tts_voice"] = "Multi"
         else:
             PROCESSOR_CONFIG["tts_voice"] = "vi-VN-NamMinhNeural" if "Nam" in voice_sel else "vi-VN-HoaiMyNeural"
@@ -1753,6 +1851,8 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         list_header = ctk.CTkFrame(left_frame, fg_color="transparent")
         list_header.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         ctk.CTkLabel(list_header, text="Danh sách Video đã xử lý:", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="left")
+        self._opt_author_filter_up = ctk.CTkOptionMenu(list_header, values=["Tất cả Kênh"], width=130, command=lambda _: self._load_videos())
+        self._opt_author_filter_up.pack(side="left", padx=(10, 0))
         
         ctk.CTkButton(list_header, text="🔄 Refresh", width=60, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._load_videos).pack(side="right")
         ctk.CTkButton(list_header, text="🗑 Xóa", width=60, height=24, fg_color="#e74c3c", hover_color="#c0392b", command=self._delete_selected).pack(side="right", padx=(0, 10))
@@ -1897,7 +1997,18 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         from auth_client import auth_client
         db = DatabaseManager()
         current_user = auth_client.user_info.get("username") if auth_client.user_info else None
-        videos = db.get_pending_videos(limit=100, username=current_user)
+        
+        author_val = self._opt_author_filter_up.get() if hasattr(self, "_opt_author_filter_up") else "Tất cả Kênh"
+        if hasattr(self, "_opt_author_filter_up"):
+            authors = db.get_authors(status="processed", username=current_user)
+            new_values = ["Tất cả Kênh"] + authors
+            self._opt_author_filter_up.configure(values=new_values)
+            if author_val not in new_values:
+                author_val = "Tất cả Kênh"
+                self._opt_author_filter_up.set("Tất cả Kênh")
+        author_filter = None if author_val == "Tất cả Kênh" else author_val
+        videos = db.get_pending_videos(limit=100, username=current_user, author=author_filter)
+
         
         if not videos:
             ctk.CTkLabel(self._video_list_frame, text="Không có video nào đang chờ upload.", text_color=TEXT_DIM).pack(pady=20)
@@ -2705,20 +2816,27 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
                 command=lambda a=acc: self._manual_login(a)
             )
             btn_login.grid(row=0, column=2, padx=(0, 5))
+            btn_login_cloak = ctk.CTkButton(
+                row, text="🌐 Cloak Login", width=90, height=28, font=("Segoe UI", 11, "bold"),
+                fg_color="#8E44AD", hover_color="#9B59B6", text_color="white",
+                command=lambda a=acc: self._manual_login(a, use_cloak=True)
+            )
+            btn_login_cloak.grid(row=0, column=3, padx=(0, 5))
+
             
             btn_edit = ctk.CTkButton(
                 row, text="Sửa", width=50, height=28, font=("Segoe UI", 11),
                 fg_color=WARNING, hover_color="#d35400",
                 command=lambda a=acc: self._edit_account(a)
             )
-            btn_edit.grid(row=0, column=3, padx=(0, 5))
+            btn_edit.grid(row=0, column=4, padx=(0, 5))
             
             btn_delete = ctk.CTkButton(
                 row, text="Xóa", width=50, height=28, font=("Segoe UI", 11),
                 fg_color=DANGER, hover_color="#c0392b",
                 command=lambda a=acc: self._delete_tiktok_account(a)
             )
-            btn_delete.grid(row=0, column=4, padx=(0, 12))
+            btn_delete.grid(row=0, column=5, padx=(0, 12))
 
     def _add_new_account(self):
         dialog = ctk.CTkInputDialog(text="Nhập tên tài khoản (Viết liền không dấu, VD: nick_1):", title="Thêm tài khoản")
@@ -2749,7 +2867,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from tkinter import messagebox
         messagebox.showinfo("Thành công", f"Đã tạo {acc_name}. Hãy điền Proxy và bấm '🔑 Login' để lưu phiên!")
 
-    def _manual_login(self, acc_name, force_no_proxy=False):
+    def _manual_login(self, acc_name, force_no_proxy=False, use_cloak=False):
         proxy_str = None
         if not force_no_proxy:
             proxy_str = self._proxy_entries[acc_name].get().strip()
@@ -3006,7 +3124,7 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         
         row1 = ctk.CTkFrame(cfg, fg_color="transparent")
         row1.grid(row=0, column=0, sticky="ew", padx=20, pady=16)
-        row1.grid_columnconfigure(3, weight=1) # Đẩy nút Start sang phải
+        row1.grid_columnconfigure(5, weight=1) # Đẩy nút Start sang phải
 
         ctk.CTkLabel(row1, text="📜 Kịch bản Nuôi:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=0, column=0, padx=(0, 10))
         
@@ -3024,11 +3142,17 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         )
         btn_manage_flow.grid(row=0, column=2, padx=(0, 10))
 
+        ctk.CTkLabel(row1, text="Số luồng:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=0, column=3, padx=(10, 5))
+        self._opt_threads = ctk.CTkOptionMenu(row1, values=["1", "2", "3", "5", "10", "15"], width=60)
+        self._opt_threads.grid(row=0, column=4, padx=(0, 10))
+        self._opt_threads.set("3")
+
+
         self._btn_start = ctk.CTkButton(
             row1, text="▶  Bắt đầu Nuôi", height=36, font=("Segoe UI", 13, "bold"),
             fg_color=SUCCESS, hover_color="#27ae60", command=self._start_farm
         )
-        self._btn_start.grid(row=0, column=3, sticky="e")
+        self._btn_start.grid(row=0, column=5, sticky="e")
 
         # Layout cột: Trái (Danh sách Acc), Phải (Log)
         split = ctk.CTkFrame(self, fg_color="transparent")
@@ -3046,6 +3170,7 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         hdr.pack(fill="x", padx=10, pady=10)
         ctk.CTkLabel(hdr, text="Danh sách Tài khoản (TikTok)", font=("Segoe UI", 13, "bold")).pack(side="left")
         ctk.CTkButton(hdr, text="🔄 Refresh", width=60, height=24, command=self._load_accounts).pack(side="right")
+        ctk.CTkButton(hdr, text="☑ Chọn tất cả", width=90, height=24, command=self._toggle_all).pack(side="right", padx=(0, 10))
         
         self._list_frame = ctk.CTkScrollableFrame(acc_frame, fg_color="transparent")
         self._list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -3059,6 +3184,14 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         self._log_widget = LogWidget(log_frame)
         self._log_widget.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
+
+    def _toggle_all(self):
+        if not hasattr(self, "_select_all_state"):
+            self._select_all_state = False
+        self._select_all_state = not self._select_all_state
+        for cb in getattr(self, "_checkboxes", {}).values():
+            cb.set(self._select_all_state)
+            
     def _load_flows(self):
         import json
         from pathlib import Path
@@ -3144,21 +3277,44 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
             return
         
         # Thu thập proxy cho mỗi account
+        # Đọc từ proxies.json (đã được lưu bởi tab Tài khoản)
+        import json
+        from config.settings import COOKIES_DIR
+        from auth_client import auth_client
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        user_dir = COOKIES_DIR / username
+        proxy_file = user_dir / "proxies.json"
+        saved_proxies = {}
+        if proxy_file.exists():
+            try:
+                with open(proxy_file, "r", encoding="utf-8") as f:
+                    saved_proxies = json.load(f)
+            except Exception:
+                pass
+        
         proxies = {}
         for acc in selected:
-            if acc in self._proxy_entries:
+            # Ưu tiên proxy từ giao diện (nếu có), sau đó từ file đã lưu
+            if acc in getattr(self, '_proxy_entries', {}) and hasattr(self._proxy_entries[acc], 'get'):
                 val = self._proxy_entries[acc].get().strip()
                 if val:
                     proxies[acc] = val
+                    continue
+            if acc in saved_proxies and saved_proxies[acc]:
+                proxies[acc] = saved_proxies[acc]
                     
         self.is_running = True
         self._btn_start.configure(state="normal", text="⏹ Dừng lại", fg_color=DANGER, hover_color="#c0392b")
         self._log_widget.clear()
         self._log(f"Bắt đầu nuôi {len(selected)} tài khoản với Kịch bản '{flow_name}'...", "INFO")
         
-        self._run_in_thread(self._do_farm, selected, selected_flow, proxies)
+        try:
+            threads = int(self._opt_threads.get())
+        except:
+            threads = 3
+        self._run_in_thread(self._do_farm, selected, selected_flow, proxies, max_concurrent=threads)
 
-    async def _do_farm(self, accounts, flow, proxies=None):
+    async def _do_farm(self, accounts, flow, proxies=None, max_concurrent=3):
         import random
         import asyncio
         from uploader.tiktok_uploader import TikTokUploader
@@ -3170,7 +3326,6 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         user_dir = COOKIES_DIR / username
         
         # Giới hạn số luồng (browser) mở cùng lúc để tránh tràn RAM/CPU (Tối đa 3)
-        max_concurrent = 3
         semaphore = asyncio.Semaphore(max_concurrent)
         
         async def _farm_single_account(acc, idx):
@@ -3243,7 +3398,7 @@ class SettingsTab(ctk.CTkFrame):
         from auth_client import auth_client
         role = auth_client.user_info.get("role", "user") if auth_client.user_info else "user"
         
-        if role == "admin":
+        if role in ("admin", "super_admin"):
             self._build_admin()
         else:
             self._build_user()
@@ -3581,10 +3736,14 @@ class SettingsTab(ctk.CTkFrame):
 
     def _save(self):
         gemini_key = self._entry_gemini.get().strip()
+        vbee_key = getattr(self, "_entry_vbee", ctk.CTkEntry(self)).get().strip()
         env_path = Path(__file__).parent / ".env"
         
         # Ghi API key ra file .env
         env_content = f"GEMINI_API_KEY={gemini_key}\n"
+        if vbee_key:
+            env_content += f"VBEE_API_KEY={vbee_key}\n"
+            
         with open(env_path, "w", encoding="utf-8") as f:
             f.write(env_content)
             
@@ -4111,7 +4270,7 @@ class SettingsTab(ctk.CTkFrame):
             from auth_client import auth_client
             succ, logs = auth_client.admin_get_logs(limit=100)
             if not succ or not isinstance(logs, list):
-                ctk.CTkLabel(scroll, text="Không thể tải dữ liệu", text_color=ERROR).pack(pady=20)
+                ctk.CTkLabel(scroll, text="Không thể tải dữ liệu", text_color=DANGER).pack(pady=20)
                 return
                 
             for idx, log in enumerate(logs):
@@ -4291,6 +4450,7 @@ class LoginWindow(ctk.CTkToplevel):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Main App Window
 # ═══════════════════════════════════════════════════════════════════════════════
+
 class App(ctk.CTk):
     TABS = [
         ("📊", "Dashboard", DashboardTab),
@@ -4300,6 +4460,7 @@ class App(ctk.CTk):
         ("🤖", "Auto",      AutoTab),
         ("👥", "Accounts",  AccountsTab),
         ("🌱", "Farm",      FarmTab),
+        ("📡", "Livestream", LivestreamTab),
         ("⚙️", "Settings",  SettingsTab),
     ]
 
@@ -4335,7 +4496,7 @@ class App(ctk.CTk):
         if auth_client.user_info:
             role = auth_client.user_info.get("role", "user")
             
-            if role == "admin":
+            if role in ("admin", "super_admin"):
                 is_expired = False
                 expire = "Vĩnh viễn (Admin)"
                 status = "👑 Quản trị viên"
@@ -4351,12 +4512,18 @@ class App(ctk.CTk):
             
             # ── Ẩn nút Nâng cấp VIP nếu là Admin ──
             if hasattr(self, "_nav_buttons"):
-                if role == "admin":
+                if role in ("admin", "super_admin"):
                     if hasattr(self, "btn_upgrade_sidebar"):
                         self.btn_upgrade_sidebar.pack_forget()
                 else:
                     if hasattr(self, "btn_upgrade_sidebar"):
                         self.btn_upgrade_sidebar.pack(padx=12, pady=(0, 10), fill="x")
+                        
+            # Force refresh SettingsTab
+            if hasattr(self, "_tab_frames") and len(self._tab_frames) > 7:
+                for i, tab in enumerate(self._tab_frames):
+                    if hasattr(tab, "refresh_ui") and tab.__class__.__name__ == "SettingsTab":
+                        tab.refresh_ui()
                 
                 # Hiển thị toàn bộ các tab cho cả Admin và User
                 nav_container = getattr(self, "_nav_scroll", None)
@@ -4377,7 +4544,7 @@ class App(ctk.CTk):
                         key = data.get("gemini_api_key", "").strip()
                         if key:
                             has_custom_key = True
-                            PROCESSOR_CONFIG["gemini_api_keys"] = [key]
+                            PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in key.split(",") if k.strip()]
                         else:
                             PROCESSOR_CONFIG["gemini_api_keys"] = []
                 except:
