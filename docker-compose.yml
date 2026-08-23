@@ -9,7 +9,7 @@ services:
     restart: always
     ports:
       - "8000:8000"
-    command: ["python", "backend/main.py"]
+    command: ["python", "run_backend.py"]
     environment:
       - HEADLESS=true
     volumes:

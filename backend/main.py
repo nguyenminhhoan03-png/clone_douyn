@@ -2,8 +2,11 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-import os
+import os, sys
 from pydantic import BaseModel
+
+# Thêm thư mục backend vào sys.path
+sys.path.insert(0, os.path.dirname(__file__))
 
 import models, auth
 
