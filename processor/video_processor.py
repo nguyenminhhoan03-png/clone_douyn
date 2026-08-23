@@ -16,7 +16,7 @@ from typing import Optional, Callable
 
 from loguru import logger
 
-from config.settings import PROCESSOR_CONFIG, get_user_processed_dir, MUSIC_DIR, BASE_DIR
+from config.settings import PROCESSOR_CONFIG, get_user_processed_dir, get_user_downloads_dir, MUSIC_DIR, BASE_DIR
 from database.db_manager import DatabaseManager
 from processor.subtitle_generator import SubtitleGenerator
 
@@ -36,13 +36,16 @@ class VideoProcessor:
     def __init__(self, db: DatabaseManager = None, username: str = None):
         self.db = db or DatabaseManager()
         self.config = PROCESSOR_CONFIG
-        self.current_username = username
+        self.username = username or "default"
+        self.current_username = self.username
+        self.downloads_dir = get_user_downloads_dir(self.username)
+        self.processed_dir = get_user_processed_dir(self.username)
         
         # Thêm default config cho auto_subtitle
         if "auto_subtitle" not in self.config:
             self.config["auto_subtitle"] = True
             
-        get_user_processed_dir(self.current_username).mkdir(parents=True, exist_ok=True)
+        self.processed_dir.mkdir(parents=True, exist_ok=True)
         MUSIC_DIR.mkdir(parents=True, exist_ok=True)
         
         self.subtitle_generator = SubtitleGenerator() if self.config.get("auto_subtitle") else None
@@ -375,13 +378,14 @@ class VideoProcessor:
         
         cmd.extend([
             "-c:v", codec,
-            "-preset", preset,       # Senior tip: ultrafast tăng tốc render x5 lần so với fast
-            "-b:v", self.config.get("output_bitrate", "5000k"),
-            "-maxrate", self.config.get("output_bitrate", "5000k"), # Ép maxrate tránh vọt bitrate
-            "-bufsize", "10000k",
+            "-preset", preset,         # Senior tip: ultrafast tăng tốc render x5 lần so với fast
+            "-crf", "23",              # Senior tip: Chuẩn CRF 23 giúp giữ nguyên độ nét mà dung lượng giảm 4 lần
+            "-pix_fmt", "yuv420p",     # Senior tip: Chuẩn màu 8-bit YUV420p tương thích 100% mọi trình duyệt Web & Mobile
+            "-maxrate", "4000k",       # Ép trần bitrate tránh file bị phình to bất thường
+            "-bufsize", "8000k",
             "-c:a", self.config.get("output_audio_codec", "aac"),
             "-b:a", "192k",
-            "-threads", "0",         # Senior tip: Maximize CPU usage
+            "-threads", "0",           # Senior tip: Maximize CPU usage
             "-movflags", "+faststart", # Senior tip: Tối ưu chuẩn file mp4 cho upload (moov atom)
             str(output_path)
         ])
@@ -480,15 +484,53 @@ class VideoProcessor:
                     progress_callback(vid, pct, status)
                     
             try:
-                processed_path = self.process_video(input_path=video["download_path"], title=title, progress_cb=cb)
+                input_path = video.get("download_path")
+                drive_download_id = video.get("drive_download_id")
+                temp_downloaded_path = None
+                
+                # Cần tải từ Drive nếu không có file local
+                if not input_path or not Path(input_path).exists():
+                    if drive_download_id:
+                        cb(10, "Đang tải video từ Google Drive...")
+                        from uploader.google_drive_uploader import GoogleDriveUploader
+                        uploader = GoogleDriveUploader(self.username or "default")
+                        import uuid
+                        temp_downloaded_path = str(self.downloads_dir / f"drive_temp_{uuid.uuid4().hex[:8]}.mp4")
+                        if uploader.download_file(drive_download_id, temp_downloaded_path):
+                            input_path = temp_downloaded_path
+                        else:
+                            raise Exception("Không thể tải video từ Google Drive")
+                    else:
+                        raise Exception("Không tìm thấy file video (cả local và Drive)")
+
+                processed_path = self.process_video(input_path=input_path, title=title, progress_cb=cb)
                 if processed_path:
+                    from config.settings import GOOGLE_DRIVE_CONFIG
+                    drive_processed_id = None
+                    
+                    if GOOGLE_DRIVE_CONFIG.get("auto_backup"):
+                        try:
+                            cb(95, "Đang đẩy thành phẩm lên Drive...")
+                            from uploader.google_drive_uploader import GoogleDriveUploader
+                            uploader = GoogleDriveUploader(self.username or "default")
+                            drive_processed_id = uploader.upload_file(processed_path, delete_after=True, folder_name=video.get("author", "Unknown"))
+                            processed_path = "" # Đã bị xóa trên máy
+                        except Exception as e:
+                            logger.error(f"Lỗi upload Drive khi process: {e}")
+                            
                     self.db.update_translated_title(video_id, title)
-                    self.db.update_video_status(video_id=video_id, status="processed", processed_path=processed_path)
+                    self.db.update_video_status(video_id=video_id, status="processed", processed_path=processed_path, drive_processed_id=drive_processed_id)
                     cb(100, "Hoàn thành!")
-                    results.append(processed_path)
+                    results.append({"video_id": video_id, "processed_path": processed_path, "drive_processed_id": drive_processed_id})
                 else:
                     self.db.update_video_status(video_id=video_id, status="failed", error_message="Processing failed")
                     cb(0, "Lỗi xử lý!")
+                    
+                # Clean up file tải tạm từ Drive nếu có
+                if temp_downloaded_path and Path(temp_downloaded_path).exists():
+                    try: Path(temp_downloaded_path).unlink()
+                    except: pass
+
             except Exception as e:
                 import traceback
                 logger.error(f"Lỗi không xác định khi xử lý video {video_id}: {traceback.format_exc()}")

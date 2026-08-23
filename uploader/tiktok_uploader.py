@@ -805,9 +805,31 @@ class TikTokUploader:
                 caption = self._generate_caption(video)
                 hashtags = self.config.get("default_hashtags", [])
 
+            # Chuẩn bị file local từ Drive nếu cần
+            video_path = video.get("processed_path")
+            drive_processed_id = video.get("drive_processed_id")
+            temp_downloaded_path = None
+            
+            if not video_path or not Path(video_path).exists():
+                if drive_processed_id:
+                    logger.info("Đang tải video từ Google Drive để upload...")
+                    from uploader.google_drive_uploader import GoogleDriveUploader
+                    uploader = GoogleDriveUploader(self.current_username or "default")
+                    import uuid
+                    from config.settings import DOWNLOADS_DIR
+                    temp_downloaded_path = str(DOWNLOADS_DIR / f"upload_temp_{uuid.uuid4().hex[:8]}.mp4")
+                    if uploader.download_file(drive_processed_id, temp_downloaded_path):
+                        video_path = temp_downloaded_path
+                    else:
+                        logger.error("Không thể tải video từ Google Drive")
+                        continue
+                else:
+                    logger.error("Không tìm thấy file video (cả local và Drive)")
+                    continue
+
             # Upload
             success = await self.upload_video(
-                video_path=video["processed_path"],
+                video_path=video_path,
                 caption=caption,
                 hashtags=hashtags,
             )
@@ -837,6 +859,24 @@ class TikTokUploader:
                     
                     if cleaned_files > 0:
                         logger.info(f"  🧹 Đã xóa {cleaned_files} file cục bộ để tiết kiệm dung lượng.")
+                        
+                # Xóa file trên Google Drive nếu có
+                if drive_processed_id:
+                    try:
+                        from uploader.google_drive_uploader import GoogleDriveUploader
+                        uploader = GoogleDriveUploader(self.current_username or "default")
+                        uploader.delete_file(drive_processed_id)
+                        # Có thể xóa luôn bản chưa process (drive_download_id) nếu user muốn sạch sẽ
+                        drive_download_id = video.get("drive_download_id")
+                        if drive_download_id:
+                            uploader.delete_file(drive_download_id)
+                    except Exception as e:
+                        logger.warning(f"Lỗi khi xóa file trên Drive: {e}")
+                
+                # Dọn dẹp file temp upload (nếu có tải từ drive)
+                if temp_downloaded_path and Path(temp_downloaded_path).exists():
+                    try: Path(temp_downloaded_path).unlink()
+                    except: pass
 
             # Delay giữa các lần post
             if i < len(videos) - 1:

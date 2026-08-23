@@ -30,6 +30,12 @@ def get_user_processed_dir(username: str = "default") -> Path:
     user_dir.mkdir(parents=True, exist_ok=True)
     return user_dir
 
+def get_user_downloads_dir(username: str = "default") -> Path:
+    """Trả về thư mục downloads riêng cho mỗi user (downloads/<username>/)."""
+    user_dir = DOWNLOADS_DIR / username
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir
+
 # ============================================================
 # DOUYIN CRAWLER CONFIG
 # ============================================================
@@ -163,4 +169,16 @@ LOG_CONFIG = {
     "rotation": "10 MB",
     "retention": "7 days",
     "level": "INFO",
+}
+
+# ============================================================
+# GOOGLE DRIVE BACKUP CONFIG
+# ============================================================
+GOOGLE_DRIVE_CONFIG = {
+    # Default Client Secret for Drive
+    "client_secret_file": COOKIES_DIR / "client_secret.json",
+    # Tự động backup lên Google Drive sau khi có file (crawled/processed)
+    "auto_backup": os.getenv("DRIVE_AUTO_BACKUP", "False").lower() == "true",
+    # Xóa file local sau khi backup thành công
+    "delete_local_after_backup": os.getenv("DRIVE_DELETE_LOCAL", "False").lower() == "true",
 }

@@ -549,6 +549,19 @@ class DouyinCrawler:
             logger.warning(f"Could not download: {video_url}")
             return None
 
+        from config.settings import GOOGLE_DRIVE_CONFIG
+        drive_download_id = None
+        
+        if GOOGLE_DRIVE_CONFIG.get("auto_backup"):
+            try:
+                from uploader.google_drive_uploader import GoogleDriveUploader
+                uploader = GoogleDriveUploader(self.current_username or "default")
+                # Xóa local luôn theo yêu cầu
+                drive_download_id = uploader.upload_file(download_path, delete_after=True, folder_name=video_info.get("author", "Unknown"))
+                download_path = "" # Không còn file local
+            except Exception as e:
+                logger.error(f"Lỗi upload Drive khi crawl: {e}")
+
         import time
         base_vid = video_info["video_id"]
         timestamp = int(time.time() * 1000)
@@ -565,12 +578,14 @@ class DouyinCrawler:
             download_path=download_path,
             duration=video_info["duration"],
             username=self.current_username,
+            drive_download_id=drive_download_id
         )
 
         if row_id > 0:
             self.db.update_video_status(unique_vid, "downloaded")
             video_info["video_id"] = unique_vid
             video_info["download_path"] = download_path
+            video_info["drive_download_id"] = drive_download_id
             video_info["db_id"] = row_id
             return video_info
 
@@ -668,6 +683,18 @@ class DouyinCrawler:
 
                         download_path = await self.download_video(video_data)
                         if download_path:
+                            from config.settings import GOOGLE_DRIVE_CONFIG
+                            drive_download_id = None
+                            
+                            if GOOGLE_DRIVE_CONFIG.get("auto_backup"):
+                                try:
+                                    from uploader.google_drive_uploader import GoogleDriveUploader
+                                    uploader = GoogleDriveUploader(self.current_username or "default")
+                                    drive_download_id = uploader.upload_file(download_path, delete_after=True, folder_name=video_data.get("author", "Unknown"))
+                                    download_path = "" # Không còn file local
+                                except Exception as e:
+                                    logger.error(f"Lỗi upload Drive khi crawl profile: {e}")
+                                    
                             self.db.add_crawled_video(
                                 video_id=unique_vid,
                                 source_url=video_data["source_url"],
@@ -678,10 +705,12 @@ class DouyinCrawler:
                                 download_path=download_path,
                                 duration=video_data["duration"],
                                 username=self.current_username,
+                                drive_download_id=drive_download_id
                             )
                             self.db.update_video_status(unique_vid, "downloaded")
                             video_data["video_id"] = unique_vid
                             video_data["download_path"] = download_path
+                            video_data["drive_download_id"] = drive_download_id
                             results.append(video_data)
                         await self._async_random_delay()
                 except Exception as e:

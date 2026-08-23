@@ -452,6 +452,8 @@ class TaskMixin:
         self.cancel_flag = False
 
 
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Tab: Dashboard
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -744,7 +746,7 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
 
         ctk.CTkLabel(self._frame_profile, text="Số lượng:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=1, column=0, sticky="w", padx=16, pady=4)
         self._spin_count = ctk.CTkEntry(self._frame_profile, width=80, font=("Segoe UI", 12), fg_color=BG_DARK, border_color=BORDER)
-        self._spin_count.insert(0, "10")
+        self._spin_count.insert(0, "1000")
         self._spin_count.grid(row=1, column=1, sticky="w", padx=(0, 16), pady=4)
         
         # --- ROW 4: File ---
@@ -1251,14 +1253,29 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             action_frame.pack(side="right", padx=10, pady=8)
             
             path = video.get("download_path")
-            if path:
-                import os
-                if os.path.exists(path):
-                    ctk.CTkButton(
-                        action_frame, text="▶ Xem", width=60, font=("Segoe UI", 11),
-                        fg_color=BORDER, hover_color=BG_CARD,
-                        command=lambda p=path: os.startfile(p) if os.name == 'nt' else None
-                    ).pack(side="left")
+            drive_id = video.get("drive_download_id")
+            source_url = video.get("source_url")
+            
+            import os
+            import webbrowser
+            if path and os.path.exists(path):
+                ctk.CTkButton(
+                    action_frame, text="▶ Xem", width=60, font=("Segoe UI", 11),
+                    fg_color=BORDER, hover_color=BG_CARD,
+                    command=lambda p=path: os.startfile(p) if os.name == 'nt' else None
+                ).pack(side="left")
+            elif drive_id:
+                ctk.CTkButton(
+                    action_frame, text="☁️ Xem Drive", width=80, font=("Segoe UI", 11),
+                    fg_color=BORDER, hover_color=BG_CARD,
+                    command=lambda d_id=drive_id: webbrowser.open(f"https://drive.google.com/file/d/{d_id}/view")
+                ).pack(side="left")
+            elif source_url:
+                ctk.CTkButton(
+                    action_frame, text="🌐 Xem Gốc", width=75, font=("Segoe UI", 11),
+                    fg_color=BORDER, hover_color=BG_CARD,
+                    command=lambda url=source_url: webbrowser.open(url)
+                ).pack(side="left")
 
             # Thông tin video (pack sau action_frame, expand=True)
             info_frame = ctk.CTkFrame(card, fg_color="transparent")
@@ -1288,12 +1305,13 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             # Nhưng ta lưu lại frame vào dictionary nếu muốn hiện/ẩn
             self._progress_bars[vid].frame = prog_frame
             
-            # Kiểm tra dung lượng
+            # Kiểm tra dung lượng và nguồn lưu trữ
             size_mb = 0
-            if path:
-                import os
-                if os.path.exists(path):
-                    size_mb = os.path.getsize(path) / (1024 * 1024)
+            is_cloud = False
+            if path and os.path.exists(path):
+                size_mb = os.path.getsize(path) / (1024 * 1024)
+            elif video.get("drive_download_id"):
+                is_cloud = True
                     
             duration = video.get("duration", 0)
             if duration > 0:
@@ -1303,7 +1321,8 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             else:
                 duration_str = "(Chưa xử lý)"
                 
-            ctk.CTkLabel(info_frame, text=f"📦 {size_mb:.1f} MB {duration_str}", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(anchor="w", pady=(2, 0))
+            storage_str = f"☁️ Google Drive {duration_str}" if is_cloud else f"📦 {size_mb:.1f} MB {duration_str}"
+            ctk.CTkLabel(info_frame, text=storage_str, font=("Segoe UI", 11), text_color=ACCENT if is_cloud else TEXT_DIM).pack(anchor="w", pady=(2, 0))
             
         self._update_limit_state()
 
@@ -1466,16 +1485,23 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
 
     def _save_process_config(self):
         config = {
-            "chk_trans": self._chk_trans.get(),
-            "chk_voice": self._chk_voice.get(),
-            "chk_bgm": self._chk_bgm.get(),
-            "chk_sub": self._chk_sub.get(),
-            "chk_logo": self._chk_logo.get(),
-            "chk_scale": self._chk_scale.get(),
+            "sw_mirror": self._sw_mirror.get(),
+            "sw_music": self._sw_music.get(),
+            "sw_mute_original": self._sw_mute_original.get(),
+            "sw_subtitle": self._sw_subtitle.get(),
+            "sw_blur": self._sw_blur.get(),
+            "sw_dubbing": self._sw_dubbing.get(),
             "opt_platform": self._opt_platform.get(),
             "opt_ai_mode": self._opt_ai_mode.get(),
             "opt_voice": self._opt_voice.get(),
-            "tts_rate": self._entry_tts_rate.get()
+            "tts_rate": self._entry_tts_rate.get(),
+            "opt_sub_pos": self._opt_sub_pos.get(),
+            "opt_blur_pos": self._opt_blur_pos.get(),
+            "blur_height": self._entry_blur_height.get(),
+            "bg_vol": self._entry_bg_vol.get(),
+            "sw_yt_crop": self._sw_yt_crop.get(),
+            "sw_yt_noise": self._sw_yt_noise.get(),
+            "opt_logo_pos": self._opt_logo_pos.get()
         }
         from config.settings import BASE_DIR
         try:
@@ -1497,16 +1523,37 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
                 with open(cfg_path, "r", encoding="utf-8") as f:
                     config = json.load(f)
                 
-                if "chk_trans" in config: self._chk_trans.set(config["chk_trans"])
-                if "chk_voice" in config: self._chk_voice.set(config["chk_voice"])
-                if "chk_bgm" in config: self._chk_bgm.set(config["chk_bgm"])
-                if "chk_sub" in config: self._chk_sub.set(config["chk_sub"])
-                if "chk_logo" in config: self._chk_logo.set(config["chk_logo"])
-                if "chk_scale" in config: self._chk_scale.set(config["chk_scale"])
+                if "sw_mirror" in config:
+                    self._sw_mirror.select() if config["sw_mirror"] else self._sw_mirror.deselect()
+                if "sw_music" in config:
+                    self._sw_music.select() if config["sw_music"] else self._sw_music.deselect()
+                if "sw_mute_original" in config:
+                    self._sw_mute_original.select() if config["sw_mute_original"] else self._sw_mute_original.deselect()
+                if "sw_subtitle" in config:
+                    self._sw_subtitle.select() if config["sw_subtitle"] else self._sw_subtitle.deselect()
+                if "sw_blur" in config:
+                    self._sw_blur.select() if config["sw_blur"] else self._sw_blur.deselect()
+                if "sw_dubbing" in config:
+                    self._sw_dubbing.select() if config["sw_dubbing"] else self._sw_dubbing.deselect()
                 
                 if "opt_platform" in config: self._opt_platform.set(config["opt_platform"])
                 if "opt_ai_mode" in config: self._opt_ai_mode.set(config["opt_ai_mode"])
                 if "opt_voice" in config: self._opt_voice.set(config["opt_voice"])
+                if "opt_sub_pos" in config: self._opt_sub_pos.set(config["opt_sub_pos"])
+                if "opt_blur_pos" in config: self._opt_blur_pos.set(config["opt_blur_pos"])
+                if "opt_logo_pos" in config: self._opt_logo_pos.set(config["opt_logo_pos"])
+                
+                if "blur_height" in config:
+                    self._entry_blur_height.delete(0, "end")
+                    self._entry_blur_height.insert(0, config["blur_height"])
+                if "bg_vol" in config:
+                    self._entry_bg_vol.delete(0, "end")
+                    self._entry_bg_vol.insert(0, config["bg_vol"])
+                    
+                if "sw_yt_crop" in config:
+                    self._sw_yt_crop.select() if config["sw_yt_crop"] else self._sw_yt_crop.deselect()
+                if "sw_yt_noise" in config:
+                    self._sw_yt_noise.select() if config["sw_yt_noise"] else self._sw_yt_noise.deselect()
                 
                 if "tts_rate" in config:
                     self._entry_tts_rate.delete(0, "end")
@@ -2039,18 +2086,30 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             ctk.CTkLabel(row1, text=f"ID: {vid}", font=("Consolas", 11, "bold"), text_color=ACCENT).pack(side="left", padx=5)
             
             path = video.get("processed_path")
+            drive_processed_id = video.get("drive_processed_id")
+            drive_download_id = video.get("drive_download_id")
+            drive_id = drive_processed_id or drive_download_id
+            
             size_mb = 0
             import os
+            import webbrowser
             if path and os.path.exists(path):
                 size_mb = os.path.getsize(path) / (1024 * 1024)
-            ctk.CTkLabel(row1, text=f"📦 {size_mb:.1f} MB", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(5, 10))
-            
-            if path and os.path.exists(path):
+                ctk.CTkLabel(row1, text=f"📦 {size_mb:.1f} MB", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(5, 10))
                 ctk.CTkButton(
                     row1, text="▶ Xem", width=50, font=("Segoe UI", 11),
                     fg_color=BORDER, hover_color=BG_CARD,
                     command=lambda p=path: os.startfile(p) if os.name == 'nt' else None
                 ).pack(side="left", padx=(0, 15))
+            elif drive_id:
+                ctk.CTkLabel(row1, text="☁️ Google Drive", font=("Segoe UI", 11), text_color=ACCENT).pack(side="left", padx=(5, 10))
+                ctk.CTkButton(
+                    row1, text="☁️ Xem Drive", width=80, font=("Segoe UI", 11),
+                    fg_color=BORDER, hover_color=BG_CARD,
+                    command=lambda d_id=drive_id: webbrowser.open(f"https://drive.google.com/file/d/{d_id}/view")
+                ).pack(side="left", padx=(0, 15))
+            else:
+                ctk.CTkLabel(row1, text=f"📦 {size_mb:.1f} MB", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(5, 10))
                 
             # Đẩy phần chọn tài khoản sang phải
             right_header = ctk.CTkFrame(row1, fg_color="transparent")
@@ -3445,7 +3504,13 @@ class SettingsTab(ctk.CTkFrame):
         ctk.CTkLabel(ai_frame, text="Gemini API Key:", font=("Segoe UI", 13, "bold")).grid(row=0, column=0, padx=16, pady=16)
         
         self._entry_user_gemini = ctk.CTkEntry(ai_frame, font=("Consolas", 12), fg_color=BG_DARK, border_color=BORDER, show="*")
-        self._entry_user_gemini.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=16)
+        self._entry_user_gemini.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=16)
+        
+        btn_toggle_user_key = ctk.CTkButton(
+            ai_frame, text="👁", width=30, height=28, fg_color="transparent", hover_color=BG_CARD, text_color=TEXT_DIM,
+            command=lambda: self._entry_user_gemini.configure(show="" if self._entry_user_gemini.cget("show") == "*" else "*")
+        )
+        btn_toggle_user_key.grid(row=0, column=2, padx=(0, 16), pady=16)
         
         # Load existing key
         import os
@@ -3459,20 +3524,95 @@ class SettingsTab(ctk.CTkFrame):
             fg_color=SUCCESS, hover_color="#27ae60",
             command=self._save_user_gemini_key
         )
-        btn_save_key.grid(row=0, column=2, padx=(0, 16), pady=16)
+        btn_save_key.grid(row=0, column=3, padx=(0, 16), pady=16)
         
         ctk.CTkLabel(
             ai_frame, text="*Sử dụng API Key cá nhân để mở khóa tính năng AI mạnh mẽ nhất mà không phụ thuộc Server.", 
             font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM
         ).grid(row=1, column=0, columnspan=3, sticky="w", padx=16, pady=(0, 16))
 
+        self._build_drive_settings()
+
+    def _build_drive_settings(self):
+        ctk.CTkLabel(
+            self, text="☁️  Google Drive Backup",
+            font=("Segoe UI", 18, "bold"), text_color=TEXT_MAIN,
+        ).grid(row=4, column=0, sticky="w", pady=(30, 10))
+
+        drive_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        drive_frame.grid(row=5, column=0, sticky="ew")
+        drive_frame.grid_columnconfigure(1, weight=1)
+
+        from config.settings import GOOGLE_DRIVE_CONFIG
+        
+        # Checkbox Tự động Backup
+        self._var_auto_backup = ctk.BooleanVar(value=GOOGLE_DRIVE_CONFIG.get("auto_backup", False))
+        ctk.CTkCheckBox(
+            drive_frame, text="Tự động Upload video lên Google Drive sau khi xử lý/crawl",
+            font=("Segoe UI", 13), variable=self._var_auto_backup,
+            command=self._save_drive_settings
+        ).grid(row=0, column=0, columnspan=2, padx=16, pady=(16, 8), sticky="w")
+        
+        # Checkbox Xóa file gốc
+        self._var_delete_local = ctk.BooleanVar(value=GOOGLE_DRIVE_CONFIG.get("delete_local_after_backup", False))
+        ctk.CTkCheckBox(
+            drive_frame, text="Xóa file video ở máy sau khi Upload Drive thành công (Tiết kiệm dung lượng)",
+            font=("Segoe UI", 13), variable=self._var_delete_local, text_color=WARNING,
+            command=self._save_drive_settings
+        ).grid(row=1, column=0, columnspan=2, padx=16, pady=(0, 16), sticky="w")
+
+        # Nút xác thực
+        btn_auth = ctk.CTkButton(
+            drive_frame, text="🔑 Xác thực Google Drive", width=150, font=("Segoe UI", 12, "bold"),
+            fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            command=self._auth_google_drive
+        )
+        btn_auth.grid(row=0, column=2, rowspan=2, padx=(0, 16), pady=16)
+
+    def _save_drive_settings(self):
+        # Update in-memory config for now
+        from config.settings import GOOGLE_DRIVE_CONFIG, BASE_DIR
+        GOOGLE_DRIVE_CONFIG["auto_backup"] = self._var_auto_backup.get()
+        GOOGLE_DRIVE_CONFIG["delete_local_after_backup"] = self._var_delete_local.get()
+        
+        # Write to .env
+        import os
+        from dotenv import set_key
+        env_path = BASE_DIR / ".env"
+        set_key(env_path, "DRIVE_AUTO_BACKUP", str(self._var_auto_backup.get()))
+        set_key(env_path, "DRIVE_DELETE_LOCAL", str(self._var_delete_local.get()))
+        os.environ["DRIVE_AUTO_BACKUP"] = str(self._var_auto_backup.get())
+        os.environ["DRIVE_DELETE_LOCAL"] = str(self._var_delete_local.get())
+        
+    def _auth_google_drive(self):
+        def _do_auth():
+            from auth_client import auth_client
+            username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            try:
+                from uploader.google_drive_uploader import GoogleDriveUploader
+                uploader = GoogleDriveUploader(username)
+                uploader.authenticate()
+                
+                # Cập nhật UI
+                def update_ui():
+                    messagebox.showinfo("Thành công", f"Đã xác thực Google Drive cho tài khoản {username}!")
+                    if hasattr(self, "lbl_auth_status_admin"):
+                        self.lbl_auth_status_admin.configure(text="✅ Đã liên kết", text_color=SUCCESS)
+                
+                self.app.after(0, update_ui)
+            except Exception as e:
+                self.app.after(0, lambda: messagebox.showerror("Lỗi xác thực", str(e)))
+        
+        import threading
+        threading.Thread(target=_do_auth, daemon=True).start()
+
+
     def _save_user_gemini_key(self):
         gemini_key = self._entry_user_gemini.get().strip()
         from config.settings import BASE_DIR
         env_path = BASE_DIR / ".env"
-        env_content = f"GEMINI_API_KEY={gemini_key}\n"
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.write(env_content)
+        from dotenv import set_key
+        set_key(env_path, "GEMINI_API_KEY", gemini_key)
             
         import os
         os.environ["GEMINI_API_KEY"] = gemini_key # Update immediately in current process
@@ -3687,7 +3827,13 @@ class SettingsTab(ctk.CTkFrame):
         if existing_key:
             self._entry_gemini.insert(0, existing_key)
             
-        self._entry_gemini.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=(14, 14))
+        self._entry_gemini.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=(14, 14))
+        
+        btn_toggle_key = ctk.CTkButton(
+            ai, text="👁", width=30, height=28, fg_color="transparent", hover_color=BG_CARD, text_color=TEXT_DIM,
+            command=lambda: self._entry_gemini.configure(show="" if self._entry_gemini.cget("show") == "*" else "*")
+        )
+        btn_toggle_key.grid(row=0, column=2, padx=(0, 16), pady=(14, 14))
 
         # ── TikTok section ───────────────────────────────────────────────────
         self._section(parent, "🎵  TikTok Upload", row=4)
@@ -3711,13 +3857,74 @@ class SettingsTab(ctk.CTkFrame):
         self._entry_hashtags.insert(0, "#fyp #xuhuong #tiktokvietnam #trending #viral")
         self._entry_hashtags.grid(row=1, column=1, sticky="ew", padx=(0, 16), pady=(4, 14))
 
+        # ── Google Drive section ─────────────────────────────────────────────
+        self._section(parent, "☁️  Google Drive Backup", row=6)
+        drive_frame = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12,
+                                   border_width=1, border_color=BORDER)
+        drive_frame.grid(row=7, column=0, sticky="ew", pady=(0, 16))
+        drive_frame.grid_columnconfigure(1, weight=1)
+
+        from config.settings import GOOGLE_DRIVE_CONFIG
+        
+        # Checkbox Tự động Backup
+        self._var_auto_backup_admin = ctk.BooleanVar(value=GOOGLE_DRIVE_CONFIG.get("auto_backup", False))
+        ctk.CTkCheckBox(
+            drive_frame, text="Tự động Upload video lên Google Drive sau khi xử lý/crawl",
+            font=("Segoe UI", 13), variable=self._var_auto_backup_admin,
+            command=self._save_drive_settings_admin
+        ).grid(row=0, column=0, columnspan=2, padx=16, pady=(16, 8), sticky="w")
+        
+        # Checkbox Xóa file gốc
+        self._var_delete_local_admin = ctk.BooleanVar(value=GOOGLE_DRIVE_CONFIG.get("delete_local_after_backup", False))
+        ctk.CTkCheckBox(
+            drive_frame, text="Xóa file video ở máy sau khi Upload Drive thành công",
+            font=("Segoe UI", 13), variable=self._var_delete_local_admin, text_color=WARNING,
+            command=self._save_drive_settings_admin
+        ).grid(row=1, column=0, columnspan=2, padx=16, pady=(0, 16), sticky="w")
+
+        # Nút xác thực
+        btn_auth = ctk.CTkButton(
+            drive_frame, text="🔑 Xác thực Google Drive", width=150, font=("Segoe UI", 12, "bold"),
+            fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            command=self._auth_google_drive
+        )
+        btn_auth.grid(row=0, column=2, padx=(0, 16), pady=(16, 4))
+        
+        # Trạng thái xác thực
+        from auth_client import auth_client
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        from config.settings import COOKIES_DIR
+        token_path = COOKIES_DIR / username / "drive_token.json"
+        
+        status_text = "✅ Đã liên kết" if token_path.exists() else "❌ Chưa liên kết"
+        status_color = SUCCESS if token_path.exists() else WARNING
+        
+        self.lbl_auth_status_admin = ctk.CTkLabel(
+            drive_frame, text=status_text, font=("Segoe UI", 11, "italic"), text_color=status_color
+        )
+        self.lbl_auth_status_admin.grid(row=1, column=2, padx=(0, 16), pady=(0, 16))
+
         # Save button
         ctk.CTkButton(
             parent, text="💾  Lưu cài đặt", height=40,
             font=("Segoe UI", 13, "bold"),
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
             command=self._save,
-        ).grid(row=6, column=0, sticky="w", pady=(4, 0))
+        ).grid(row=8, column=0, sticky="w", pady=(4, 0))
+
+    def _save_drive_settings_admin(self):
+        from config.settings import GOOGLE_DRIVE_CONFIG, BASE_DIR
+        GOOGLE_DRIVE_CONFIG["auto_backup"] = self._var_auto_backup_admin.get()
+        GOOGLE_DRIVE_CONFIG["delete_local_after_backup"] = self._var_delete_local_admin.get()
+        
+        # Write to .env
+        import os
+        from dotenv import set_key
+        env_path = BASE_DIR / ".env"
+        set_key(env_path, "DRIVE_AUTO_BACKUP", str(self._var_auto_backup_admin.get()))
+        set_key(env_path, "DRIVE_DELETE_LOCAL", str(self._var_delete_local_admin.get()))
+        os.environ["DRIVE_AUTO_BACKUP"] = str(self._var_auto_backup_admin.get())
+        os.environ["DRIVE_DELETE_LOCAL"] = str(self._var_delete_local_admin.get())
 
     def _section(self, parent, title, row):
         ctk.CTkLabel(
@@ -3739,13 +3946,11 @@ class SettingsTab(ctk.CTkFrame):
         vbee_key = getattr(self, "_entry_vbee", ctk.CTkEntry(self)).get().strip()
         env_path = Path(__file__).parent / ".env"
         
-        # Ghi API key ra file .env
-        env_content = f"GEMINI_API_KEY={gemini_key}\n"
+        from dotenv import set_key
+        if gemini_key:
+            set_key(env_path, "GEMINI_API_KEY", gemini_key)
         if vbee_key:
-            env_content += f"VBEE_API_KEY={vbee_key}\n"
-            
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.write(env_content)
+            set_key(env_path, "VBEE_API_KEY", vbee_key)
             
         messagebox.showinfo(
             "Đã lưu",

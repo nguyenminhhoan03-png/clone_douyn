@@ -112,6 +112,15 @@ class DatabaseManager:
                 conn.commit()
                 logger.info("Migration: Added custom_caption column")
 
+            # Migration: thêm cột drive_download_id và drive_processed_id
+            try:
+                cursor.execute("SELECT drive_download_id FROM crawled_videos LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE crawled_videos ADD COLUMN drive_download_id TEXT")
+                cursor.execute("ALTER TABLE crawled_videos ADD COLUMN drive_processed_id TEXT")
+                conn.commit()
+                logger.info("Migration: Added drive_download_id and drive_processed_id columns")
+
             logger.info(f"Database initialized at: {self.db_path}")
         finally:
             conn.close()
@@ -123,16 +132,17 @@ class DatabaseManager:
     def add_crawled_video(self, video_id: str, source_url: str, title: str = None,
                           author: str = None, music_title: str = None,
                           tags: str = None, download_path: str = None,
-                          duration: float = None, username: str = None) -> int:
+                          duration: float = None, username: str = None,
+                          drive_download_id: str = None) -> int:
         """Thêm video đã crawl vào database. Trả về row id."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR IGNORE INTO crawled_videos 
-                (video_id, source_url, title, author, music_title, tags, download_path, duration, username)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (video_id, source_url, title, author, music_title, tags, download_path, duration, username))
+                (video_id, source_url, title, author, music_title, tags, download_path, duration, username, drive_download_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (video_id, source_url, title, author, music_title, tags, download_path, duration, username, drive_download_id))
             conn.commit()
 
             if cursor.rowcount > 0:
@@ -159,17 +169,17 @@ class DatabaseManager:
             conn.close()
 
     def update_video_status(self, video_id: str, status: str,
-                            processed_path: str = None, error_message: str = None):
+                            processed_path: str = None, error_message: str = None, drive_processed_id: str = None):
         """Cập nhật trạng thái video (downloaded, processed, failed)."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
-            if status == "processed" and processed_path:
+            if status == "processed":
                 cursor.execute("""
                     UPDATE crawled_videos 
-                    SET status = ?, processed_path = ?, processed_at = ?
+                    SET status = ?, processed_path = ?, processed_at = ?, drive_processed_id = ?
                     WHERE video_id = ?
-                """, (status, processed_path, datetime.now().isoformat(), video_id))
+                """, (status, processed_path, datetime.now().isoformat(), drive_processed_id, video_id))
             elif status == "failed":
                 cursor.execute("""
                     UPDATE crawled_videos SET status = ?, error_message = ? WHERE video_id = ?
