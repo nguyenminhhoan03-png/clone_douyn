@@ -86,7 +86,8 @@ class SubtitleGenerator:
     """Tạo phụ đề tự động bằng AI cục bộ (faster-whisper) + Dịch ngôn ngữ."""
 
     def __init__(self, model_size: str = None):
-        self.model_size = model_size or os.getenv("WHISPER_MODEL", "base")
+        default_model = "base" if os.name != "nt" else "medium"
+        self.model_size = model_size or os.getenv("WHISPER_MODEL", default_model)
         self.model = None
 
     def _load_model(self):

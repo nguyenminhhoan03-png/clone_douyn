@@ -12,6 +12,7 @@ services:
     command: ["python", "run_backend.py"]
     environment:
       - HEADLESS=true
+      - WHISPER_MODEL=base
     volumes:
       - ./config:/app/config
       - ./database:/app/database
@@ -25,6 +26,7 @@ services:
     command: ["python", "main.py", "auto", "--file", "urls.txt"]
     environment:
       - HEADLESS=true
+      - WHISPER_MODEL=base
     volumes:
       - ./config:/app/config
       - ./database:/app/database

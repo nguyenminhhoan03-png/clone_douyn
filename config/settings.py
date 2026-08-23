@@ -129,7 +129,8 @@ PROCESSOR_CONFIG = {
     # AI Subtitle & Dubbing
     "auto_subtitle": True,  # Dịch phụ đề tiếng Việt tự động
     "ai_dubbing": True,  # Thuyết minh AI tiếng Việt
-    "whisper_model": os.getenv("WHISPER_MODEL", "base"),  # "tiny", "base", "small" (base nhẹ ~150MB tránh tràn RAM trên VPS)
+    # Trên Local PC (Windows) mặc định dùng 'medium' cho độ chính xác cao nhất; trên Docker/VPS dùng 'base' để tối ưu RAM
+    "whisper_model": os.getenv("WHISPER_MODEL", "base" if os.name != "nt" else "medium"),
     "tts_voice": "vi-VN-HoaiMyNeural",  # Giọng nữ VN (hoặc vi-VN-NamMinhNeural cho nam)
     "tts_rate": "+0%",  # Tốc độ đọc TTS (vd: "+10%", "-10%")
     "original_audio_volume": 0.2,  # Giữ 20% âm lượng gốc khi dubbing
