@@ -110,14 +110,40 @@ def cmd_post(args):
     """Command: Upload video lên TikTok."""
     from uploader.tiktok_uploader import TikTokUploader
     from database.db_manager import DatabaseManager
+    from config.settings import COOKIES_DIR
+    import json
 
     db = DatabaseManager()
-    uploader = TikTokUploader(db=db)
+    
+    cookies_file = getattr(args, "account", None)
+    proxy_str = None
+    if cookies_file:
+        cookies_path = Path(cookies_file) if Path(cookies_file).is_absolute() else COOKIES_DIR / cookies_file
+    else:
+        default_cookie = COOKIES_DIR / "tiktok_cookies.json"
+        if default_cookie.exists():
+            cookies_path = default_cookie
+        else:
+            candidates = list(COOKIES_DIR.glob("tiktok_*.json"))
+            cookies_path = candidates[0] if candidates else default_cookie
+
+    if cookies_path.exists():
+        proxy_file = cookies_path.parent / "proxies.json"
+        if proxy_file.exists():
+            try:
+                with open(proxy_file, "r", encoding="utf-8") as f:
+                    proxies = json.load(f)
+                    proxy_str = proxies.get(cookies_path.name)
+            except Exception:
+                pass
+
+    logger.info(f"Target TikTok account cookie: {cookies_path.name}")
+    uploader = TikTokUploader(db=db, cookies_file=str(cookies_path), proxy=proxy_str)
 
     async def _post():
         try:
             uploaded = await uploader.upload_pending_videos(limit=args.limit)
-            logger.info(f"\n✅ Uploaded {uploaded} videos!")
+            logger.info(f"\n✅ Uploaded {len(uploaded) if isinstance(uploaded, list) else uploaded} videos!")
         finally:
             await uploader.close()
 
@@ -145,7 +171,8 @@ def cmd_auto(args):
 
     _check_music_folder()
 
-    scheduler = AutoScheduler(douyin_urls=urls)
+    account_file = getattr(args, "account", None)
+    scheduler = AutoScheduler(douyin_urls=urls, tt_account_file=account_file)
 
     if args.once:
         logger.info("Running pipeline once...")
@@ -253,11 +280,13 @@ Ví dụ sử dụng:
     # === POST ===
     post_parser = subparsers.add_parser("post", help="Upload video lên TikTok")
     post_parser.add_argument("--limit", type=int, default=4, help="Số video upload tối đa (default: 4)")
+    post_parser.add_argument("--account", help="Tên file cookie TikTok (VD: tiktok_1.json hoặc tiktok_2.json)")
 
     # === AUTO ===
     auto_parser = subparsers.add_parser("auto", help="Tự động crawl → process → post")
     auto_parser.add_argument("--urls", nargs="+", help="Danh sách Douyin URLs")
     auto_parser.add_argument("--file", help="File chứa URLs")
+    auto_parser.add_argument("--account", help="Tên file cookie TikTok (VD: tiktok_1.json hoặc tiktok_2.json)")
     auto_parser.add_argument("--once", action="store_true", help="Chỉ chạy 1 lần (không schedule)")
 
     # === STATUS ===

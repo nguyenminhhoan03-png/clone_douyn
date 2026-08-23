@@ -44,6 +44,17 @@ class AutoScheduler:
         import os
         from pathlib import Path
         
+        if not tt_account_file:
+            # Tự động tìm file cookie mặc định hoặc file tiktok_*.json đầu tiên
+            default_cookie = COOKIES_DIR / "tiktok_cookies.json"
+            if default_cookie.exists():
+                tt_account_file = str(default_cookie)
+            else:
+                tt_candidates = list(COOKIES_DIR.glob("tiktok_*.json"))
+                if tt_candidates:
+                    tt_account_file = str(tt_candidates[0])
+                    logger.info(f"Auto-selected TikTok account: {tt_candidates[0].name}")
+
         if tt_account_file:
             cookies_path = Path(tt_account_file) if os.path.isabs(tt_account_file) else COOKIES_DIR / tt_account_file
             
