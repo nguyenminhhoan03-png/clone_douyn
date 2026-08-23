@@ -48,7 +48,8 @@ class VideoProcessor:
         self.processed_dir.mkdir(parents=True, exist_ok=True)
         MUSIC_DIR.mkdir(parents=True, exist_ok=True)
         
-        self.subtitle_generator = SubtitleGenerator() if self.config.get("auto_subtitle") else None
+        whisper_model = self.config.get("whisper_model", "base")
+        self.subtitle_generator = SubtitleGenerator(model_size=whisper_model) if self.config.get("auto_subtitle") else None
 
     @staticmethod
     def _get_font_path(font_name: str = "arial") -> str:

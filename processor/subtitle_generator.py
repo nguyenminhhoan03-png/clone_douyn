@@ -85,8 +85,8 @@ _key_manager = _KeyManager()
 class SubtitleGenerator:
     """Tạo phụ đề tự động bằng AI cục bộ (faster-whisper) + Dịch ngôn ngữ."""
 
-    def __init__(self, model_size: str = "medium"):
-        self.model_size = model_size
+    def __init__(self, model_size: str = None):
+        self.model_size = model_size or os.getenv("WHISPER_MODEL", "base")
         self.model = None
 
     def _load_model(self):
