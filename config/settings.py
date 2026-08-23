@@ -57,7 +57,7 @@ DOUYIN_CONFIG = {
     "max_videos_per_session": 20,
     "request_delay": (2, 5),  # Random delay giữa các request (min, max) giây
     # Proxy (để trống nếu không dùng)
-    "proxy": None,  # Ví dụ: "http://user:pass@ip:port"
+    "proxy": os.getenv("DOUYIN_PROXY", None),  # Ví dụ: "http://user:pass@ip:port"
 }
 
 # ============================================================
@@ -65,9 +65,9 @@ DOUYIN_CONFIG = {
 # ============================================================
 TIKTOK_CONFIG = {
     # Cookies file path
-    "cookies_file": COOKIES_DIR / "tiktok_cookies.json",
+    "cookies_file": COOKIES_DIR / os.getenv("TIKTOK_COOKIE_FILE", "tiktok_cookies.json"),
     # Upload settings
-    "max_posts_per_day": 4,
+    "max_posts_per_day": int(os.getenv("MAX_POSTS_PER_DAY", "4")),
     "post_interval_hours": (3, 4),  # Random delay giữa các lần post (min, max) giờ
     "auto_cleanup_after_upload": True,  # Tự động xóa file local mp4 sau khi upload xong
     # Default hashtags cho thị trường VN
@@ -86,8 +86,8 @@ TIKTOK_CONFIG = {
     ],
     # Browser settings cho Playwright
     "browser": {
-        "headless": False,  # False để debug, True khi chạy production
-        "slow_mo": 500,  # Delay giữa các actions (ms)
+        "headless": os.getenv("HEADLESS", "True" if os.name != "nt" else "False").lower() in ("true", "1"),  # True khi chạy Docker/Linux
+        "slow_mo": int(os.getenv("BROWSER_SLOW_MO", "500")),  # Delay giữa các actions (ms)
         "viewport": {"width": 1280, "height": 720},
     },
 }
