@@ -114,26 +114,15 @@ class DouyinCrawler:
         cookies_file = DOUYIN_CONFIG.get("cookies_file")
         cookies_path = Path(str(cookies_file)) if cookies_file else None
         if cookies_path and cookies_path.exists():
-            # Kiểm tra sơ bộ format Netscape (dòng đầu hoặc có tab)
             try:
                 first_line = cookies_path.read_text(encoding="utf-8", errors="ignore").split("\n")[0]
-                if "Netscape" in first_line or "\t" in first_line:
+                if "Netscape" in first_line or "\t" in first_line or len(cookies_path.read_text(encoding="utf-8", errors="ignore")) > 10:
                     opts["cookiefile"] = str(cookies_path)
                     logger.debug(f"Using cookies file: {cookies_path}")
-                else:
-                    logger.debug("Cookies file not Netscape format → trying browser cookies")
-                    raise ValueError("not netscape")
-            except Exception:
-                # Thử browser cookies
-                for browser in ["chrome", "edge", "firefox"]:
-                    try:
-                        opts["cookiesfrombrowser"] = (browser,)
-                        logger.debug(f"Using cookies from browser: {browser}")
-                        break
-                    except Exception:
-                        continue
-        else:
-            # 2. Tự động lấy cookies từ browser (Chrome → Edge → Firefox)
+            except Exception as e:
+                logger.debug(f"Failed to read cookies file: {e}")
+        elif sys.platform == "win32":
+            # 2. Tự động lấy cookies từ browser trên Windows (Chrome → Edge → Firefox)
             for browser in ["chrome", "edge", "firefox"]:
                 try:
                     opts["cookiesfrombrowser"] = (browser,)
