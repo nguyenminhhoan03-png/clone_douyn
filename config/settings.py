@@ -26,12 +26,14 @@ for dir_path in [DOWNLOADS_DIR, PROCESSED_DIR, MUSIC_DIR, LOGS_DIR, COOKIES_DIR]
 
 def get_user_processed_dir(username: str = "default") -> Path:
     """Trả về thư mục processed riêng cho mỗi user (processed/<username>/)."""
+    username = username or "default"
     user_dir = PROCESSED_DIR / username
     user_dir.mkdir(parents=True, exist_ok=True)
     return user_dir
 
 def get_user_downloads_dir(username: str = "default") -> Path:
     """Trả về thư mục downloads riêng cho mỗi user (downloads/<username>/)."""
+    username = username or "default"
     user_dir = DOWNLOADS_DIR / username
     user_dir.mkdir(parents=True, exist_ok=True)
     return user_dir
