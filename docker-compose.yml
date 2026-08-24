@@ -17,6 +17,9 @@ services:
       - ./config:/app/config
       - ./database:/app/database
       - ./.env:/app/.env
+      - ./backend:/app/backend
+      - ./auth_client.py:/app/auth_client.py
+      - ./run_backend.py:/app/run_backend.py
 
   # Chạy Tool Auto Crawl & Upload ngầm 24/7
   worker:
@@ -36,3 +39,10 @@ services:
       - ./downloads:/app/downloads
       - ./processed:/app/processed
       - ./urls.txt:/app/urls.txt
+      - ./processor:/app/processor
+      - ./crawler:/app/crawler
+      - ./uploader:/app/uploader
+      - ./utils:/app/utils
+      - ./scheduler:/app/scheduler
+      - ./main.py:/app/main.py
+      - ./auth_client.py:/app/auth_client.py
