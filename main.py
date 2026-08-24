@@ -117,9 +117,30 @@ def cmd_post(args):
     
     cookies_file = getattr(args, "account", None)
     proxy_str = None
+    cookies_path = None
+
     if cookies_file:
-        cookies_path = Path(cookies_file) if Path(cookies_file).is_absolute() else COOKIES_DIR / cookies_file
-    else:
+        p = Path(cookies_file)
+        if p.is_absolute() and p.exists():
+            cookies_path = p
+        else:
+            candidates = [
+                COOKIES_DIR / cookies_file,
+                COOKIES_DIR / f"tiktok_{cookies_file}.json",
+                COOKIES_DIR / f"{cookies_file}.json",
+            ]
+            for cand in candidates:
+                if cand.exists():
+                    cookies_path = cand
+                    break
+            if not cookies_path:
+                # Search subdirectories
+                for sub_p in COOKIES_DIR.rglob(f"*{cookies_file}*.json"):
+                    if sub_p.is_file():
+                        cookies_path = sub_p
+                        break
+    
+    if not cookies_path:
         default_cookie = COOKIES_DIR / "tiktok_cookies.json"
         if default_cookie.exists():
             cookies_path = default_cookie
@@ -127,18 +148,21 @@ def cmd_post(args):
             candidates = list(COOKIES_DIR.glob("tiktok_*.json"))
             cookies_path = candidates[0] if candidates else default_cookie
 
-    if cookies_path.exists():
-        proxy_file = cookies_path.parent / "proxies.json"
-        if proxy_file.exists():
-            try:
-                with open(proxy_file, "r", encoding="utf-8") as f:
-                    proxies = json.load(f)
-                    proxy_str = proxies.get(cookies_path.name)
-            except Exception:
-                pass
+    if cookies_path and cookies_path.exists():
+        # Tìm proxy trong thư mục của cookie hoặc thư mục gốc cookies
+        for proxy_candidate in [cookies_path.parent / "proxies.json", COOKIES_DIR / "proxies.json"]:
+            if proxy_candidate.exists():
+                try:
+                    with open(proxy_candidate, "r", encoding="utf-8") as f:
+                        proxies = json.load(f)
+                        proxy_str = proxies.get(cookies_path.name) or proxies.get(cookies_path.stem)
+                        if proxy_str:
+                            break
+                except Exception:
+                    pass
 
-    logger.info(f"Target TikTok account cookie: {cookies_path.name}")
-    uploader = TikTokUploader(db=db, cookies_file=str(cookies_path), proxy=proxy_str)
+    logger.info(f"Target TikTok account cookie: {cookies_path.name if cookies_path else 'None'}")
+    uploader = TikTokUploader(db=db, cookies_file=str(cookies_path) if cookies_path else None, proxy=proxy_str)
 
     async def _post():
         try:
