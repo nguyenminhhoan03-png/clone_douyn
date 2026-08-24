@@ -200,14 +200,45 @@ class AuthClient:
                 else:
                     raise Exception(f"Lỗi Groq API ({groq_model}): {resp.text}")
             else:
+                # Gemini API (Thử qua SDK trước, nếu lỗi hoặc chưa cài SDK thì gọi thẳng REST API)
+                error_msgs = []
                 try:
                     import google.generativeai as genai
                     genai.configure(api_key=api_key)
-                    model = genai.GenerativeModel("gemini-1.5-flash")
-                    response = model.generate_content(prompt)
-                    return response.text
-                except Exception as e:
-                    raise Exception(f"Lỗi Gemini API: {str(e)}")
+                    for model_name in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]:
+                        try:
+                            model = genai.GenerativeModel(model_name)
+                            response = model.generate_content(prompt)
+                            if response and response.text:
+                                return response.text
+                        except Exception as m_err:
+                            error_msgs.append(f"{model_name}: {m_err}")
+                except Exception as sdk_err:
+                    error_msgs.append(f"SDK error: {sdk_err}")
+
+                # REST API fallback trực tiếp không cần thư viện
+                for model_name in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]:
+                    try:
+                        rest_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+                        rest_resp = requests.post(
+                            rest_url,
+                            json={"contents": [{"parts": [{"text": prompt}]}]},
+                            headers={"Content-Type": "application/json"},
+                            timeout=30
+                        )
+                        if rest_resp.status_code == 200:
+                            data = rest_resp.json()
+                            candidates = data.get("candidates", [])
+                            if candidates:
+                                parts = candidates[0].get("content", {}).get("parts", [])
+                                if parts and "text" in parts[0]:
+                                    return parts[0]["text"]
+                        else:
+                            error_msgs.append(f"REST {model_name} HTTP {rest_resp.status_code}: {rest_resp.text[:100]}")
+                    except Exception as rest_err:
+                        error_msgs.append(f"REST {model_name} err: {rest_err}")
+
+                raise Exception(f"Lỗi Gemini API: {'; '.join(error_msgs[-2:])}")
 
         # Fallback: Gọi qua Backend nếu không có API Key riêng
         if not self.token:

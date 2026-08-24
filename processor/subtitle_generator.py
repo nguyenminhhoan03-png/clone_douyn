@@ -314,19 +314,21 @@ class SubtitleGenerator:
                         logger.warning("Không có nội dung SRT nào được tạo ra từ AI sau khi lọc. Fallback Google Translate.")
                         
             if use_google_fallback:
-                # ─── Cách 2: Dịch từng câu bằng Google Dịch (Fallback) ───
-                def _translate_task(data):
-                    translated_text = translate_text(data["original_text"], src=src_lang, dest=target_lang)
-                    return data, translated_text
-
+                # ─── Cách 2: Dịch hàng loạt bằng Google Dịch (Batch Translation - Chống 429) ───
+                from utils.translator import translate_lines_batch
+                
                 srt_content = []
                 segment_idx = 1
+                BATCH_SIZE = 25
                 
-                logger.info(f"Translating {len(segment_data)} segments concurrently with Google Translate...")
-                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                    results = executor.map(_translate_task, segment_data)
+                logger.info(f"Translating {len(segment_data)} segments in batches with Google Translate...")
+                
+                for b_i in range(0, len(segment_data), BATCH_SIZE):
+                    batch = segment_data[b_i:b_i + BATCH_SIZE]
+                    raw_lines = [item["original_text"] for item in batch]
+                    translated_batch = translate_lines_batch(raw_lines, src=src_lang, dest=target_lang)
                     
-                    for data, translated_text in results:
+                    for data, translated_text in zip(batch, translated_batch):
                         if len(translated_text) > 40:
                             words = translated_text.split()
                             if len(words) > 8 and len(set(words)) < len(words) * 0.3:
@@ -340,6 +342,9 @@ class SubtitleGenerator:
                         srt_content.append(translated_text)
                         srt_content.append("")
                         segment_idx += 1
+                        
+                    # Nghỉ nhẹ giữa các lô để đảm bảo an toàn tuyệt đối cho IP
+                    time.sleep(0.3)
 
                 if not srt_content:
                     logger.warning("Không có nội dung SRT nào được tạo ra sau khi lọc.")

@@ -64,11 +64,27 @@ def generate_voiceover_from_srt(
         Đường dẫn file audio đã tạo, hoặc None nếu lỗi
     """
     try:
-        return asyncio.run(
-            _async_generate_voiceover(
-                srt_path, output_audio_path, video_duration, voice, rate
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(
+                    lambda: asyncio.run(
+                        _async_generate_voiceover(
+                            srt_path, output_audio_path, video_duration, voice, rate
+                        )
+                    )
+                ).result()
+        else:
+            return asyncio.run(
+                _async_generate_voiceover(
+                    srt_path, output_audio_path, video_duration, voice, rate
+                )
             )
-        )
     except Exception as e:
         logger.error(f"TTS Engine error: {e}")
         return None

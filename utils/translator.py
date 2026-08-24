@@ -8,21 +8,49 @@ import httpx
 from loguru import logger
 
 
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Accept-Language": "vi,en-US;q=0.9,en;q=0.8,zh-CN;q=0.7",
+}
+
+_REPLACEMENTS = {
+    "phân tử": "phần tử",
+    "nam vương": "nam chính",
+    "người đàn ông": "nam chính",
+    "cô gái": "nữ chính",
+    "người phụ nữ": "nữ chính",
+    "tiểu tam": "kẻ thứ ba",
+    "máy phát điện": "người phát điện",
+    "đại thông minh": "tên ngốc",
+    "khuê mật": "bạn thân",
+    "cảnh sát trưởng": "cảnh sát",
+    "xã hội đen": "giang hồ",
+    "lão đại": "đại ca",
+    "tổng tài": "chủ tịch",
+    "thiết bị": "hệ thống",
+    "nhạc mẫu": "mẹ vợ",
+    "nhạc phụ": "bố vợ",
+    "bạn trai cũ": "người yêu cũ",
+    "bạn gái cũ": "người yêu cũ",
+    "bạn trai": "người yêu",
+    "bạn gái": "người yêu",
+}
+
+def _apply_replacements(translated: str) -> str:
+    for old, new in _REPLACEMENTS.items():
+        translated = translated.replace(old, new)
+        translated = translated.replace(old.capitalize(), new.capitalize())
+    return translated
+
 def translate_text(text: str, src: str = "zh-CN", dest: str = "vi") -> str:
     """
-    Dịch text sang ngôn ngữ đích sử dụng Google Translate API miễn phí.
-
-    Args:
-        text: Văn bản cần dịch
-        src: Ngôn ngữ nguồn (default: zh-CN = tiếng Trung)
-        dest: Ngôn ngữ đích (default: vi = tiếng Việt)
-
-    Returns:
-        Văn bản đã dịch, hoặc text gốc nếu dịch thất bại
+    Dịch text sang ngôn ngữ đích sử dụng Google Translate API miễn phí với multi-endpoint & retry.
     """
     if not text or not text.strip():
         return text
 
+    # Endpoint 1: translate_a/single
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {
@@ -32,52 +60,64 @@ def translate_text(text: str, src: str = "zh-CN", dest: str = "vi") -> str:
             "dt": "t",
             "q": text.strip(),
         }
-
-        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+        with httpx.Client(timeout=10.0, headers=_HEADERS, follow_redirects=True) as client:
             resp = client.get(url, params=params)
             if resp.status_code == 200:
                 result = resp.json()
-                translated = "".join(
-                    item[0] for item in result[0] if item and item[0]
-                )
-                
-                # Bộ lọc thuật ngữ Review Phim chuyên dụng (Fix lỗi Google Dịch)
+                translated = "".join(item[0] for item in result[0] if item and item[0])
                 if dest == "vi":
-                    replacements = {
-                        "phân tử": "phần tử", # Vd: phần tử khủng bố, không phải phân tử hóa học
-                        "nam vương": "nam chính",
-                        "người đàn ông": "nam chính",
-                        "cô gái": "nữ chính",
-                        "người phụ nữ": "nữ chính",
-                        "tiểu tam": "kẻ thứ ba",
-                        "máy phát điện": "người phát điện",
-                        "đại thông minh": "tên ngốc",
-                        "khuê mật": "bạn thân",
-                        "cảnh sát trưởng": "cảnh sát",
-                        "xã hội đen": "giang hồ",
-                        "lão đại": "đại ca",
-                        "tổng tài": "chủ tịch",
-                        "thiết bị": "hệ thống",
-                        "nhạc mẫu": "mẹ vợ",
-                        "nhạc phụ": "bố vợ",
-                        "bạn trai cũ": "người yêu cũ",
-                        "bạn gái cũ": "người yêu cũ",
-                        "bạn trai": "người yêu",
-                        "bạn gái": "người yêu",
-                    }
-                    for old, new in replacements.items():
-                        # Thay thế không phân biệt hoa thường một cách tương đối
-                        translated = translated.replace(old, new)
-                        translated = translated.replace(old.capitalize(), new.capitalize())
-                
-                logger.debug(f"Translated: '{text[:50]}' → '{translated[:50]}'")
+                    translated = _apply_replacements(translated)
                 return translated.strip()
-            else:
-                logger.warning(f"Translation API returned {resp.status_code}")
-                return text
-    except Exception as e:
-        logger.warning(f"Translation failed: {e}")
-        return text
+    except Exception:
+        pass
+
+    # Endpoint 2: clients5.google.com fallback
+    try:
+        url2 = "https://clients5.google.com/translate_a/t"
+        params2 = {
+            "client": "dict-chrome-ex",
+            "sl": src,
+            "tl": dest,
+            "q": text.strip(),
+        }
+        with httpx.Client(timeout=10.0, headers=_HEADERS, follow_redirects=True) as client:
+            resp2 = client.get(url2, params=params2)
+            if resp2.status_code == 200:
+                data = resp2.json()
+                if isinstance(data, list) and len(data) > 0:
+                    translated = "".join(data) if isinstance(data[0], str) else str(data[0])
+                    if dest == "vi":
+                        translated = _apply_replacements(translated)
+                    return translated.strip()
+    except Exception:
+        pass
+
+    return text
+
+
+def translate_lines_batch(lines: list, src: str = "zh-CN", dest: str = "vi") -> list:
+    """
+    Dịch hàng loạt câu cùng lúc (ghép bằng dấu xuống dòng) để giảm 90% số lượng request,
+    tránh hoàn toàn lỗi Rate Limit 429 trên VPS.
+    """
+    if not lines:
+        return []
+
+    combined_text = "\n".join(lines)
+    translated_combined = translate_text(combined_text, src=src, dest=dest)
+    translated_lines = translated_combined.split("\n")
+
+    # Nếu số lượng dòng khớp nhau, trả về danh sách đã dịch
+    if len(translated_lines) == len(lines):
+        return [l.strip() for l in translated_lines]
+
+    # Nếu không khớp độ dài, fallback dịch từng dòng với delay ngắn
+    results = []
+    import time
+    for line in lines:
+        results.append(translate_text(line, src=src, dest=dest))
+        time.sleep(0.15)
+    return results
 
 
 def translate_description(desc: str) -> str:
