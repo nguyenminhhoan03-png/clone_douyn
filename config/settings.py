@@ -121,23 +121,35 @@ PROCESSOR_CONFIG = {
         "position": "top",  # top, center, bottom
         "margin": 30,
     },
-    # Video modifications
-    "mirror": True,  # Lật ngang video
+    # Hiệu ứng cơ bản
+    "mirror": True,  # Mirror (Lật video): BẬT
+    "replace_audio": False,  # Ghép nhạc nền: TẮT
+    "original_audio_volume": 0.5,  # Âm lượng gốc: 50%
+    "mute_original_audio": False,  # Tắt âm thanh gốc: TẮT
     "speed_range": (0.97, 1.03),  # Thay đổi tốc độ nhẹ
     "brightness_adjust": 1.05,  # Tăng sáng nhẹ
-    "replace_audio": True,  # Thay nhạc bằng nhạc Việt
-    # AI Subtitle & Dubbing
-    "auto_subtitle": True,  # Dịch phụ đề tiếng Việt tự động
-    "ai_dubbing": True,  # Thuyết minh AI tiếng Việt
-    # Trên Local PC (Windows) mặc định dùng 'medium' cho độ chính xác cao nhất; trên Docker/VPS dùng 'base' để tối ưu RAM
+
+    # Subtitles & Blur
+    "auto_subtitle": True,  # Auto-Vietsub: BẬT
+    "subtitle_overlay": "overlay_blur",  # Vị trí sub: Đè lên vùng mờ
+    "blur_enabled": False,  # Làm mờ phụ đề gốc: TẮT
+    "blur_pct": 0.15,  # Vùng làm mờ: 15%
+    "blur_position": "bottom",  # Vị trí làm mờ: Dưới cùng
+
+    # Voiceover AI
+    "ai_dubbing": True,  # Thuyết minh AI: BẬT
+    "dubbing_mode": "original",  # Chế độ: Thuyết minh nguyên bản
+    "tts_voice": "Multi",  # Giọng đọc: Đa giọng (Đoản kịch)
+    "tts_rate": "+15%",  # Tốc độ đọc: 15%
+    
+    # Whisper Model (Local PC Windows: medium, Docker VPS Linux: base)
     "whisper_model": os.getenv("WHISPER_MODEL", "base" if os.name != "nt" else "medium"),
-    "tts_voice": "vi-VN-HoaiMyNeural",  # Giọng nữ VN (hoặc vi-VN-NamMinhNeural cho nam)
-    "tts_rate": "+0%",  # Tốc độ đọc TTS (vd: "+10%", "-10%")
-    "original_audio_volume": 0.2,  # Giữ 20% âm lượng gốc khi dubbing
     # Gemini AI Translation (Hỗ trợ xoay tua nhiều key, cách nhau dấu phẩy)
     "gemini_api_keys": [k.strip() for k in os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", "")).split(",") if k.strip()],
-    # Platform Mode: "tiktok" hoặc "youtube"
+    
+    # Nền tảng đích: TikTok
     "platform": "tiktok",
+    
     # YouTube Bypass (Anti-Content ID)
     "youtube_bypass": {
         "crop_zoom": 1.15,         # Zoom & crop 15% viền
