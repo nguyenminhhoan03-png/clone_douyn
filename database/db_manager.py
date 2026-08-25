@@ -95,14 +95,21 @@ class DatabaseManager:
                 conn.commit()
                 logger.info("Migration: Added title_vi column")
                 
-            # Migration: thêm cột username
+            # Migration: thêm cột username cho crawled_videos
             try:
                 cursor.execute("SELECT username FROM crawled_videos LIMIT 1")
             except sqlite3.OperationalError:
                 cursor.execute("ALTER TABLE crawled_videos ADD COLUMN username TEXT")
+                conn.commit()
+                logger.info("Migration: Added username column to crawled_videos")
+
+            # Migration: thêm cột username cho posted_videos
+            try:
+                cursor.execute("SELECT username FROM posted_videos LIMIT 1")
+            except sqlite3.OperationalError:
                 cursor.execute("ALTER TABLE posted_videos ADD COLUMN username TEXT")
                 conn.commit()
-                logger.info("Migration: Added username column")
+                logger.info("Migration: Added username column to posted_videos")
 
             # Migration: thêm cột custom_caption
             try:
