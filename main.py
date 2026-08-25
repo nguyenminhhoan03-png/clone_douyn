@@ -148,7 +148,7 @@ def cmd_post(args):
             candidates = list(COOKIES_DIR.glob("tiktok_*.json"))
             cookies_path = candidates[0] if candidates else default_cookie
 
-    if cookies_path and cookies_path.exists():
+    if cookies_path and cookies_path.exists() and not getattr(args, "no_proxy", False):
         # Tìm proxy trong thư mục của cookie hoặc thư mục gốc cookies
         for proxy_candidate in [cookies_path.parent / "proxies.json", COOKIES_DIR / "proxies.json"]:
             if proxy_candidate.exists():
@@ -160,6 +160,10 @@ def cmd_post(args):
                             break
                 except Exception:
                     pass
+
+    if getattr(args, "no_proxy", False):
+        proxy_str = None
+        logger.info("🚫 Đang chạy chế độ KHÔNG DÙNG PROXY (--no-proxy)")
 
     logger.info(f"Target TikTok account cookie: {cookies_path.name if cookies_path else 'None'}")
     uploader = TikTokUploader(db=db, cookies_file=str(cookies_path) if cookies_path else None, proxy=proxy_str)
@@ -305,6 +309,7 @@ Ví dụ sử dụng:
     post_parser = subparsers.add_parser("post", help="Upload video lên TikTok")
     post_parser.add_argument("--limit", type=int, default=4, help="Số video upload tối đa (default: 4)")
     post_parser.add_argument("--account", help="Tên file cookie TikTok (VD: tiktok_1.json hoặc tiktok_2.json)")
+    post_parser.add_argument("--no-proxy", action="store_true", help="Bỏ qua sử dụng Proxy dù có trong file proxies.json")
 
     # === AUTO ===
     auto_parser = subparsers.add_parser("auto", help="Tự động crawl → process → post")
@@ -312,6 +317,7 @@ Ví dụ sử dụng:
     auto_parser.add_argument("--file", help="File chứa URLs")
     auto_parser.add_argument("--account", help="Tên file cookie TikTok (VD: tiktok_1.json hoặc tiktok_2.json)")
     auto_parser.add_argument("--once", action="store_true", help="Chỉ chạy 1 lần (không schedule)")
+    auto_parser.add_argument("--no-proxy", action="store_true", help="Bỏ qua sử dụng Proxy dù có trong file proxies.json")
 
     # === STATUS ===
     status_parser = subparsers.add_parser("status", help="Xem trạng thái hệ thống")
