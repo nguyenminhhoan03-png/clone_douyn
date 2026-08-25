@@ -846,7 +846,6 @@ class TikTokUploader:
                 # Auto cleanup sau khi upload thành công
                 if self.config.get("auto_cleanup_after_upload"):
                     import os
-                    from pathlib import Path
                     cleaned_files = 0
                     paths_to_remove = [video.get("download_path"), video.get("processed_path")]
                     for p in paths_to_remove:
