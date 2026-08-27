@@ -112,6 +112,18 @@ YOUTUBE_CONFIG = {
 # ============================================================
 # VIDEO PROCESSOR CONFIG
 # ============================================================
+
+# ============================================================
+# FACEBOOK REELS UPLOADER CONFIG
+# ============================================================
+FACEBOOK_CONFIG = {
+    "graph_api_version": "v19.0",
+    "max_posts_per_day": 10,
+    "default_tags": ["reels", "shorts", "viral", "trending", "xuhuong"],
+    "default_description_template": "{title}\n\n#reels #shorts #viral #trending #xuhuong",
+    "auto_cleanup_after_upload": True,
+}
+
 PROCESSOR_CONFIG = {
     # Text overlay settings
     "text_overlay": {

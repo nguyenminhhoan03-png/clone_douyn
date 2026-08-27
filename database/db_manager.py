@@ -436,15 +436,16 @@ class DatabaseManager:
     # ============================================================
 
     def delete_video_data(self, video_id: str) -> bool:
-        """Xóa video khỏi Database và ổ cứng."""
+        """Xóa video khỏi Database, ổ cứng và cả Google Drive."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
-            # Lấy đường dẫn file trước khi xóa
-            cursor.execute("SELECT download_path, processed_path FROM crawled_videos WHERE video_id = ?", (video_id,))
+            # Lấy đường dẫn file và Google Drive ID trước khi xóa
+            cursor.execute("SELECT * FROM crawled_videos WHERE video_id = ?", (video_id,))
             row = cursor.fetchone()
             if row:
                 import os
+                # 1. Xóa file cục bộ trên ổ cứng
                 paths_to_delete = [row["download_path"], row["processed_path"]]
                 for p in paths_to_delete:
                     if p and os.path.exists(p):
@@ -453,7 +454,24 @@ class DatabaseManager:
                         except OSError:
                             pass
                 
-                # Xóa khỏi DB (Cascade/Manual)
+                # 2. Xóa file trên Google Drive nếu có
+                username = row["username"] if "username" in row.keys() and row["username"] else "admin"
+                drive_download_id = row["drive_download_id"] if "drive_download_id" in row.keys() else None
+                drive_processed_id = row["drive_processed_id"] if "drive_processed_id" in row.keys() else None
+                
+                if drive_download_id or drive_processed_id:
+                    try:
+                        from uploader.google_drive_uploader import GoogleDriveUploader
+                        uploader = GoogleDriveUploader(username)
+                        uploader.authenticate()
+                        if drive_download_id:
+                            uploader.delete_file(drive_download_id)
+                        if drive_processed_id:
+                            uploader.delete_file(drive_processed_id)
+                    except Exception as e:
+                        logger.warning(f"Lỗi khi xóa file trên Google Drive ({video_id}): {e}")
+
+                # 3. Xóa khỏi DB (Cascade/Manual)
                 cursor.execute("SELECT id FROM crawled_videos WHERE video_id = ?", (video_id,))
                 crawled_id_row = cursor.fetchone()
                 if crawled_id_row:

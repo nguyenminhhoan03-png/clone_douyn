@@ -24,7 +24,7 @@ from uploader.tiktok_uploader import TikTokUploader
 class AutoScheduler:
     """Tự động lập lịch crawl → process → upload video."""
 
-    def __init__(self, douyin_urls: list = None, tt_account_file: str = None, yt_account_file: str = None, source_mode: str = "full"):
+    def __init__(self, douyin_urls: list = None, tt_account_file: str = None, yt_account_file: str = None, fb_account_file: str = None, source_mode: str = "full"):
         """
         Args:
             douyin_urls: Danh sách URL Douyin để crawl
@@ -38,6 +38,7 @@ class AutoScheduler:
         
         self.uploader_tt = None
         self.uploader_yt = None
+        self.uploader_fb = None
         self.source_mode = source_mode
         
         from config.settings import COOKIES_DIR
@@ -76,6 +77,17 @@ class AutoScheduler:
             from uploader.youtube_uploader import YouTubeUploader
             token_path = Path(yt_account_file) if os.path.isabs(yt_account_file) else COOKIES_DIR / yt_account_file
             self.uploader_yt = YouTubeUploader(db=self.db, token_file=str(token_path))
+            
+        if not fb_account_file:
+            fb_candidates = list(COOKIES_DIR.glob("facebook_*.json"))
+            if fb_candidates:
+                fb_account_file = str(fb_candidates[0])
+                logger.info(f"Auto-selected Facebook account: {fb_candidates[0].name}")
+
+        if fb_account_file:
+            from uploader.facebook_uploader import FacebookUploader
+            fb_token_path = Path(fb_account_file) if os.path.isabs(fb_account_file) else COOKIES_DIR / fb_account_file
+            self.uploader_fb = FacebookUploader(db=self.db, token_file=str(fb_token_path))
             
         self.douyin_urls = douyin_urls or []
         self.scheduler = AsyncIOScheduler(
@@ -163,6 +175,10 @@ class AutoScheduler:
             if self.uploader_yt:
                 uploaded_yt = await self.uploader_yt.upload_pending_videos(limit=1)
                 logger.info(f"Uploaded {len(uploaded_yt)} videos to YouTube")
+                
+            if self.uploader_fb:
+                uploaded_fb = await self.uploader_fb.upload_pending_videos(limit=1)
+                logger.info(f"Uploaded {len(uploaded_fb)} videos to Facebook Reels")
                 
         except Exception as e:
             logger.error(f"Upload job error: {e}")

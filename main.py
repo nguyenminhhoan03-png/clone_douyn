@@ -107,13 +107,47 @@ def cmd_process(args):
 
 
 def cmd_post(args):
-    """Command: Upload video lên TikTok."""
-    from uploader.tiktok_uploader import TikTokUploader
+    """Command: Upload video lên TikTok, YouTube hoặc Facebook Reels."""
     from database.db_manager import DatabaseManager
     from config.settings import COOKIES_DIR
     import json
 
     db = DatabaseManager()
+    platform = getattr(args, "platform", "tiktok") or "tiktok"
+
+    if platform == "facebook":
+        from uploader.facebook_uploader import FacebookUploader
+        fb_token = getattr(args, "fb_account", None) or getattr(args, "account", None)
+        token_path = None
+        if fb_token:
+            p = Path(fb_token)
+            token_path = p if p.is_absolute() and p.exists() else COOKIES_DIR / fb_token
+        if not token_path or not token_path.exists():
+            candidates = list(COOKIES_DIR.glob("facebook_*.json"))
+            token_path = candidates[0] if candidates else None
+
+        uploader = FacebookUploader(db=db, token_file=str(token_path) if token_path else None)
+        logger.info(f"Uploading to Facebook Reels via token: {token_path.name if token_path else 'None'}")
+        asyncio.run(uploader.upload_pending_videos(limit=args.limit))
+        return
+
+    if platform == "youtube":
+        from uploader.youtube_uploader import YouTubeUploader
+        yt_token = getattr(args, "yt_account", None) or getattr(args, "account", None)
+        token_path = None
+        if yt_token:
+            p = Path(yt_token)
+            token_path = p if p.is_absolute() and p.exists() else COOKIES_DIR / yt_token
+        if not token_path or not token_path.exists():
+            candidates = list(COOKIES_DIR.glob("youtube_*.json"))
+            token_path = candidates[0] if candidates else None
+
+        uploader = YouTubeUploader(db=db, token_file=str(token_path) if token_path else None)
+        logger.info(f"Uploading to YouTube Shorts via token: {token_path.name if token_path else 'None'}")
+        asyncio.run(uploader.upload_pending_videos(limit=args.limit))
+        return
+
+    from uploader.tiktok_uploader import TikTokUploader
     
     cookies_file = getattr(args, "account", None)
     proxy_str = None
@@ -200,7 +234,14 @@ def cmd_auto(args):
     _check_music_folder()
 
     account_file = getattr(args, "account", None)
-    scheduler = AutoScheduler(douyin_urls=urls, tt_account_file=account_file)
+    yt_account_file = getattr(args, "yt_account", None)
+    fb_account_file = getattr(args, "fb_account", None)
+    scheduler = AutoScheduler(
+        douyin_urls=urls,
+        tt_account_file=account_file,
+        yt_account_file=yt_account_file,
+        fb_account_file=fb_account_file
+    )
 
     if args.once:
         logger.info("Running pipeline once...")
@@ -306,9 +347,12 @@ Ví dụ sử dụng:
     process_parser.add_argument("--limit", type=int, default=10, help="Số video xử lý tối đa (default: 10)")
 
     # === POST ===
-    post_parser = subparsers.add_parser("post", help="Upload video lên TikTok")
+    post_parser = subparsers.add_parser("post", help="Upload video lên TikTok/YouTube/Facebook")
+    post_parser.add_argument("--platform", choices=["tiktok", "youtube", "facebook"], default="tiktok", help="Nền tảng upload (default: tiktok)")
     post_parser.add_argument("--limit", type=int, default=4, help="Số video upload tối đa (default: 4)")
-    post_parser.add_argument("--account", help="Tên file cookie TikTok (VD: tiktok_1.json hoặc tiktok_2.json)")
+    post_parser.add_argument("--account", help="Tên file cookie TikTok/Token (VD: tiktok_1.json)")
+    post_parser.add_argument("--yt-account", help="Tên file token YouTube (VD: youtube_1.json)")
+    post_parser.add_argument("--fb-account", help="Tên file token Facebook (VD: facebook_1.json)")
     post_parser.add_argument("--no-proxy", action="store_true", help="Bỏ qua sử dụng Proxy dù có trong file proxies.json")
 
     # === AUTO ===
@@ -316,6 +360,8 @@ Ví dụ sử dụng:
     auto_parser.add_argument("--urls", nargs="+", help="Danh sách Douyin URLs")
     auto_parser.add_argument("--file", help="File chứa URLs")
     auto_parser.add_argument("--account", help="Tên file cookie TikTok (VD: tiktok_1.json hoặc tiktok_2.json)")
+    auto_parser.add_argument("--yt-account", help="Tên file token YouTube (VD: youtube_1.json)")
+    auto_parser.add_argument("--fb-account", help="Tên file token Facebook (VD: facebook_1.json)")
     auto_parser.add_argument("--once", action="store_true", help="Chỉ chạy 1 lần (không schedule)")
     auto_parser.add_argument("--no-proxy", action="store_true", help="Bỏ qua sử dụng Proxy dù có trong file proxies.json")
 
