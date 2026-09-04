@@ -200,6 +200,7 @@ class LivestreamTab(ctk.CTkFrame, TaskMixin):
             from config.settings import COOKIES_DIR
             from auth_client import auth_client
             username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            username = username.replace("@", "_").replace(".", "_")
             user_dir = COOKIES_DIR / username
             
             if user_dir.exists():

@@ -250,20 +250,29 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_pending_videos(self, limit: int = 5, username: str = None, author: str = None) -> list:
-        """Lấy danh sách video đã processed, chưa post."""
+    def get_pending_videos(self, limit: int = 5, username: str = None, author: str = None, platform: str = None) -> list:
+        """Lấy danh sách video đã processed, chưa post theo từng platform."""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
-            query = """
-                SELECT * FROM crawled_videos 
-                WHERE status = 'processed' 
-                AND id NOT IN (SELECT crawled_video_id FROM posted_videos WHERE status = 'posted')
-            """
-            params = []
+            if platform:
+                query = """
+                    SELECT * FROM crawled_videos 
+                    WHERE status = 'processed' 
+                    AND id NOT IN (SELECT crawled_video_id FROM posted_videos WHERE status = 'posted' AND platform = ?)
+                """
+                params = [platform]
+            else:
+                query = """
+                    SELECT * FROM crawled_videos 
+                    WHERE status = 'processed' 
+                    AND id NOT IN (SELECT crawled_video_id FROM posted_videos WHERE status = 'posted')
+                """
+                params = []
             if username:
-                query += " AND username = ?"
-                params.append(username)
+                clean_user = username.replace("@", "_").replace(".", "_")
+                query += " AND (username = ? OR REPLACE(REPLACE(username, '@', '_'), '.', '_') = ?)"
+                params.extend([username, clean_user])
             if author:
                 query += " AND author = ?"
                 params.append(author)
@@ -321,6 +330,21 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def get_video_by_id(self, video_id: str):
+        """Lấy thông tin 1 video theo video_id hoặc id."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM crawled_videos WHERE video_id = ? OR id = ?", (str(video_id), str(video_id)))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_processed_videos(self, limit: int = 5, username: str = None, author: str = None, platform: str = None) -> list:
+        """Lấy danh sách video đã processed."""
+        return self.get_pending_videos(limit=limit, username=username, author=author, platform=platform)
+
     # ============================================================
     # POSTED VIDEOS OPERATIONS
     # ============================================================
@@ -351,8 +375,9 @@ class DatabaseManager:
             query = "SELECT COUNT(*) FROM posted_videos WHERE DATE(posted_at) = ? AND status = 'posted' AND platform = ?"
             params = [today, platform]
             if username:
-                query += " AND username = ?"
-                params.append(username)
+                clean_user = username.replace("@", "_").replace(".", "_")
+                query += " AND (username = ? OR REPLACE(REPLACE(username, '@', '_'), '.', '_') = ?)"
+                params.extend([username, clean_user])
                 
             cursor.execute(query, tuple(params))
             return cursor.fetchone()[0]

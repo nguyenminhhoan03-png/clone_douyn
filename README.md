@@ -1,8 +1,11 @@
-# 🎬 Douyin Crawler & TikTok Auto-Uploader
+# 🎬 Douyin Crawler & Multi-Platform Auto-Uploader
 
-Tool tự động crawl video từ **Douyin** (TikTok Trung Quốc) → xử lý video (mirror, ghép nhạc Việt, thêm text) → auto post lên **TikTok** thị trường Việt Nam.
+Tool tự động crawl video từ **Douyin** (TikTok Trung Quốc) → xử lý video (mirror, phụ đề Vietsub, thuyết minh AI, lồng nhạc, overlay) → auto post lên **TikTok**, **YouTube Shorts** và **Facebook Reels**.
 
-> **Mục tiêu**: Tăng followers TikTok VN nhanh qua niche video gái nhảy + nhạc Việt trending.
+> **Tài liệu hướng dẫn chuyên sâu**:
+> - 📘 [Hướng dẫn cấu hình & thêm Facebook Reels](docs/HUONG_DAN_CAU_HINH_FACEBOOK_REELS.md)
+> - 📖 [Hướng dẫn lệnh & vận hành hệ thống VPS](docs/COMMANDS.md)
+> - 📌 [Ghi chú đồng bộ VPS & Chống trùng lặp](docs/NOTE_QUAN_TRONG.md)
 
 ---
 

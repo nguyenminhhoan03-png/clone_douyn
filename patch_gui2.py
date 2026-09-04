@@ -43,6 +43,7 @@ new_accounts_tab = '''class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         self._secret_entry.insert(0, str(user_dir / "client_secret.json"))
         self._secret_entry.pack(side="left", padx=10)
@@ -69,6 +70,7 @@ new_accounts_tab = '''class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         
         accounts = [f.name for f in user_dir.glob("tiktok_*.json")]
@@ -127,6 +129,7 @@ new_accounts_tab = '''class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         user_dir.mkdir(parents=True, exist_ok=True)
         
@@ -145,6 +148,7 @@ new_accounts_tab = '''class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         self._save_proxies(user_dir)
         
@@ -221,6 +225,7 @@ new_accounts_tab = '''class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         accounts = [f.name for f in user_dir.glob("youtube_*.json")]
             
@@ -237,6 +242,7 @@ new_accounts_tab = '''class AccountsTab(ctk.CTkFrame, TaskMixin):
             from config.settings import COOKIES_DIR
             from auth_client import auth_client
             username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            username = username.replace("@", "_").replace(".", "_")
             user_dir = COOKIES_DIR / username
             path = user_dir / name
             try:
@@ -264,6 +270,7 @@ new_accounts_tab = '''class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         secret_path = str(user_dir / "client_secret.json")
         with open(secret_path, "w", encoding="utf-8") as f:
@@ -285,6 +292,7 @@ new_accounts_tab = '''class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         idx = 1
         while (user_dir / f"youtube_{idx}.json").exists():

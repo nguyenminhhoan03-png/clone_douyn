@@ -16,7 +16,7 @@ class GoogleDriveUploader:
     def __init__(self, username: str, client_secret_path: str = "config/client_secret.json"):
         self.username = username
         self.client_secret_path = client_secret_path
-        self.token_path = COOKIES_DIR / username / "drive_token.json"
+        self.token_path = COOKIES_DIR / username.replace("@", "_").replace(".", "_") / "drive_token.json"
         self.service = None
         
         # Đảm bảo thư mục cookies cho user tồn tại

@@ -19,6 +19,8 @@ services:
       - ./.env:/app/.env
       - ./backend:/app/backend
       - ./auth_client.py:/app/auth_client.py
+      - ./batch_farm.py:/app/batch_farm.py
+      - ./batch_post.py:/app/batch_post.py
       - ./run_backend.py:/app/run_backend.py
 
   # Chạy Tool Auto Crawl & Upload ngầm 24/7
@@ -46,3 +48,5 @@ services:
       - ./scheduler:/app/scheduler
       - ./main.py:/app/main.py
       - ./auth_client.py:/app/auth_client.py
+      - ./batch_farm.py:/app/batch_farm.py
+      - ./batch_post.py:/app/batch_post.py

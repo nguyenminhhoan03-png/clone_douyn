@@ -3,6 +3,7 @@ TikTok Uploader - Tự động upload video lên TikTok bằng Playwright
 Sử dụng browser automation để upload video qua giao diện web TikTok.
 """
 import asyncio
+import hashlib
 import json
 import random
 import time
@@ -90,10 +91,13 @@ class TikTokUploader:
         # sẽ bị web phát hiện "Timezone Mismatch". Bắt buộc phải là GMT+7.
         fp_timezone = "Asia/Ho_Chi_Minh" 
         
-        # ── Random fingerprint cho mỗi nick ──────────────────────────────
-        fp_viewport = random.choice(_VIEWPORTS)
-        fp_user_agent = random.choice(_USER_AGENTS)
-        fp_locale = random.choice(_LOCALES)
+        # ── Cố định fingerprint nhất quán cho từng nick (Hash theo tên file cookie) ─────
+        # Tránh việc mỗi ngày đổi 1 User-Agent/độ phân giải khác nhau khiến TikTok nghi ngờ bị cướp phiên và ép đăng xuất
+        seed_str = Path(self.cookies_file).stem if self.cookies_file else "default"
+        seed = int(hashlib.md5(seed_str.encode("utf-8")).hexdigest(), 16)
+        fp_viewport = _VIEWPORTS[seed % len(_VIEWPORTS)]
+        fp_user_agent = _USER_AGENTS[seed % len(_USER_AGENTS)]
+        fp_locale = _LOCALES[seed % len(_LOCALES)]
 
         # Tính toán kích thước và vị trí cửa sổ (Mô phỏng đt xếp hàng)
         win_w = 420
@@ -151,7 +155,6 @@ class TikTokUploader:
         # Thay vì dùng trình duyệt ẩn danh (Incognito) sẽ bị mất LocalStorage/Cache
         # Ta tạo riêng 1 thư mục vật lý (Profile) cho từng nick như người dùng thật.
         import os
-        from pathlib import Path
         cookie_path = Path(self.cookies_file) if self.cookies_file else Path("default.json")
         profile_dir = cookie_path.parent / ".profiles" / cookie_path.stem
         profile_dir.mkdir(parents=True, exist_ok=True)
@@ -190,14 +193,36 @@ class TikTokUploader:
                     )
         except Exception as e:
             err_str = str(e).lower()
-            if "in use" in err_str or "locked" in err_str:
-                raise Exception("Trình duyệt cũ chưa được đóng hẳn (Thư mục Profile đang bị khóa). Vui lòng tắt thủ công các cửa sổ Chrome đang mở hoặc chạy Task Manager để End Task 'chrome.exe' rồi thử lại!")
+            if "in use" in err_str or "locked" in err_str or "singleton" in err_str:
+                try:
+                    import psutil
+                    for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+                        try:
+                            if p.info['name'] and any(b in p.info['name'].lower() for b in ['chrome', 'msedge']):
+                                cmd = ' '.join(p.info['cmdline'] or [])
+                                if str(profile_dir) in cmd:
+                                    p.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                            pass
+                except Exception:
+                    pass
+                raise Exception("Trình duyệt cũ bị kẹt nền (Thư mục Profile đang bị khóa). Đã dọn dẹp tiến trình treo, vui lòng thử bấm Login/Upload lại!")
             raise e
 
         logger.info(
             f"🎭 Fingerprint: {fp_viewport['width']}x{fp_viewport['height']} | "
             f"{fp_locale} | {fp_timezone} | UA: ...{fp_user_agent[-30:]}"
         )
+
+        # ── Kích hoạt Anti-detect / Stealth Scripts để che dấu Playwright & CDP ───
+        try:
+            await self.context.add_init_script(_ANTI_DETECT_SCRIPT)
+            stealth_path = Path(__file__).parent / "stealth.js"
+            if stealth_path.exists():
+                with open(stealth_path, "r", encoding="utf-8") as sf:
+                    await self.context.add_init_script(sf.read())
+        except Exception as stealth_err:
+            logger.debug(f"Không thể inject anti-detect script: {stealth_err}")
 
         # Không cần gọi new_context vì launch_persistent_context đã trả về context
 
@@ -270,6 +295,73 @@ class TikTokUploader:
         """Random delay để mô phỏng hành vi người thật."""
         delay = random.uniform(min_sec, max_sec)
         await asyncio.sleep(delay)
+
+    async def _human_click(self, locator):
+        """
+        Click mô phỏng người dùng thật 100%:
+        - Di chuột mượt qua nhiều bước (steps)
+        - Click lệch tâm ngẫu nhiên (30%-70% button box), không bao giờ click đúng tâm điểm pixel
+        - Giữ chuột 50-130ms như ngón tay nhấn thật
+        - Tuyệt đối không dùng click(force=True) để tránh bị TikTok gắn cờ bot
+        """
+        try:
+            box = await locator.bounding_box()
+            if not box:
+                await locator.click()
+                return
+            offset_x = box['x'] + random.uniform(0.3, 0.7) * box['width']
+            offset_y = box['y'] + random.uniform(0.3, 0.7) * box['height']
+
+            await self.page.mouse.move(offset_x, offset_y, steps=random.randint(8, 15))
+            await asyncio.sleep(random.uniform(0.08, 0.2))
+            await self.page.mouse.down()
+            await asyncio.sleep(random.uniform(0.05, 0.13))
+            await self.page.mouse.up()
+        except Exception:
+            try:
+                await locator.click()
+            except Exception:
+                pass
+
+    async def _simulate_human_idle(self, total_seconds: float, cancel_check=None):
+        """
+        Mô phỏng hành vi tự nhiên của người thật trong lúc đang xem video:
+        - Thỉnh thoảng rê chuột nhẹ qua lại
+        - Đôi khi nhấp nhẹ con lăn chuột micro-scroll
+        - Tránh để trang web đứng im 100% không sự kiện nào (bị TikTok tính điểm bot)
+        """
+        end_time = time.time() + total_seconds
+        viewport = self.page.viewport_size or {"width": 1280, "height": 800}
+        w = viewport.get("width", 1280)
+        h = viewport.get("height", 800)
+
+        while time.time() < end_time:
+            if cancel_check and cancel_check():
+                break
+            remaining = end_time - time.time()
+            chunk = min(remaining, random.uniform(2.5, 6.0))
+            if chunk <= 0:
+                break
+            await asyncio.sleep(chunk)
+
+            if time.time() >= end_time:
+                break
+
+            # 35% xác suất di chuột tự nhiên trên màn hình
+            if random.random() < 0.35:
+                cur_x = random.randint(int(w * 0.25), int(w * 0.75))
+                cur_y = random.randint(int(h * 0.25), int(h * 0.75))
+                try:
+                    await self.page.mouse.move(cur_x, cur_y, steps=random.randint(6, 12))
+                except Exception:
+                    pass
+
+            # 15% xác suất lăn chuột siêu nhẹ (vài px) như tay tì vào chuột
+            if random.random() < 0.15:
+                try:
+                    await self.page.mouse.wheel(0, random.choice([-25, 25, 40]))
+                except Exception:
+                    pass
 
     async def check_login(self) -> bool:
         """Kiểm tra đã đăng nhập TikTok chưa."""
@@ -698,11 +790,19 @@ class TikTokUploader:
 
     def _generate_caption(self, video_info: dict) -> str:
         """Tạo caption tiếng Việt cho video.
-        Ưu tiên dùng title đã dịch sẵn (từ processor).
+        Ưu tiên dùng custom_caption hoặc title đã dịch sẵn (từ processor/GUI).
         Nếu chưa có, dịch on-the-fly từ title gốc.
         """
+        # 0. Ưu tiên TUYỆT ĐỐI custom_caption đã lưu trong Database
+        db_custom = video_info.get("custom_caption")
+        if db_custom and str(db_custom).strip():
+            caption = str(db_custom).strip()
+            logger.info(f"  📝 Dùng Custom Caption từ Database: {caption[:80]}...")
+            return caption[:2200]
+
         from utils.translator import translate_description, translate_hashtags
         import re
+        import ast
 
         # 1. Lấy title tiếng Việt (ưu tiên đã dịch sẵn trong DB)
         title_vi = video_info.get("title_vi", "")
@@ -710,9 +810,18 @@ class TikTokUploader:
             original = video_info.get("title", "")
             title_vi = translate_description(original) if original else ""
 
+        # Sửa lỗi nếu title_vi bị lưu dạng list "['Tiêu đề', 'zh-CN']"
+        if isinstance(title_vi, str) and title_vi.strip().startswith("[") and title_vi.strip().endswith("]"):
+            try:
+                parsed = ast.literal_eval(title_vi.strip())
+                if isinstance(parsed, (list, tuple)) and len(parsed) > 0:
+                    title_vi = str(parsed[0])
+            except Exception:
+                pass
+
         # Clean title
-        title_vi = re.sub(r"#\S+", "", title_vi).strip()
-        title_vi = re.sub(r"@\S+", "", title_vi).strip()
+        title_vi = re.sub(r"#\S+", "", str(title_vi)).strip()
+        title_vi = re.sub(r"@\S+", "", str(title_vi)).strip()
         if not title_vi or len(title_vi) < 3:
             title_vi = random.choice([
                 "Nhảy đẹp quá 😍",
@@ -794,88 +903,113 @@ class TikTokUploader:
                 break
                 
             logger.info(f"\n[{i + 1}/{len(videos)}] Uploading video ID: {video['video_id']}")
-
-            # Tạo caption
-            custom_caption = custom_captions.get(video["video_id"]) if custom_captions else None
-            
-            if custom_caption is not None:
-                caption = custom_caption
-                hashtags = []
-            else:
-                caption = self._generate_caption(video)
-                hashtags = self.config.get("default_hashtags", [])
-
-            # Chuẩn bị file local từ Drive nếu cần
-            video_path = video.get("processed_path")
-            drive_processed_id = video.get("drive_processed_id")
             temp_downloaded_path = None
-            
-            if not video_path or not Path(video_path).exists():
-                if drive_processed_id:
-                    logger.info("Đang tải video từ Google Drive để upload...")
-                    from uploader.google_drive_uploader import GoogleDriveUploader
-                    uploader = GoogleDriveUploader(self.current_username or "default")
-                    import uuid
-                    from config.settings import DOWNLOADS_DIR
-                    temp_downloaded_path = str(DOWNLOADS_DIR / f"upload_temp_{uuid.uuid4().hex[:8]}.mp4")
-                    if uploader.download_file(drive_processed_id, temp_downloaded_path):
-                        video_path = temp_downloaded_path
-                    else:
-                        logger.error("Không thể tải video từ Google Drive")
-                        continue
-                else:
-                    logger.error("Không tìm thấy file video (cả local và Drive)")
-                    continue
 
-            # Upload
-            success = await self.upload_video(
-                video_path=video_path,
-                caption=caption,
-                hashtags=hashtags,
-            )
+            try:
+                # Đảm bảo browser còn sống
+                if not self.page or self.page.is_closed():
+                    logger.info("Browser session closed, re-initializing...")
+                    await self._init_browser()
+                    if not await self.check_login():
+                        logger.error("Không thể đăng nhập lại sau khi khởi tạo browser.")
+                        break
 
-            if success:
-                self.db.add_posted_video(
-                    crawled_video_id=video["id"],
-                    caption=caption,
-                    hashtags=" ".join(hashtags),
-                    username=self.current_username
-                )
-                uploaded_ids.append(video["video_id"])
+                # Tạo caption
+                custom_caption = custom_captions.get(video["video_id"]) if custom_captions else None
                 
-                # Auto cleanup sau khi upload thành công
-                if self.config.get("auto_cleanup_after_upload"):
-                    import os
-                    cleaned_files = 0
-                    paths_to_remove = [video.get("download_path"), video.get("processed_path")]
-                    for p in paths_to_remove:
-                        if p and Path(p).exists():
-                            try:
-                                os.remove(p)
-                                cleaned_files += 1
-                            except Exception as e:
-                                logger.warning(f"  ⚠️ Lỗi khi xóa file {p}: {e}")
-                    
-                    if cleaned_files > 0:
-                        logger.info(f"  🧹 Đã xóa {cleaned_files} file cục bộ để tiết kiệm dung lượng.")
-                        
-                # Xóa file trên Google Drive nếu có
-                if drive_processed_id:
-                    try:
+                if custom_caption is not None:
+                    caption = custom_caption
+                    hashtags = []
+                else:
+                    caption = self._generate_caption(video)
+                    hashtags = self.config.get("default_hashtags", [])
+
+                # Chuẩn bị file local từ Drive nếu cần
+                video_path = video.get("processed_path")
+                drive_processed_id = video.get("drive_processed_id")
+                
+                # Nếu path Windows (E:\...) không tồn tại trên Linux VPS, thử tìm theo tên file trong PROCESSED_DIR hoặc DOWNLOADS_DIR
+                if video_path and not Path(video_path).exists():
+                    from config.settings import PROCESSED_DIR, DOWNLOADS_DIR
+                    v_name = Path(video_path).name
+                    if (PROCESSED_DIR / v_name).exists():
+                        video_path = str(PROCESSED_DIR / v_name)
+                    elif (DOWNLOADS_DIR / v_name).exists():
+                        video_path = str(DOWNLOADS_DIR / v_name)
+
+                if not video_path or not Path(video_path).exists():
+                    if drive_processed_id:
+                        logger.info("Đang tải video từ Google Drive để upload...")
                         from uploader.google_drive_uploader import GoogleDriveUploader
                         uploader = GoogleDriveUploader(self.current_username or "default")
-                        uploader.delete_file(drive_processed_id)
-                        # Có thể xóa luôn bản chưa process (drive_download_id) nếu user muốn sạch sẽ
-                        drive_download_id = video.get("drive_download_id")
-                        if drive_download_id:
-                            uploader.delete_file(drive_download_id)
-                    except Exception as e:
-                        logger.warning(f"Lỗi khi xóa file trên Drive: {e}")
-                
-                # Dọn dẹp file temp upload (nếu có tải từ drive)
+                        import uuid
+                        from config.settings import DOWNLOADS_DIR
+                        temp_downloaded_path = str(DOWNLOADS_DIR / f"upload_temp_{uuid.uuid4().hex[:8]}.mp4")
+                        if uploader.download_file(drive_processed_id, temp_downloaded_path):
+                            video_path = temp_downloaded_path
+                        else:
+                            logger.error("Không thể tải video từ Google Drive (File 404 hoặc lỗi mạng), bỏ qua video này.")
+                            self.db.update_video_status(video["id"], "archived")
+                            continue
+                    else:
+                        logger.error("Không tìm thấy file video (cả local và Drive)")
+                        continue
+
+                # Upload
+                success = await self.upload_video(
+                    video_path=video_path,
+                    caption=caption,
+                    hashtags=hashtags,
+                )
+
+                if success:
+                    self.db.add_posted_video(
+                        crawled_video_id=video["id"],
+                        caption=caption,
+                        hashtags=" ".join(hashtags),
+                        username=self.current_username
+                    )
+                    uploaded_ids.append(video["video_id"])
+                    
+                    # Auto cleanup sau khi upload thành công
+                    if self.config.get("auto_cleanup_after_upload"):
+                        import os
+                        cleaned_files = 0
+                        paths_to_remove = [video.get("download_path"), video.get("processed_path")]
+                        for p in paths_to_remove:
+                            if p and Path(p).exists():
+                                try:
+                                    os.remove(p)
+                                    cleaned_files += 1
+                                except Exception as e:
+                                    logger.warning(f"  ⚠️ Lỗi khi xóa file {p}: {e}")
+                        
+                        if cleaned_files > 0:
+                            logger.info(f"  🧹 Đã xóa {cleaned_files} file cục bộ để tiết kiệm dung lượng.")
+                            
+                    # Xóa file trên Google Drive nếu có
+                    if drive_processed_id:
+                        try:
+                            from uploader.google_drive_uploader import GoogleDriveUploader
+                            uploader = GoogleDriveUploader(self.current_username or "default")
+                            uploader.delete_file(drive_processed_id)
+                            # Có thể xóa luôn bản chưa process (drive_download_id) nếu khác ID
+                            drive_download_id = video.get("drive_download_id")
+                            if drive_download_id and drive_download_id != drive_processed_id:
+                                uploader.delete_file(drive_download_id)
+                        except Exception as e:
+                            logger.warning(f"Lỗi khi xóa file trên Drive: {e}")
+                else:
+                    logger.error(f"❌ Upload TikTok thất bại cho video: {video.get('video_id')}, tự động bỏ qua để đăng video tiếp theo.")
+
+            except Exception as e:
+                logger.error(f"❌ Ngoại lệ khi xử lý upload video {video.get('video_id')}: {e}")
+            finally:
                 if temp_downloaded_path and Path(temp_downloaded_path).exists():
-                    try: Path(temp_downloaded_path).unlink()
-                    except: pass
+                    try:
+                        Path(temp_downloaded_path).unlink()
+                    except:
+                        pass
 
             # Delay giữa các lần post
             if i < len(videos) - 1:
@@ -965,14 +1099,15 @@ class TikTokUploader:
                 if update_callback:
                     update_callback(msg, "INFO")
                 
-                await asyncio.sleep(watch_time)
+                # Mô phỏng hành vi tự nhiên trong lúc xem (rê chuột, micro-scroll) thay vì sleep đơ cứng
+                await self._simulate_human_idle(watch_time, cancel_check)
 
                 # Thử tắt các popup cảnh báo (như popup rủi ro tài khoản)
                 try:
                     # Dùng name="OK", exact=True để tránh bấm nhầm chữ "TikTok" (vì chứa chữ ok)
                     ok_btn = self.page.get_by_role("button", name="OK", exact=True)
                     if await ok_btn.count() > 0 and await ok_btn.first.is_visible():
-                        await ok_btn.first.click()
+                        await self._human_click(ok_btn.first)
                         logger.info("Đã tự động đóng popup cảnh báo của TikTok.")
                 except Exception:
                     pass
@@ -999,14 +1134,8 @@ class TikTokUploader:
                                 box = await like_btns.nth(i).bounding_box()
                                 # Nút tim phải nằm trong vùng nhìn thấy của màn hình (từ 0 đến vh)
                                 if box and 0 <= box['y'] <= vh:
-                                    # Mô phỏng thao tác di chuột và click thật để vượt bot detection
-                                    target_x = box['x'] + box['width'] / 2
-                                    target_y = box['y'] + box['height'] / 2
-                                    
-                                    await self.page.mouse.move(target_x, target_y, steps=10)
-                                    await asyncio.sleep(random.uniform(0.1, 0.3))
-                                    await self.page.mouse.click(target_x, target_y, delay=random.randint(50, 150))
-                                    
+                                    # Mô phỏng thao tác di chuột người thật với tọa độ lệch tâm ngẫu nhiên
+                                    await self._human_click(like_btns.nth(i))
                                     liked_count += 1
                                     like_msg = f"❤️ Đã thả tim video thứ {video_count}"
                                     logger.info(like_msg)
@@ -1033,7 +1162,8 @@ class TikTokUploader:
                                 if await btns.nth(i).is_visible():
                                     box = await btns.nth(i).bounding_box()
                                     if box and 0 <= box['y'] <= vh:
-                                        await btns.nth(i).click(force=True)
+                                        # Tuyệt đối không dùng click(force=True), dùng _human_click
+                                        await self._human_click(btns.nth(i))
                                         flw_msg = f"👤 Đã bấm Follow chủ kênh video thứ {video_count}"
                                         logger.info(flw_msg)
                                         if update_callback:
@@ -1044,17 +1174,23 @@ class TikTokUploader:
                     except Exception as e:
                         logger.debug(f"Không thể Follow: {e}")
 
-                # Lướt sang video tiếp theo — đôi khi scroll nhanh 2-3 video liên tiếp
+                # Lướt sang video tiếp theo — kết hợp con lăn chuột (65%) và bàn phím (35%)
                 try:
-                    await self.page.keyboard.press("ArrowDown")
-                    # 20% xác suất: scroll nhanh thêm 1-2 video (giống lướt qua video không thích)
-                    if random.random() < 0.20:
-                        extra_scrolls = random.randint(1, 2)
-                        for _ in range(extra_scrolls):
-                            await self._random_delay(0.5, 1.5)
+                    if random.random() < 0.65:
+                        wheel_step = random.randint(520, 780)
+                        await self.page.mouse.wheel(0, wheel_step)
+                    else:
+                        await self.page.keyboard.press("ArrowDown")
+
+                    # 15% xác suất: scroll nhanh thêm 1 video (giống lướt qua video không thích)
+                    if random.random() < 0.15:
+                        await self._random_delay(0.5, 1.2)
+                        if random.random() < 0.5:
+                            await self.page.mouse.wheel(0, random.randint(500, 700))
+                        else:
                             await self.page.keyboard.press("ArrowDown")
-                            video_count += 1
-                    await self._random_delay(1, 2)
+                        video_count += 1
+                    await self._random_delay(1.5, 2.5)
                 except Exception as e:
                     logger.debug(f"Lỗi cuộn trang: {e}")
                     await self.page.evaluate("window.scrollBy(0, window.innerHeight);")
@@ -1168,7 +1304,7 @@ class TikTokUploader:
                     break
                     
             if first_video:
-                await first_video.click()
+                await self._human_click(first_video)
                 await self._random_delay(2, 4)
             else:
                 if update_callback: update_callback(f"Không tìm thấy video nào cho từ khóa '{keyword}'", "WARNING")
@@ -1180,14 +1316,14 @@ class TikTokUploader:
                 
                 watch_time = random.uniform(8.0, 35.0)
                 if update_callback: update_callback(f"Đang xem video tìm kiếm thứ {i+1} (chờ {int(watch_time)}s)...", "INFO")
-                await asyncio.sleep(watch_time)
+                await self._simulate_human_idle(watch_time, cancel_check)
                 
                 # Thả tim
                 if random.random() < like_ratio:
                     try:
                         like_btn = self.page.locator("[data-e2e='browse-like-icon']").first
                         if await like_btn.count() > 0:
-                            await like_btn.click()
+                            await self._human_click(like_btn)
                             if update_callback: update_callback("❤️ Đã thả tim video tìm kiếm!", "SUCCESS")
                             await self._random_delay(1, 2)
                     except Exception:
@@ -1198,15 +1334,18 @@ class TikTokUploader:
                     try:
                         follow_btn = self.page.locator("[data-e2e='browse-follow']").first
                         if await follow_btn.count() > 0 and await follow_btn.is_visible():
-                            await follow_btn.click()
+                            await self._human_click(follow_btn)
                             if update_callback: update_callback("✅ Đã bấm Follow người đăng!", "SUCCESS")
                             await self._random_delay(1, 2)
                     except Exception:
                         pass
                 
-                # Next video (nhấn nút xuống trên bàn phím)
+                # Next video (kết hợp con lăn chuột hoặc mũi tên)
                 if i < watch_count - 1:
-                    await self.page.keyboard.press("ArrowDown")
+                    if random.random() < 0.65:
+                        await self.page.mouse.wheel(0, random.randint(520, 750))
+                    else:
+                        await self.page.keyboard.press("ArrowDown")
                     await self._random_delay(2, 4)
                     
             # Đóng modal

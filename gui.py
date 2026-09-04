@@ -1618,6 +1618,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             
         role = auth_client.user_info.get("role", "user") if auth_client.user_info else "user"
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         
         # Kiểm tra giới hạn Role
         if role != "admin":
@@ -1905,6 +1906,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         user_dir.mkdir(parents=True, exist_ok=True)
         return user_dir
@@ -2121,6 +2123,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._checkboxes.clear()
         self._video_accounts.clear()
         self._video_accounts_yt.clear()
+        self._video_accounts_fb.clear()
         self._custom_captions = {}
 
         from database.db_manager import DatabaseManager
@@ -2159,9 +2162,9 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             var = ctk.BooleanVar(value=True)
             self._checkboxes[vid] = var
             
-            # --- ROW 1: Header (Checkbox, ID, Size, Xem, Tài khoản) ---
+            # --- ROW 1: Header (Checkbox, ID, Size, Xem) ---
             row1 = ctk.CTkFrame(card, fg_color="transparent")
-            row1.pack(fill="x", padx=10, pady=(10, 5))
+            row1.pack(fill="x", padx=10, pady=(10, 4))
             
             cb = ctk.CTkCheckBox(row1, text="", variable=var, width=24, command=self._update_selected_count)
             cb.pack(side="left")
@@ -2180,41 +2183,53 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                 size_mb = os.path.getsize(path) / (1024 * 1024)
                 ctk.CTkLabel(row1, text=f"📦 {size_mb:.1f} MB", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(5, 10))
                 ctk.CTkButton(
-                    row1, text="▶ Xem", width=50, font=("Segoe UI", 11),
+                    row1, text="▶ Xem", width=60, height=24, font=("Segoe UI", 11),
                     fg_color=BORDER, hover_color=BG_CARD,
                     command=lambda p=path: os.startfile(p) if os.name == 'nt' else None
-                ).pack(side="left", padx=(0, 15))
+                ).pack(side="left", padx=(0, 10))
             elif drive_id:
                 ctk.CTkLabel(row1, text="☁️ Google Drive", font=("Segoe UI", 11), text_color=ACCENT).pack(side="left", padx=(5, 10))
                 ctk.CTkButton(
-                    row1, text="☁️ Xem Drive", width=80, font=("Segoe UI", 11),
+                    row1, text="☁️ Xem Drive", width=90, height=24, font=("Segoe UI", 11),
                     fg_color=BORDER, hover_color=BG_CARD,
                     command=lambda d_id=drive_id: webbrowser.open(f"https://drive.google.com/file/d/{d_id}/view")
-                ).pack(side="left", padx=(0, 15))
+                ).pack(side="left", padx=(0, 10))
             else:
                 ctk.CTkLabel(row1, text=f"📦 {size_mb:.1f} MB", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(5, 10))
-                
-            # Đẩy phần chọn tài khoản sang phải
-            right_header = ctk.CTkFrame(row1, fg_color="transparent")
-            right_header.pack(side="right")
+
+            # --- ROW 1.5: Platform Account Selector Bar ---
+            acc_bar = ctk.CTkFrame(card, fg_color=BG_DARK, corner_radius=6)
+            acc_bar.pack(fill="x", padx=10, pady=(2, 6), ipady=2)
             
-            ctk.CTkLabel(right_header, text="TT:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(5, 2))
+            # TikTok
+            ctk.CTkLabel(acc_bar, text="🎵 TikTok:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN).pack(side="left", padx=(10, 4), pady=4)
             accounts = self._get_tiktok_accounts()
-            opt_acc = ctk.CTkOptionMenu(right_header, values=accounts, font=("Segoe UI", 11), width=100, fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD)
-            opt_acc.pack(side="left")
+            opt_acc = ctk.CTkOptionMenu(acc_bar, values=accounts, font=("Segoe UI", 11), width=120, height=26, fg_color=BG_CARD, button_color=BORDER, button_hover_color=BG_DARK)
+            opt_acc.pack(side="left", padx=(0, 14), pady=4)
             global_acc = getattr(self, "_opt_account", None)
             if global_acc and global_acc.get() in accounts:
                 opt_acc.set(global_acc.get())
             self._video_accounts[vid] = opt_acc
 
-            ctk.CTkLabel(right_header, text="YT:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(10, 2))
+            # YouTube
+            ctk.CTkLabel(acc_bar, text="🎬 YouTube:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN).pack(side="left", padx=(0, 4), pady=4)
             yt_accounts = self._get_youtube_accounts()
-            opt_acc_yt = ctk.CTkOptionMenu(right_header, values=yt_accounts, font=("Segoe UI", 11), width=100, fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD)
-            opt_acc_yt.pack(side="left")
+            opt_acc_yt = ctk.CTkOptionMenu(acc_bar, values=yt_accounts, font=("Segoe UI", 11), width=120, height=26, fg_color=BG_CARD, button_color=BORDER, button_hover_color=BG_DARK)
+            opt_acc_yt.pack(side="left", padx=(0, 14), pady=4)
             global_acc_yt = getattr(self, "_opt_account_yt", None)
             if global_acc_yt and global_acc_yt.get() in yt_accounts:
                 opt_acc_yt.set(global_acc_yt.get())
             self._video_accounts_yt[vid] = opt_acc_yt
+
+            # Facebook
+            ctk.CTkLabel(acc_bar, text="📘 Facebook:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN).pack(side="left", padx=(0, 4), pady=4)
+            fb_accounts = self._get_facebook_accounts()
+            opt_acc_fb = ctk.CTkOptionMenu(acc_bar, values=fb_accounts, font=("Segoe UI", 11), width=120, height=26, fg_color=BG_CARD, button_color=BORDER, button_hover_color=BG_DARK)
+            opt_acc_fb.pack(side="left", padx=(0, 10), pady=4)
+            global_acc_fb = getattr(self, "_opt_account_fb", None)
+            if global_acc_fb and global_acc_fb.get() in fb_accounts:
+                opt_acc_fb.set(global_acc_fb.get())
+            self._video_accounts_fb[vid] = opt_acc_fb
 
             # --- ROW 2: Editable Caption Title ---
             display_title = video.get("title_vi") or video.get("title") or "No title"
@@ -2333,6 +2348,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             
         role = auth_client.user_info.get("role", "user") if auth_client.user_info else "user"
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         
         # Kiểm tra giới hạn Role
         if role != "admin":
@@ -2367,13 +2383,14 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         custom_captions_dict = {vid: tb.get("1.0", "end-1c") for vid, tb in self._custom_captions.items()}
         video_accounts_tt_dict = {vid: opt.get() for vid, opt in self._video_accounts.items()}
         video_accounts_yt_dict = {vid: opt.get() for vid, opt in self._video_accounts_yt.items()}
+        video_accounts_fb_dict = {vid: opt.get() for vid, opt in self._video_accounts_fb.items()}
         cleanup_upload = self._sw_cleanup_upload.get() == 1
         
         do_tt = self._sw_platform_tt.get() == 1
         do_yt = self._sw_platform_yt.get() == 1
         do_fb = self._sw_platform_fb.get() == 1
         
-        if not do_tt and not do_yt:
+        if not do_tt and not do_yt and not do_fb:
             self._log("Vui lòng chọn ít nhất 1 nền tảng để upload!", "WARNING")
             self._on_task_done()
             return
@@ -2381,14 +2398,15 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         # Override limit bằng đúng số lượng video được chọn để đảm bảo up đủ
         limit = len(selected_vids)
         
-        self._run_in_thread(self._do_upload, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, cleanup_upload, do_tt, do_yt)
+        self._run_in_thread(self._do_upload, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, video_accounts_fb_dict, cleanup_upload, do_tt, do_yt, do_fb)
 
     def _on_task_done(self):
         super()._on_task_done()
         self.is_running = False
         self.after(0, lambda: self._btn_upload.configure(text="▶  Bắt đầu Upload", state="normal", fg_color="#e74c3c", hover_color="#c0392b"))
+        self.after(0, lambda: self._status_badge.set("Xong", SUCCESS) if not getattr(self, "cancel_flag", False) else self._status_badge.set("Đã dừng", DANGER))
 
-    async def _async_upload_groups(self, limit, account_groups_tt, account_groups_yt, custom_captions_dict, do_tt, do_yt):
+    async def _async_upload_groups(self, limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb):
         from database.db_manager import DatabaseManager
         from config.settings import COOKIES_DIR
         db = DatabaseManager()
@@ -2511,7 +2529,6 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                     await fb_uploader.close()
                 
         self.after(0, self._load_videos)
-        self._on_task_done()
 
 
     def _apply_account_to_all(self):
@@ -2590,10 +2607,11 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             elif curr not in accounts:
                 opt.set(accounts[0])
 
-    def _do_upload(self, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, cleanup_upload, do_tt, do_yt):
-        from config.settings import TIKTOK_CONFIG, YOUTUBE_CONFIG
+    def _do_upload(self, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, video_accounts_fb_dict, cleanup_upload, do_tt, do_yt, do_fb):
+        from config.settings import TIKTOK_CONFIG, YOUTUBE_CONFIG, FACEBOOK_CONFIG
         TIKTOK_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
         YOUTUBE_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
+        FACEBOOK_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
 
         account_groups_tt = {}
         account_groups_yt = {}
@@ -2614,12 +2632,15 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                         account_groups_yt[acc_yt] = []
                     account_groups_yt[acc_yt].append(vid)
 
-        import asyncio
-        asyncio.run(self._async_upload_groups(limit, account_groups_tt, account_groups_yt, custom_captions_dict, do_tt, do_yt))
+            if do_fb:
+                acc_fb = video_accounts_fb_dict.get(vid)
+                if acc_fb and acc_fb != "Không up":
+                    if acc_fb not in account_groups_fb:
+                        account_groups_fb[acc_fb] = []
+                    account_groups_fb[acc_fb].append(vid)
 
-    def _on_task_done(self):
-        self.after(0, lambda: self._btn_upload.configure(state="normal"))
-        self.after(0, lambda: self._status_badge.set("Xong", SUCCESS))
+        import asyncio
+        asyncio.run(self._async_upload_groups(limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3004,6 +3025,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         self._save_proxies(user_dir)
 
@@ -3012,6 +3034,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from auth_client import auth_client
         from tkinter import messagebox
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         self._save_proxies(user_dir)
         messagebox.showinfo("Thành công", "Đã lưu toàn bộ cấu hình Proxy cho các tài khoản!")
@@ -3030,6 +3053,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         self._secret_entry.insert(0, str(user_dir / "client_secret.json"))
         self._secret_entry.pack(side="left", padx=10)
@@ -3056,6 +3080,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         
         accounts = [f.name for f in user_dir.glob("tiktok_*.json")]
@@ -3139,6 +3164,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         user_dir.mkdir(parents=True, exist_ok=True)
         
@@ -3160,6 +3186,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         self._save_proxies(user_dir)
         
@@ -3174,16 +3201,38 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
             try:
                 async def _run():
                     uploader = TikTokUploader(cookies_file=cookie_path, proxy=proxy_str if proxy_str else None)
-                    await uploader._init_browser()
-                    tiktok_page = await uploader.context.new_page()
-                    await tiktok_page.goto("https://www.tiktok.com/")
-                    while len(uploader.context.pages) > 0:
+                    try:
+                        await uploader._init_browser()
+                        tiktok_page = uploader.page if uploader.page else await uploader.context.new_page()
                         try:
-                            await uploader.context.pages[0].title()
-                            await asyncio.sleep(1)
-                        except:
-                            break
-                    await uploader.close()
+                            await tiktok_page.goto("https://www.tiktok.com/", wait_until="domcontentloaded", timeout=25000)
+                        except Exception as nav_err:
+                            nav_str = str(nav_err)
+                            if "ERR_HTTP_RESPONSE_CODE_FAILURE" in nav_str or "403" in nav_str:
+                                # Cookies cũ trong máy bị TikTok từ chối (HTTP 403) -> Xóa cookie cũ để mở trang đăng nhập sạch
+                                await uploader.context.clear_cookies()
+                                await tiktok_page.goto("https://www.tiktok.com/login", wait_until="domcontentloaded", timeout=25000)
+                            else:
+                                raise nav_err
+
+                        while len(uploader.context.pages) > 0:
+                            try:
+                                await uploader.context.pages[0].title()
+                                await asyncio.sleep(1)
+                            except:
+                                break
+                        # Tự động xuất cookies ra file JSON để đồng bộ lên VPS
+                        try:
+                            raw_cookies = await uploader.context.cookies()
+                            tt_cookies = [c for c in raw_cookies if "tiktok" in c.get("domain", "")]
+                            if tt_cookies:
+                                import json
+                                with open(cookie_path, "w", encoding="utf-8") as f:
+                                    json.dump(tt_cookies, f, indent=4)
+                        except Exception as err:
+                            pass
+                    finally:
+                        await uploader.close()
                 asyncio.run(_run())
                 
                 def _on_succ():
@@ -3195,7 +3244,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
                 err_msg = str(e)
                 def _on_err():
                     from tkinter import messagebox
-                    if "Lỗi Proxy" in err_msg or "net::ERR_" in err_msg or "Timeout" in err_msg:
+                    if "Lỗi Proxy" in err_msg or ("net::ERR_" in err_msg and "ERR_HTTP_RESPONSE_CODE_FAILURE" not in err_msg) or "Timeout" in err_msg:
                         msg = f"Proxy có vẻ đã chết hoặc sai thông tin!\n\nLỗi:\n{err_msg}\n\nBạn có muốn BỎ QUA PROXY và dùng IP thật của máy để tiếp tục không?"
                         if messagebox.askyesno("Proxy Hết Hạn / Lỗi", msg):
                             self._manual_login(acc_name, force_no_proxy=True)
@@ -3237,6 +3286,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
                 from config.settings import COOKIES_DIR
                 from auth_client import auth_client
                 username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+                username = username.replace("@", "_").replace(".", "_")
                 user_dir = COOKIES_DIR / username
                 (user_dir / filename).unlink(missing_ok=True)
                 self._load_accounts()
@@ -3259,6 +3309,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
                 from config.settings import COOKIES_DIR
                 from auth_client import auth_client
                 username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+                username = username.replace("@", "_").replace(".", "_")
                 user_dir = COOKIES_DIR / username
                 user_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, user_dir / dest_name)
@@ -3273,6 +3324,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
             from config.settings import COOKIES_DIR
             from auth_client import auth_client
             username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            username = username.replace("@", "_").replace(".", "_")
             user_dir = COOKIES_DIR / username
             with open(user_dir / filename, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -3298,6 +3350,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         accounts = [f.name for f in user_dir.glob("youtube_*.json")]
             
@@ -3314,6 +3367,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
             from config.settings import COOKIES_DIR
             from auth_client import auth_client
             username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            username = username.replace("@", "_").replace(".", "_")
             user_dir = COOKIES_DIR / username
             path = user_dir / name
             try:
@@ -3341,6 +3395,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         secret_path = str(user_dir / "client_secret.json")
         with open(secret_path, "w", encoding="utf-8") as f:
@@ -3362,6 +3417,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         idx = 1
         while (user_dir / f"youtube_{idx}.json").exists():
@@ -3392,10 +3448,12 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         self._fb_list_frame = ctk.CTkScrollableFrame(self.tab_facebook, fg_color=BG_DARK, border_color=BORDER, border_width=1)
         self._fb_list_frame.pack(fill="both", expand=True, pady=(0, 16))
         
+        self._editing_fb_filename = None
         form_frame = ctk.CTkFrame(self.tab_facebook, fg_color=BG_CARD, corner_radius=8, border_width=1, border_color=BORDER)
         form_frame.pack(fill="x", pady=(0, 8), padx=4, ipady=8)
         
-        ctk.CTkLabel(form_frame, text="Thêm Fanpage Mới (Graph API):", font=("Segoe UI", 13, "bold"), text_color=ACCENT).pack(anchor="w", padx=12, pady=(0, 6))
+        self._lbl_fb_title = ctk.CTkLabel(form_frame, text="Thêm Fanpage Mới (Graph API):", font=("Segoe UI", 13, "bold"), text_color=ACCENT)
+        self._lbl_fb_title.pack(anchor="w", padx=12, pady=(0, 6))
         
         # Row 1: Page ID & Name
         row1 = ctk.CTkFrame(form_frame, fg_color="transparent")
@@ -3418,6 +3476,8 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         self._btn_add_fb = ctk.CTkButton(row2, text="🔍 Kiểm tra & Thêm", fg_color=SUCCESS, hover_color="#27ae60", width=140, command=self._add_fb_account)
         self._btn_add_fb.pack(side="left")
         
+        self._btn_cancel_fb_edit = ctk.CTkButton(row2, text="❌ Hủy Sửa", fg_color=BORDER, hover_color=BG_DARK, width=80, command=self._cancel_edit_fb)
+        
         self._load_fb_accounts()
 
     def _load_fb_accounts(self):
@@ -3428,6 +3488,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from auth_client import auth_client
         import json
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         accounts = [f.name for f in user_dir.glob("facebook_*.json")]
         
@@ -3450,7 +3511,51 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
                 
             ctk.CTkLabel(item, text=f"📘 {page_name}", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="left", padx=10, pady=8)
             ctk.CTkLabel(item, text=f"[{acc}]", font=("Consolas", 11), text_color=TEXT_DIM).pack(side="left", padx=5)
-            ctk.CTkButton(item, text="Xóa", width=50, fg_color=DANGER, hover_color="#c0392b", command=lambda a=acc: self._delete_fb_account(a)).pack(side="right", padx=10, pady=8)
+            
+            ctk.CTkButton(item, text="🗑 Xóa", width=55, fg_color=DANGER, hover_color="#c0392b", command=lambda a=acc: self._delete_fb_account(a)).pack(side="right", padx=(4, 10), pady=8)
+            ctk.CTkButton(item, text="✏️ Sửa", width=55, fg_color=BORDER, hover_color=BG_CARD, command=lambda a=acc: self._edit_fb_account(a)).pack(side="right", padx=(0, 4), pady=8)
+
+    def _edit_fb_account(self, filename):
+        from config.settings import COOKIES_DIR
+        from auth_client import auth_client
+        import json
+        from tkinter import messagebox
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
+        user_dir = COOKIES_DIR / username
+        file_path = user_dir / filename
+        if not file_path.exists():
+            messagebox.showerror("Lỗi", f"Không tìm thấy file: {filename}")
+            return
+            
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            self._fb_page_id_entry.delete(0, "end")
+            self._fb_page_id_entry.insert(0, str(data.get("page_id", "")))
+            
+            self._fb_name_entry.delete(0, "end")
+            self._fb_name_entry.insert(0, str(data.get("page_name", "")))
+            
+            self._fb_token_entry.delete(0, "end")
+            self._fb_token_entry.insert(0, str(data.get("page_access_token", "")))
+            
+            self._editing_fb_filename = filename
+            self._lbl_fb_title.configure(text=f"✏️ Đang chỉnh sửa Fanpage [{filename}]:", text_color="#f39c12")
+            self._btn_add_fb.configure(text="💾 Lưu Thay Đổi", fg_color=ACCENT)
+            self._btn_cancel_fb_edit.pack(side="left", padx=(8, 0))
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể đọc file {filename}: {e}")
+
+    def _cancel_edit_fb(self):
+        self._editing_fb_filename = None
+        self._fb_page_id_entry.delete(0, "end")
+        self._fb_name_entry.delete(0, "end")
+        self._fb_token_entry.delete(0, "end")
+        self._lbl_fb_title.configure(text="Thêm Fanpage Mới (Graph API):", text_color=ACCENT)
+        self._btn_add_fb.configure(text="🔍 Kiểm tra & Thêm", fg_color=SUCCESS)
+        self._btn_cancel_fb_edit.pack_forget()
 
     def _add_fb_account(self):
         page_id = self._fb_page_id_entry.get().strip()
@@ -3471,7 +3576,8 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
             self.after(0, lambda: _on_verify_done(res))
             
         def _on_verify_done(res):
-            self._btn_add_fb.configure(text="🔍 Kiểm tra & Thêm", state="normal")
+            btn_text = "💾 Lưu Thay Đổi" if self._editing_fb_filename else "🔍 Kiểm tra & Thêm"
+            self._btn_add_fb.configure(text=btn_text, state="normal")
             if not res.get("valid"):
                 err_msg = res.get('error', '')
                 prompt = f"Lỗi xác thực Graph API:\n{err_msg}\n\n👉 Bạn có muốn BỎ QUA KIỂM TRA và LƯU TRỰC TIẾP Fanpage này vào tool để đăng Reels không?"
@@ -3490,13 +3596,19 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
             from auth_client import auth_client
             import json
             username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            username = username.replace("@", "_").replace(".", "_")
             user_dir = COOKIES_DIR / username
             user_dir.mkdir(parents=True, exist_ok=True)
             
-            idx = 1
-            while (user_dir / f"facebook_{idx}.json").exists():
-                idx += 1
-            new_file = f"facebook_{idx}.json"
+            if self._editing_fb_filename:
+                target_file = self._editing_fb_filename
+                success_msg = f"Đã cập nhật Fanpage: {page_name} ({target_file})"
+            else:
+                idx = 1
+                while (user_dir / f"facebook_{idx}.json").exists():
+                    idx += 1
+                target_file = f"facebook_{idx}.json"
+                success_msg = f"Đã thêm Fanpage: {page_name} ({target_file})"
             
             save_data = {
                 "page_id": real_page_id,
@@ -3504,13 +3616,11 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
                 "page_access_token": real_token,
                 "created_at": str(Path(__file__).stat().st_mtime)
             }
-            with open(user_dir / new_file, "w", encoding="utf-8") as f:
+            with open(user_dir / target_file, "w", encoding="utf-8") as f:
                 json.dump(save_data, f, indent=4, ensure_ascii=False)
                 
-            self._fb_page_id_entry.delete(0, "end")
-            self._fb_token_entry.delete(0, "end")
-            self._fb_name_entry.delete(0, "end")
-            messagebox.showinfo("Thành công", f"Đã thêm Fanpage: {page_name} ({new_file})")
+            self._cancel_edit_fb()
+            messagebox.showinfo("Thành công", success_msg)
             self._load_fb_accounts()
             
         threading.Thread(target=_verify, daemon=True).start()
@@ -3522,11 +3632,14 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
             from config.settings import COOKIES_DIR
             from auth_client import auth_client
             username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            username = username.replace("@", "_").replace(".", "_")
             user_dir = COOKIES_DIR / username
             path = user_dir / name
             try:
                 if path.exists():
                     os.remove(path)
+                if getattr(self, "_editing_fb_filename", None) == name:
+                    self._cancel_edit_fb()
                 self._load_fb_accounts()
             except Exception as e:
                 messagebox.showerror("Lỗi", f"Không thể xóa: {e}")
@@ -3657,6 +3770,7 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         
         accounts = [f.name for f in user_dir.glob("tiktok_*.json")]
@@ -3714,6 +3828,7 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         proxy_file = user_dir / "proxies.json"
         saved_proxies = {}
@@ -3755,6 +3870,7 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         
         proxies = proxies or {}
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         
         # Giới hạn số luồng (browser) mở cùng lúc để tránh tràn RAM/CPU (Tối đa 3)
@@ -3961,6 +4077,7 @@ class SettingsTab(ctk.CTkFrame):
         def _do_auth():
             from auth_client import auth_client
             username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            username = username.replace("@", "_").replace(".", "_")
             try:
                 from uploader.google_drive_uploader import GoogleDriveUploader
                 uploader = GoogleDriveUploader(username)
@@ -4266,6 +4383,7 @@ class SettingsTab(ctk.CTkFrame):
         # Trạng thái xác thực
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         from config.settings import COOKIES_DIR
         token_path = COOKIES_DIR / username / "drive_token.json"
         
@@ -5154,6 +5272,8 @@ class App(ctk.CTk):
                     upload_tab._refresh_accounts()
                 if hasattr(upload_tab, "_refresh_youtube_accounts"):
                     upload_tab._refresh_youtube_accounts()
+                if hasattr(upload_tab, "_refresh_facebook_accounts"):
+                    upload_tab._refresh_facebook_accounts()
                     
             # Update AutoTab accounts
             if hasattr(self, "_tab_frames") and len(self._tab_frames) > 4:
@@ -5168,6 +5288,8 @@ class App(ctk.CTk):
                     acc_tab._load_accounts()
                 if hasattr(acc_tab, "_load_yt_accounts"):
                     acc_tab._load_yt_accounts()
+                if hasattr(acc_tab, "_load_fb_accounts"):
+                    acc_tab._load_fb_accounts()
                     
             # Update FarmTab accounts
             if hasattr(self, "_tab_frames") and len(self._tab_frames) > 6:
@@ -5346,6 +5468,14 @@ class App(ctk.CTk):
         for frame in self._tab_frames:
             frame.grid_remove()
         self._tab_frames[idx].grid()
+        if idx == 3 and len(self._tab_frames) > 3:
+            upload_tab = self._tab_frames[3]
+            if hasattr(upload_tab, "_refresh_accounts"):
+                upload_tab._refresh_accounts()
+            if hasattr(upload_tab, "_refresh_youtube_accounts"):
+                upload_tab._refresh_youtube_accounts()
+            if hasattr(upload_tab, "_refresh_facebook_accounts"):
+                upload_tab._refresh_facebook_accounts()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

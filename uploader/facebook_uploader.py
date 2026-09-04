@@ -57,7 +57,7 @@ class FacebookUploader:
     @staticmethod
     def extract_from_cookie_or_token(input_str: str, page_id: str = "", api_version: str = "v19.0") -> Dict[str, Any]:
         """
-        Hỗ trợ nhận vào Access Token HOẶC Cookie Facebook.
+        Hỗ trợ nhận vào Access Token HOẶC Cookie Facebook (dạng chuỗi hoặc JSON).
         Tự động lấy Token EAAG và danh sách Fanpage.
         """
         input_str = str(input_str).strip()
@@ -65,37 +65,57 @@ class FacebookUploader:
         
         if not input_str:
             return {"valid": False, "page_name": "", "error": "Vui lòng dán Access Token hoặc Cookie Facebook!"}
+
+        # Tự động chuyển đổi nếu người dùng dán Cookie dạng JSON từ Cookie-Editor / J2TEAM
+        if input_str.startswith("[") or '{"name":' in input_str or '"value":' in input_str or '"name":' in input_str:
+            try:
+                import json as py_json
+                cookie_json = py_json.loads(input_str)
+                if isinstance(cookie_json, list):
+                    cookie_pairs = [f"{c.get('name')}={c.get('value')}" for c in cookie_json if c.get('name') and c.get('value') is not None]
+                    input_str = "; ".join(cookie_pairs)
+            except Exception:
+                import re
+                names = re.findall(r'"name"\s*:\s*"([^"]+)"', input_str)
+                values = re.findall(r'"value"\s*:\s*"([^"]*)"', input_str)
+                if names and len(names) == len(values):
+                    input_str = "; ".join([f"{n}={v}" for n, v in zip(names, values)])
             
         # Nếu là Cookie Facebook
-        if "c_user=" in input_str or "datr=" in input_str or "xs=" in input_str or "sb=" in input_str:
-            logger.info("🍪 Phát hiện định dạng Facebook Cookie! Đang tự động trích xuất Token EAAG...")
+        if "c_user" in input_str or "datr" in input_str or "xs" in input_str or "sb" in input_str:
+            logger.info("🍪 Phát hiện định dạng Facebook Cookie! Đang tự động trích xuất Token EAAG/EAAB...")
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
                 "Cookie": input_str,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Dest": "document",
             }
             urls = [
+                "https://adsmanager.facebook.com/adsmanager/manage/campaigns",
                 "https://business.facebook.com/content_management",
                 "https://business.facebook.com/latest/home",
                 "https://business.facebook.com/creatorstudio/home",
-                "https://adsmanager.facebook.com/adsmanager/manage/campaigns"
+                "https://business.facebook.com/business_locations"
             ]
             import re
             extracted_token = None
             for u in urls:
                 try:
-                    r = requests.get(u, headers=headers, timeout=10)
-                    matches = re.findall(r'"(EAAG[A-Za-z0-9]+)"', r.text) or re.findall(r'accessToken":"(EAA[A-Za-z0-9]+)"', r.text) or re.findall(r'"(EAA[A-Za-z0-9]{80,})"', r.text)
+                    r = requests.get(u, headers=headers, timeout=12)
+                    # Tìm tất cả token bắt đầu bằng EAA dài trên 70 ký tự
+                    matches = re.findall(r'EAA[A-Za-z0-9]{70,}', r.text)
                     for m in matches:
-                        if len(m) > 60:
+                        if m.startswith("EAAB") or m.startswith("EAAG") or m.startswith("EAAC") or m.startswith("EAAI"):
                             extracted_token = m
-                            logger.info(f"✅ Đã tìm thấy Token EAAG: {m[:15]}... từ {u}")
+                            logger.info(f"✅ Đã tìm thấy Token Facebook ({m[:4]}): {m[:15]}... từ {u}")
                             break
                     if extracted_token:
                         break
                 except Exception as e:
-                    logger.debug(f"Lỗi khi crawl {u}: {e}")
+                    logger.debug(f"Lỗi khi quét {u}: {e}")
                     
             if extracted_token:
                 res = FacebookUploader.verify_page_token(page_id, extracted_token, api_version)
@@ -110,7 +130,7 @@ class FacebookUploader:
                     "error": ""
                 }
             else:
-                logger.warning("Không tự extract được EAAG từ Cookie, chuyển sang xác thực trực tiếp...")
+                logger.warning("Không tự extract được Token từ Cookie, chuyển sang xác thực trực tiếp...")
 
         # Xác thực Token trực tiếp
         return FacebookUploader.verify_page_token(page_id, input_str, api_version)
@@ -135,40 +155,15 @@ class FacebookUploader:
             warn_msg = f"Cảnh báo: Access Token Facebook luôn bắt đầu bằng 'EAA...'. Bạn đang dán chuỗi bắt đầu bằng '{access_token[:10]}...'. Có thể bạn chưa copy đủ toàn bộ mã!"
             logger.warning(f"⚠️ {warn_msg}")
 
-        # 1. Thử xác thực trực tiếp theo Page ID nếu có
-        if page_id:
-            try:
-                url = f"https://graph.facebook.com/{api_version}/{page_id}"
-                logger.info(f"🔍 [1/3] Đang gọi Graph API kiểm tra Page: {url}")
-                resp = requests.get(url, params={"fields": "name,id,access_token", "access_token": access_token}, timeout=15)
-                logger.info(f"   Status Code: {resp.status_code}")
-                logger.debug(f"   Response: {resp.text}")
-                data = resp.json()
-                if resp.status_code == 200 and "id" in data:
-                    page_name = data.get("name", f"Page {page_id}")
-                    logger.info(f"✅ [1/3] Xác thực thành công Page ID: {page_id} ({page_name})")
-                    return {
-                        "valid": True,
-                        "page_name": page_name,
-                        "page_id": data.get("id", page_id),
-                        "page_access_token": data.get("access_token") or access_token,
-                        "error": ""
-                    }
-                else:
-                    logger.warning(f"   [1/3] Trả về: {data.get('error', {}).get('message', resp.text)}")
-            except Exception as e:
-                logger.error(f"   [1/3] Lỗi mạng khi gọi Page ID: {e}")
-
-        # 2. Thử truy vấn danh sách Fanpage của User qua /me/accounts
+        # 1. Thử truy vấn danh sách Fanpage của User qua /me/accounts để lấy đúng PAGE ACCESS TOKEN
         try:
             me_accounts_url = f"https://graph.facebook.com/{api_version}/me/accounts"
-            logger.info(f"🔍 [2/3] Đang gọi Graph API lấy danh sách Pages: {me_accounts_url}")
-            resp = requests.get(me_accounts_url, params={"access_token": access_token}, timeout=15)
+            logger.info(f"🔍 [1/3] Đang gọi Graph API lấy danh sách Pages & Page Tokens: {me_accounts_url}")
+            resp = requests.get(me_accounts_url, params={"access_token": access_token, "fields": "id,name,access_token,tasks"}, timeout=15)
             logger.info(f"   Status Code: {resp.status_code}")
-            logger.debug(f"   Response: {resp.text}")
             data = resp.json()
             if resp.status_code == 200 and "data" in data and len(data["data"]) > 0:
-                logger.info(f"✅ [2/3] Tìm thấy {len(data['data'])} Fanpage từ tài khoản!")
+                logger.info(f"✅ [1/3] Tìm thấy {len(data['data'])} Fanpage từ tài khoản!")
                 # Nếu người dùng có nhập page_id, tìm đúng Page đó
                 if page_id:
                     for p in data["data"]:
@@ -191,9 +186,33 @@ class FacebookUploader:
                     "error": ""
                 }
             else:
-                logger.warning(f"   [2/3] Không lấy được accounts: {data.get('error', {}).get('message', 'Không có data')}")
+                logger.debug(f"   [1/3] Không lấy được accounts qua /me/accounts: {data.get('error', {}).get('message', 'Không có data')}")
         except Exception as e:
-            logger.error(f"   [2/3] Lỗi mạng khi gọi /me/accounts: {e}")
+            logger.debug(f"   [1/3] Lỗi khi gọi /me/accounts: {e}")
+
+        # 2. Thử xác thực trực tiếp theo Page ID (trường hợp token đã là Page Token)
+        if page_id:
+            try:
+                url = f"https://graph.facebook.com/{api_version}/{page_id}"
+                logger.info(f"🔍 [2/3] Đang gọi Graph API kiểm tra Page ID: {url}")
+                resp = requests.get(url, params={"fields": "name,id", "access_token": access_token}, timeout=15)
+                logger.info(f"   Status Code: {resp.status_code}")
+                logger.debug(f"   Response: {resp.text}")
+                data = resp.json()
+                if resp.status_code == 200 and "id" in data:
+                    page_name = data.get("name", f"Page {page_id}")
+                    logger.info(f"✅ [2/3] Xác thực thành công Page ID: {page_id} ({page_name})")
+                    return {
+                        "valid": True,
+                        "page_name": page_name,
+                        "page_id": data.get("id", page_id),
+                        "page_access_token": access_token,
+                        "error": ""
+                    }
+                else:
+                    logger.warning(f"   [2/3] Trả về: {data.get('error', {}).get('message', resp.text)}")
+            except Exception as e:
+                logger.error(f"   [2/3] Lỗi mạng khi gọi Page ID: {e}")
 
         # 3. Thử kiểm tra tài khoản cá nhân /me
         try:
@@ -240,8 +259,50 @@ class FacebookUploader:
             start_data = start_resp.json()
 
             if start_resp.status_code != 200 or "video_id" not in start_data:
-                err = start_data.get("error", {}).get("message", start_resp.text)
-                logger.error(f"  ✗ Start phase failed: {err}")
+                err_obj = start_data.get("error", {}) if isinstance(start_data, dict) else {}
+                err_msg = err_obj.get("message", start_resp.text)
+                err_code = err_obj.get("code", "")
+                err_subcode = err_obj.get("error_subcode", "")
+                err_type = err_obj.get("type", "")
+                
+                logger.warning(f"  ⚠️ Reels API (video_reels) báo: {err_msg}")
+                logger.info("  🔄 Đang tự động chuyển sang cơ chế Facebook Video API (Hỗ trợ quyền publish_video)...")
+                
+                # Thử upload qua /{page_id}/videos (chỉ cần quyền publish_video, video dọc ngắn tự động thành Reels)
+                try:
+                    video_url = f"https://graph.facebook.com/{self.api_version}/{self.page_id}/videos"
+                    full_caption = description if description else title
+                    if tags:
+                        tag_str = " ".join([f"#{t.replace('#','')}" for t in tags])
+                        if tag_str not in full_caption:
+                            full_caption = f"{full_caption}\n\n{tag_str}".strip()
+                    
+                    with open(video_path, "rb") as f_vid:
+                        post_data = {
+                            "access_token": self.access_token,
+                            "description": full_caption,
+                            "published": "true"
+                        }
+                        files = {
+                            "source": (video_path.name, f_vid, "video/mp4")
+                        }
+                        resp = requests.post(video_url, data=post_data, files=files, timeout=180)
+                        res_data = resp.json()
+                        if resp.status_code == 200 and "id" in res_data:
+                            pub_id = res_data["id"]
+                            logger.info(f"  ✅ Facebook Video/Reel published successfully qua Video API! Video ID: {pub_id}")
+                            return True
+                        else:
+                            fb_err = res_data.get("error", {}).get("message", resp.text)
+                            logger.error(f"  ✗ Fallback Video API failed: {fb_err}")
+                except Exception as fb_ex:
+                    logger.error(f"  ✗ Fallback Video API exception: {fb_ex}")
+                
+                if err_code == 200 or "permission" in str(err_msg).lower() or "pages_manage_posts" in str(err_msg):
+                    logger.error(f"  ⚠️ NGUYÊN NHÂN: Token của Fanpage '{self.page_name}' (ID: {self.page_id}) thiếu quyền đăng bài/video lên Fanpage.")
+                elif err_code in (1, 190) or "OAuth" in str(err_type) or "Invalid request" in str(err_msg):
+                    logger.error(f"  ⚠️ NGUYÊN NHÂN: Token của Fanpage '{self.page_name}' (ID: {self.page_id}) đã hết hạn hoặc phiên đăng nhập đã bị hủy.")
+                    logger.error("  👉 CÁCH KHẮC PHỤC: Vào tab [Accounts] -> [Facebook] -> Cập nhật lại Token/Cookie mới!")
                 return False
 
             video_id = start_data["video_id"]
@@ -305,6 +366,35 @@ class FacebookUploader:
             logger.error(f"Facebook Reels upload exception: {e}")
             return False
 
+    async def upload_video(
+        self,
+        video_path: str,
+        title: str = "",
+        description: str = "",
+        tags: list = None
+    ) -> bool:
+        """Upload 1 video lên Facebook Reels qua Graph API (async)."""
+        video_path = Path(video_path)
+        if not video_path.exists():
+            logger.error(f"File video không tồn tại: {video_path}")
+            return False
+
+        if not self.page_id or not self.access_token:
+            logger.error("Chưa cấu hình Page ID hoặc Access Token!")
+            return False
+
+        file_size = video_path.stat().st_size
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self._execute_reels_upload,
+            video_path,
+            file_size,
+            title,
+            description,
+            tags or []
+        )
+
     # ─── Batch Upload ────────────────────────────────────────────────────────
 
     def _generate_fb_metadata(self, video_info: dict) -> dict:
@@ -358,7 +448,7 @@ class FacebookUploader:
                     videos.append(v)
             videos = videos[:limit]
         else:
-            videos = self.db.get_processed_videos(limit=limit, username=self.current_username)
+            videos = self.db.get_processed_videos(limit=limit, username=self.current_username, platform="facebook")
 
         if not videos:
             logger.info("Không có video nào cần upload lên Facebook Reels.")
@@ -384,19 +474,36 @@ class FacebookUploader:
                 logger.warning("Upload Facebook Reels bị hủy bởi người dùng!")
                 break
 
-            video_id = video.get("id") or video.get("video_id")
+            video_id = video.get("video_id") or str(video.get("id"))
             proc_path = video.get("processed_path")
+            drive_processed_id = video.get("drive_processed_id")
+            temp_downloaded_path = None
 
             if not proc_path or not Path(proc_path).exists():
-                logger.warning(f"[{i}/{len(videos)}] File processed không tồn tại: {proc_path}")
-                continue
+                if drive_processed_id:
+                    logger.info(f"[{i}/{len(videos)}] ☁️ Đang tải video từ Google Drive để upload Facebook Reels...")
+                    from uploader.google_drive_uploader import GoogleDriveUploader
+                    uploader = GoogleDriveUploader(self.current_username or "default")
+                    import uuid
+                    from config.settings import DOWNLOADS_DIR
+                    temp_downloaded_path = str(DOWNLOADS_DIR / f"upload_fb_temp_{uuid.uuid4().hex[:8]}.mp4")
+                    if uploader.download_file(drive_processed_id, temp_downloaded_path):
+                        proc_path = temp_downloaded_path
+                    else:
+                        logger.error(f"[{i}/{len(videos)}] Không thể tải video từ Google Drive (File 404), lưu trữ video...")
+                        self.db.update_video_status(video_id, "archived")
+                        continue
+                else:
+                    logger.warning(f"[{i}/{len(videos)}] File processed không tồn tại: {proc_path}")
+                    continue
 
             logger.info(f"[{i}/{len(videos)}] Processing upload: {video.get('title', 'N/A')[:40]}...")
 
             # Tạo metadata
-            if video_id in custom_captions and custom_captions[video_id].strip():
-                description = custom_captions[video_id].strip()
-                title = video.get("title", "")[:100]
+            custom_cap = custom_captions.get(video_id) or custom_captions.get(str(video.get("id"))) or video.get("custom_caption")
+            if custom_cap and custom_cap.strip():
+                description = custom_cap.strip()
+                title = video.get("title_vi") or video.get("title", "")[:100]
                 tags = self.config.get("default_tags", ["reels", "shorts"])
             else:
                 meta = self._generate_fb_metadata(video)
@@ -424,6 +531,24 @@ class FacebookUploader:
                 )
                 uploaded.append(video["id"])
                 logger.info(f"[{i}/{len(videos)}] ✅ Hoàn thành upload Facebook: {video.get('title', 'N/A')[:30]}")
+
+                if temp_downloaded_path and Path(temp_downloaded_path).exists():
+                    try:
+                        Path(temp_downloaded_path).unlink()
+                    except Exception:
+                        pass
+
+                # Xóa file trên Google Drive sau khi đăng Facebook thành công
+                if drive_processed_id:
+                    try:
+                        from uploader.google_drive_uploader import GoogleDriveUploader
+                        g_uploader = GoogleDriveUploader(self.current_username or "default")
+                        g_uploader.delete_file(drive_processed_id)
+                        drive_download_id = video.get("drive_download_id")
+                        if drive_download_id:
+                            g_uploader.delete_file(drive_download_id)
+                    except Exception as e:
+                        logger.warning(f"Lỗi khi xóa file trên Drive sau khi đăng FB: {e}")
 
                 # Auto cleanup nếu bật
                 if self.config.get("auto_cleanup_after_upload", True):

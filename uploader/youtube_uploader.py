@@ -8,7 +8,7 @@ import json
 import random
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 from loguru import logger
 
@@ -344,7 +344,7 @@ class YouTubeUploader:
         Trả về list các video_id đã upload thành công.
         """
         if video_ids is not None:
-            all_pending = self.db.get_pending_videos(limit=1000)
+            all_pending = self.db.get_pending_videos(limit=1000, platform="youtube")
             videos = [v for v in all_pending if v["video_id"] in video_ids]
         else:
             max_posts = limit or self.config.get("max_posts_per_day", 5)
@@ -355,7 +355,7 @@ class YouTubeUploader:
                 logger.info(f"Đã đạt giới hạn YouTube {max_posts} video/ngày. Dừng upload.")
                 return []
 
-            videos = self.db.get_pending_videos(limit=remaining)
+            videos = self.db.get_pending_videos(limit=remaining, platform="youtube")
 
         if not videos:
             logger.info("Không có video nào pending để upload YouTube")
@@ -409,7 +409,8 @@ class YouTubeUploader:
                     if uploader.download_file(drive_processed_id, temp_downloaded_path):
                         video_path = temp_downloaded_path
                     else:
-                        logger.error("Không thể tải video từ Google Drive")
+                        logger.error("Không thể tải video từ Google Drive (File 404), lưu trữ video...")
+                        self.db.update_video_status(video["video_id"], "archived")
                         continue
                 else:
                     logger.error("Không tìm thấy file video (cả local và Drive)")

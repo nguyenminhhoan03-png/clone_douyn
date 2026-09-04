@@ -32,6 +32,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         
         accounts = [f.name for f in user_dir.glob("tiktok_*.json")]
@@ -90,6 +91,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         user_dir.mkdir(parents=True, exist_ok=True)
         
@@ -108,6 +110,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         self._save_proxies(user_dir)
         
@@ -176,6 +179,7 @@ new_farm_tab_load_accounts = """
         from config.settings import COOKIES_DIR
         from auth_client import auth_client
         username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        username = username.replace("@", "_").replace(".", "_")
         user_dir = COOKIES_DIR / username
         
         accounts = [f.name for f in user_dir.glob("tiktok_*.json")]
