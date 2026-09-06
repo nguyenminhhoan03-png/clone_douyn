@@ -1,6 +1,14 @@
 # 📌 BÍ KÍP ĐỒNG BỘ VPS, PROXY & QUẢN LÝ CRONJOB
 
-Tài liệu này tổng hợp toàn bộ các lưu ý quan trọng nhất khi vận hành hệ thống giữa máy tính cá nhân (Local) và máy chủ VPS.
+> [!CAUTION]
+> ### 🛑 QUY TẮC BẤT KHẢ XÂM PHẠM CHO TẤT CẢ AI ASSISTANT (GEMINI / CLAUDE / CHATGPT / CURSOR):
+> - **NGHIÊM CẤM TUYỆT ĐỐI** tự ý chạy các lệnh Git có thể làm mất code, rollback hoặc ghi đè thay đổi chưa commit của người dùng:
+>   - ❌ **CẤM:** `git checkout -- <file>`, `git checkout .`, `git checkout -f`
+>   - ❌ **CẤM:** `git restore .`, `git restore <file>`, `git restore --staged`
+>   - ❌ **CẤM:** `git reset --hard`, `git reset --merge`
+>   - ❌ **CẤM:** `git clean -fd`, `git clean -f`
+>   - ❌ **CẤM:** `git stash drop`, `git stash pop` (khi không được yêu cầu)
+> - **MỌI THAY ĐỔI TRONG CODE:** Phải sửa trực tiếp qua công cụ edit file (`replace_file_content` / `multi_replace_file_content`). Khi gặp lỗi hoặc xung đột, phải tìm đúng nguyên nhân để fix hoặc báo cáo người dùng, **KHÔNG ĐƯỢC TỰ TIỆN HOÀN TÁC / XÓA CODE CỦA NGƯỜI DÙNG.**
 
 ---
 

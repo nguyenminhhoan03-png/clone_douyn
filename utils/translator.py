@@ -216,28 +216,90 @@ def build_vietnamese_caption(title: str, tags: str,
     caption = f"✨ {translated_title}\n\n{tags_str}"
     return caption
 
-def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bool = False) -> str:
+def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bool = False, provider: str = None, model: str = None, ollama_url: str = None) -> str:
     """
     Pipeline 2 bước (Senior++):
       Bước 1: AI sửa lỗi Whisper (dùng model riêng → tránh rate limit)
       Bước 2: AI dịch text Trung đã sửa → tiếng Việt tự nhiên  
     """
+    import os
     from auth_client import auth_client
     from loguru import logger
     import time
     
     try:
-        is_groq = api_key and api_key.startswith("gsk_")
-        ai_name = "Groq" if is_groq else "Gemini"
+        is_groq = bool(api_key and str(api_key).startswith("gsk_"))
+        is_gemini = bool(api_key and str(api_key).startswith("AIza"))
+        is_ollama = (not is_groq) and (not is_gemini) and ((provider == "ollama") or (api_key == "ollama") or (os.getenv("AI_PROVIDER") == "ollama"))
         
-        # Model cho từng Pass (Groq rate limit TÁCH BIỆT theo model)
-        # Pass 1: Model chuyên tiếng Trung để sửa lỗi Whisper
-        # Pass 2: Model mạnh nhất để dịch sang tiếng Việt
-        PASS1_MODEL = "llama-3.1-8b-instant" if is_groq else None       # Dùng model nhỏ/nhanh để sửa lỗi chính tả
-        PASS2_MODEL = "llama-3.3-70b-versatile" if is_groq else None  # Llama mạnh nhất cho dịch thuật
+        target_ollama_model = model or os.getenv("OLLAMA_MODEL", "qwen2.5")
+        ai_name = "Groq (Llama-70B)" if is_groq else ("Gemini" if is_gemini else f"Ollama ({target_ollama_model})")
+        
+        # Model cho từng Pass
+        if is_ollama:
+            PASS1_MODEL = target_ollama_model
+            PASS2_MODEL = target_ollama_model
+        else:
+            PASS1_MODEL = "llama-3.1-8b-instant" if is_groq else None       # Dùng model nhỏ/nhanh để sửa lỗi chính tả
+            PASS2_MODEL = "llama-3.3-70b-versatile" if is_groq else None  # Llama mạnh nhất cho dịch thuật
         
         # ═══════════════════════════════════════════════════════════
-        # PASS 1: SỬA LỖI WHISPER — Qwen đọc toàn bộ rồi sửa tiếng Trung
+        # NHÁNH 1: OLLAMA LOCAL — CHẾ ĐỘ 1-PASS SIÊU TỐC (Tiết kiệm 50% thời gian)
+        # Tự động chuẩn hóa lỗi nghe sai của Whisper & Dịch thẳng sang Tiếng Việt
+        # ═══════════════════════════════════════════════════════════
+        if is_ollama:
+            if multi_speaker:
+                instruction = (
+                    "NHẬN DIỆN NHÂN VẬT (BẮT BUỘC): Thêm chính xác một trong các nhãn [M], [F], hoặc [N] vào ngay sau dấu |. Tuyệt đối không thêm chữ (Nam) hay (Nữ).\n"
+                    "- [M]: Giọng Nam\n"
+                    "- [F]: Giọng Nữ\n"
+                    "- [N]: Người kể chuyện / Không rõ\n"
+                    "Ví dụ: '1|你好帅哥' → '1|[F] Chào anh đẹp trai nhé.'\n"
+                )
+            else:
+                instruction = (
+                    "Câu văn phải ngắn gọn, súc tích, nhịp điệu nhanh phù hợp giọng đọc AI.\n"
+                    "Không dùng đại từ 'Tôi' trừ khi đó là góc nhìn thứ nhất.\n"
+                )
+
+            translation_prompt = (
+                "你是专业的中越影视短剧与短视频字幕翻译专家。\n"
+                "以下数据是Whisper语音识别自动提取的中文字幕，可能存在同音听错字。\n"
+                "请结合完整上下文语境，自动纠正听错字，并逐行翻译成自然流畅、地道、生动的越南语（Vietnamese）。\n\n"
+                "核心要求：\n"
+                "1. 严格保持 'ID|越南语文本' 格式不变，绝不要增删或合并行。\n"
+                "2. 每一行翻译必须完全使用越南语，绝对禁止输出中文。\n"
+                "3. 根据上下文正确理解人物关系与情绪，使用自然地道的越南语人称代词（anh, em, chị, bạn, tôi...）。\n"
+                "4. 拒绝生硬直译，符合越南人日常口语和短视频节奏。\n"
+                "5. 不要输出任何思考过程或多余解释，直接输出翻译结果。\n\n"
+                f"{instruction}\n\n"
+                f"待翻译数据：\n{payload_text}"
+            )
+
+            logger.info(f"⚡ [Ollama 1-Pass Siêu Tốc] 🌐 {ai_name} đang tự sửa lỗi Whisper & dịch sang tiếng Việt...")
+            try:
+                text = auth_client.generate_ai(
+                    translation_prompt, 
+                    api_key=None, 
+                    model=PASS2_MODEL,
+                    provider="ollama",
+                    ollama_url=ollama_url
+                )
+            except Exception as e:
+                logger.error(f"Lỗi gọi Ollama 1-Pass: {e}")
+                text = None
+
+            if text and text.strip():
+                logger.info(f"  ✅ Dịch xong! ({ai_name})")
+                return text.strip()
+            else:
+                logger.warning(f"{ai_name} trả về rỗng hoặc lỗi kết nối. Trả về None để kích hoạt cứu hộ Google Translate!")
+                return None
+
+        # ═══════════════════════════════════════════════════════════
+        # NHÁNH 2: CLOUD AI (Groq / Gemini) — PIPELINE 2-PASS CHUYÊN SÂU
+        # Pass 1: Llama-8B / Gemini đọc ngữ cảnh sửa lỗi Whisper
+        # Pass 2: Llama-70B / Gemini dịch thuật điện ảnh cao cấp
         # ═══════════════════════════════════════════════════════════
         correction_prompt = (
             "你是中文语音识别纠错专家。\n"
@@ -264,10 +326,15 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
         
         corrected_chinese = payload_text  # fallback mặc định
         try:
-            result = auth_client.generate_ai(correction_prompt, api_key=api_key, model=PASS1_MODEL)
+            result = auth_client.generate_ai(
+                correction_prompt, 
+                api_key=api_key, 
+                model=PASS1_MODEL,
+                provider=None,
+                ollama_url=ollama_url
+            )
             if result and result.strip():
                 corrected_chinese = result.strip()
-                # Log sự khác biệt giữa text gốc và text đã sửa
                 orig_lines = [l.strip() for l in payload_text.strip().split('\n') if '|' in l]
                 fixed_lines = [l.strip() for l in corrected_chinese.split('\n') if '|' in l]
                 fix_count = 0
@@ -284,12 +351,8 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
         except Exception as e1:
             logger.warning(f"Pass 1 ({pass1_model_name}) lỗi: {str(e1)[:80]}. Dùng text gốc cho Pass 2...")
         
-        # Nghỉ 1s giữa 2 pass để tránh burst rate limit
         time.sleep(1)
         
-        # ═══════════════════════════════════════════════════════════
-        # PASS 2: DỊCH TIẾNG TRUNG (ĐÃ SỬA) → TIẾNG VIỆT TỰ NHIÊN
-        # ═══════════════════════════════════════════════════════════
         if multi_speaker:
             instruction = (
                 "NHẬN DIỆN NHÂN VẬT (BẮT BUỘC): Thêm chính xác một trong các nhãn [M], [F], hoặc [N] vào ngay sau dấu |. Tuyệt đối không thêm chữ (Nam) hay (Nữ).\n"
@@ -898,10 +961,16 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
     f"NỘI DUNG CẦN DỊCH:\n{corrected_chinese}"
 )
         
-        logger.info(f"[Pass 2/2] 🌐 Llama đang dịch sang tiếng Việt...")
-        text = auth_client.generate_ai(translation_prompt, api_key=api_key, model=PASS2_MODEL)
+        logger.info(f"[Pass 2/2] 🌐 {ai_name} đang dịch sang tiếng Việt...")
+        text = auth_client.generate_ai(
+            translation_prompt, 
+            api_key=None if is_ollama else api_key, 
+            model=PASS2_MODEL,
+            provider="ollama" if is_ollama else None,
+            ollama_url=ollama_url
+        )
         if text:
-            logger.info(f"  ✅ Dịch xong! (Qwen sửa lỗi + Llama dịch)")
+            logger.info(f"  ✅ Dịch xong! ({ai_name})")
             return text.strip()
         else:
             logger.warning(f"{ai_name} trả về rỗng ở Pass 2, fallback về bản gốc.")
@@ -910,8 +979,9 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
         logger.error(f"Lỗi khi dịch bằng AI: {e}")
         return None
 
-def generate_youtube_metadata_with_gemini(original_title: str, api_keys: list) -> dict:
-    """Sử dụng Gemini (qua SaaS Backend) để tạo Tiêu đề Clickbait và SEO Metadata."""
+def generate_youtube_metadata_with_gemini(original_title: str, api_keys: list = None, provider: str = None, model: str = None, ollama_url: str = None) -> dict:
+    """Sử dụng AI (Ollama Local / Groq / Gemini) để tạo Tiêu đề Clickbait và SEO Metadata."""
+    import os
     import json
     from loguru import logger
     from auth_client import auth_client
@@ -930,8 +1000,18 @@ def generate_youtube_metadata_with_gemini(original_title: str, api_keys: list) -
     )
     
     try:
-        custom_key = api_keys[0] if (api_keys and len(api_keys) > 0) else None
-        text = auth_client.generate_ai(prompt, api_key=custom_key)
+        is_ollama = (provider == "ollama") or (api_keys and api_keys[0] == "ollama") or (os.getenv("AI_PROVIDER") == "ollama")
+        custom_key = api_keys[0] if (api_keys and len(api_keys) > 0 and api_keys[0] != "ollama") else None
+        target_model = model or os.getenv("OLLAMA_MODEL", "qwen2.5")
+        ai_name = f"Ollama ({target_model})" if is_ollama else ("Groq" if custom_key and str(custom_key).startswith("gsk_") else "Gemini")
+
+        text = auth_client.generate_ai(
+            prompt, 
+            api_key=custom_key if not is_ollama else None,
+            model=target_model if is_ollama else None,
+            provider="ollama" if is_ollama else None,
+            ollama_url=ollama_url
+        )
         if text.startswith("```json"):
             text = text[7:]
         elif text.startswith("```"):
@@ -941,18 +1021,19 @@ def generate_youtube_metadata_with_gemini(original_title: str, api_keys: list) -
             
         data = json.loads(text.strip())
         if "title" in data and "description" in data and "tags" in data:
-            logger.info("✅ Đã tạo YouTube SEO Metadata bằng Gemini thành công!")
+            logger.info(f"✅ Đã tạo YouTube SEO Metadata bằng {ai_name} thành công!")
             return data
     except Exception as e:
-        logger.warning(f"Lỗi tạo YT Metadata qua Backend Proxy: {e}")
+        logger.warning(f"Lỗi tạo YT Metadata: {e}")
         
     return None
 
-def summarize_review_with_gemini(full_transcript: str, api_keys: list = None) -> str:
+def summarize_review_with_gemini(full_transcript: str, api_keys: list = None, provider: str = None, model: str = None, ollama_url: str = None) -> str:
     """
     Tóm tắt toàn bộ transcript thành một kịch bản Review Phim lôi cuốn.
-    Sử dụng Gemini thông qua Backend Proxy.
+    Sử dụng Ollama Local / Groq / Gemini.
     """
+    import os
     from auth_client import auth_client
     from loguru import logger
     
@@ -968,10 +1049,19 @@ def summarize_review_with_gemini(full_transcript: str, api_keys: list = None) ->
     )
     
     try:
-        custom_key = api_keys[0] if (api_keys and len(api_keys) > 0) else None
-        ai_name = "Groq" if custom_key and custom_key.startswith("gsk_") else "Gemini"
+        is_ollama = (provider == "ollama") or (api_keys and api_keys[0] == "ollama") or (os.getenv("AI_PROVIDER") == "ollama")
+        custom_key = api_keys[0] if (api_keys and len(api_keys) > 0 and api_keys[0] != "ollama") else None
+        target_model = model or os.getenv("OLLAMA_MODEL", "qwen2.5")
+        ai_name = f"Ollama ({target_model})" if is_ollama else ("Groq" if custom_key and str(custom_key).startswith("gsk_") else "Gemini")
+        
         logger.info(f"Đang gửi toàn bộ Transcript cho {ai_name} để viết kịch bản Review Phim...")
-        text = auth_client.generate_ai(prompt, api_key=custom_key)
+        text = auth_client.generate_ai(
+            prompt, 
+            api_key=custom_key if not is_ollama else None,
+            model=target_model if is_ollama else None,
+            provider="ollama" if is_ollama else None,
+            ollama_url=ollama_url
+        )
         if text:
             logger.info(f"{ai_name} đã viết xong kịch bản Review Phim!")
             return text.strip()
@@ -981,4 +1071,5 @@ def summarize_review_with_gemini(full_transcript: str, api_keys: list = None) ->
     except Exception as e:
         logger.error(f"Lỗi khi viết kịch bản bằng AI: {e}")
         return ""
+
 

@@ -25,9 +25,8 @@ from typing import Optional
 
 from loguru import logger
 
-# --- Sửa lỗi sập App (WinError 10054) trên Windows do ProactorEventLoop ---
-if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+# Lưu ý: Trên Windows, Playwright bắt buộc dùng ProactorEventLoopPolicy để chạy subprocess.
+# Tuyệt đối không gán WindowsSelectorEventLoopPolicy toàn cục vì sẽ gây NotImplementedError ở Playwright.
 
 # Note: subprocess.Popen đã được patch toàn cục trong gui.py (entry point)
 # để ẩn mọi cửa sổ console đen trên Windows.
@@ -209,7 +208,11 @@ async def _fetch_single_chunk(
 ) -> bool:
     if voice.startswith("vbee-"):
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, _fetch_vbee_chunk_sync, text, voice, out_file)
+        ok = await loop.run_in_executor(None, _fetch_vbee_chunk_sync, text, voice, out_file)
+        if ok and os.path.exists(out_file) and os.path.getsize(out_file) > 0:
+            return True
+        # Fallback sang Edge-TTS nếu Vbee chưa cấu hình API Key hoặc lỗi
+        voice = "vi-VN-NamMinhNeural" if ("male" in voice or "minhhoang" in voice) else "vi-VN-HoaiMyNeural"
 
     """
     Tải 1 chunk text về file .mp3 với retry + exponential backoff.
@@ -248,10 +251,16 @@ async def _fetch_single_chunk(
 
             except Exception as exc:
                 err = str(exc)
-                wait = min(2 ** attempt + random.uniform(0, 1), 10.0)
                 if "No audio was received" in err:
-                    # Rate-limit hoặc text có vấn đề – nghỉ lâu hơn
-                    wait = max(wait, random.uniform(3.0, 6.0))
+                    # Lỗi tham số/text không tương thích với voice (ví dụ text chứa ký tự lạ)
+                    # Chỉ thử lại tối đa 2 lần (attempt 0 và 1) để tránh treo kẹt vô ích hàng chục phút
+                    if attempt >= 1:
+                        logger.warning(f"TTS {label} bỏ qua sau 2 lần lỗi 'No audio was received' ({text[:40]})")
+                        return False
+                    wait = 2.0
+                else:
+                    wait = min(2 ** attempt + random.uniform(0, 1), 10.0)
+
                 if attempt == _MAX_RETRIES - 1:
                     logger.warning(f"TTS {label} failed ({text[:40]}): {err}")
                 else:
@@ -381,6 +390,18 @@ async def _async_generate_voiceover(
         segment_duration_ms = end_ms - start_ms
         if segment_duration_ms <= 0:
             continue
+
+        # LỚP PHÒNG THỦ AN TOÀN TUYỆT ĐỐI:
+        # Nếu câu phụ đề này vẫn còn sót ký tự chữ Hán (tiếng Trung chưa dịch):
+        if re.search(r'[\u4e00-\u9fff]', raw_text):
+            try:
+                from utils.translator import translate_text
+                vi_trans = translate_text(raw_text, src="zh-CN", dest="vi")
+                if vi_trans and not re.search(r'[\u4e00-\u9fff]', vi_trans):
+                    logger.info(f"TTS Engine phát hiện chữ Hán ({raw_text[:25]}), tự động dịch sang tiếng Việt: '{vi_trans[:25]}'")
+                    raw_text = vi_trans
+            except Exception as e:
+                logger.warning(f"Không thể dịch chữ Hán tại TTS Engine: {e}")
 
         clean = _clean_text(raw_text)
         if not clean:

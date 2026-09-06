@@ -160,13 +160,19 @@ class SubtitleGenerator:
                 if progress_cb: progress_cb(10, "Cảnh báo: Video không có giọng nói hoặc AI không nghe rõ.")
                 return None
                 
+            ai_provider = PROCESSOR_CONFIG.get("ai_provider", "ollama")
+            ollama_url = PROCESSOR_CONFIG.get("ollama_url", "http://localhost:11434")
+            ollama_model = PROCESSOR_CONFIG.get("ollama_model", "qwen2.5")
+
             gemini_keys = PROCESSOR_CONFIG.get("gemini_api_keys", [])
             # Fallback tương thích ngược với file config cũ
             if not gemini_keys and PROCESSOR_CONFIG.get("gemini_api_key"):
                 gemini_keys = [PROCESSOR_CONFIG.get("gemini_api_key")]
                 
-            # Senior fix: Nếu người dùng không nhập key cá nhân, tự động mượn sức mạnh AI từ Server (SaaS)
-            if not gemini_keys or len(gemini_keys) == 0:
+            # Nếu dùng Ollama hoặc không có key riêng thì vẫn chạy được
+            if ai_provider == "ollama":
+                gemini_keys = ["ollama"]
+            elif not gemini_keys or len(gemini_keys) == 0:
                 gemini_keys = [None]
                 
             use_google_fallback = True
@@ -178,7 +184,13 @@ class SubtitleGenerator:
                     logger.info("Chế độ Tóm tắt Review Phim: Gom toàn bộ text...")
                     from utils.translator import summarize_review_with_gemini
                     full_text = " ".join([d["original_text"] for d in segment_data])
-                    review_script = summarize_review_with_gemini(full_text, api_keys=gemini_keys)
+                    review_script = summarize_review_with_gemini(
+                        full_text, 
+                        api_keys=gemini_keys,
+                        provider=ai_provider,
+                        model=ollama_model,
+                        ollama_url=ollama_url
+                    )
                     
                     if review_script:
                         end_time = segment_data[-1]["end_time"]
@@ -200,11 +212,16 @@ class SubtitleGenerator:
                     else:
                         logger.warning("Lỗi khi viết kịch bản Review, chuyển về dịch nguyên bản...")
                         
-                # ─── Cách 1: Dịch ngữ cảnh bằng AI LLM (Smart Round-Robin Key Rotation) ───
-                ai_name = "Groq" if gemini_keys and gemini_keys[0] and gemini_keys[0].startswith("gsk_") else "Gemini"
-                logger.info(f"Đã tìm thấy {len(gemini_keys)} {ai_name} API Keys. Đang gửi dữ liệu text cho AI dịch ngữ cảnh...")
+                # ─── Cách 1: Dịch ngữ cảnh bằng AI LLM (Ollama Local / Groq / Gemini) ───
+                if ai_provider == "ollama":
+                    ai_name = f"Ollama ({ollama_model})"
+                    logger.info(f"🦙 Đang sử dụng {ai_name} (Local Offline) để xử lý phụ đề...")
+                else:
+                    ai_name = "Groq" if gemini_keys and gemini_keys[0] and str(gemini_keys[0]).startswith("gsk_") else "Gemini"
+                    logger.info(f"Đã tìm thấy {len(gemini_keys)} {ai_name} API Keys. Đang gửi dữ liệu text cho AI dịch ngữ cảnh...")
                 
-                CHUNK_SIZE = 100
+                # Chunk size cho Ollama trên CPU tối ưu ở mức 25 câu để tránh nghẽn context và timeout
+                CHUNK_SIZE = 25 if ai_provider == "ollama" else 100
                 payload_lines = []
                 for idx, data in enumerate(segment_data):
                     payload_lines.append(f"{idx}|{data['original_text']}")
@@ -228,13 +245,16 @@ class SubtitleGenerator:
                         if not gemini_key:
                             break
                         
-                        key_label = f"...{gemini_key[-6:]}" if gemini_key else "Server"
-                        logger.info(f"Đang gửi lô {i//CHUNK_SIZE + 1}/{total_chunks} cho {ai_name} (Key {key_label})...")
+                        key_label = "Ollama Local" if gemini_key == "ollama" else (f"...{gemini_key[-6:]}" if gemini_key else "Server")
+                        logger.info(f"Đang gửi lô {i//CHUNK_SIZE + 1}/{total_chunks} cho {ai_name} ({key_label})...")
                         
                         chunk_result = translate_srt_with_gemini(
                             chunk_text, 
                             gemini_key,
-                            multi_speaker=multi_speaker_mode
+                            multi_speaker=multi_speaker_mode,
+                            provider=ai_provider,
+                            model=ollama_model,
+                            ollama_url=ollama_url
                         )
                         
                         if chunk_result:
@@ -243,14 +263,30 @@ class SubtitleGenerator:
                             chunk_success = True
                             break
                         else:
-                            # Đánh dấu key bị lỗi với cooldown
-                            _key_manager.mark_rate_limited(gemini_key)
-                            logger.warning(f"Key {key_label} bị lỗi! KeyManager tự động chọn key khác...")
+                            if gemini_key == "ollama":
+                                if attempt < max_attempts - 1:
+                                    logger.warning(f"⚠️ Ollama Local không phản hồi ở lần thử {attempt+1}/{max_attempts}. Đang thử lại sau 2s...")
+                                    time.sleep(2)
+                                else:
+                                    logger.warning(f"❌ Ollama Local đã thử {max_attempts} lần không thành công. Sẽ chuyển sang Google Translate cứu hộ.")
+                            else:
+                                # Đánh dấu key Cloud bị lỗi với cooldown
+                                _key_manager.mark_rate_limited(gemini_key)
+                                logger.warning(f"Key {key_label} bị lỗi! KeyManager tự động chọn key khác...")
                             
                     if not chunk_success:
-                        logger.warning(f"Tất cả {len(gemini_keys)} API Keys đều đã hết lượt hoặc lỗi! Chuyển sang Google Translate!")
-                        gemini_success = False
-                        break
+                        logger.warning(f"Lô {i//CHUNK_SIZE + 1}/{total_chunks} gọi AI không phản hồi. Tự động dịch bổ cứu lô này bằng Google Translate...")
+                        from utils.translator import translate_text
+                        chunk_rescue_lines = []
+                        for line in chunk:
+                            if "|" in line:
+                                idx_part, raw_zh = line.split("|", 1)
+                                vi_text = translate_text(raw_zh.strip(), src="zh-CN", dest="vi")
+                                chunk_rescue_lines.append(f"{idx_part.strip()}|{vi_text}")
+                            else:
+                                chunk_rescue_lines.append(line)
+                        translated_text += "\n".join(chunk_rescue_lines) + "\n"
+                        chunk_success = True
                         
                     # Nghỉ 1s giữa các chunk thành công
                     time.sleep(1)
@@ -269,8 +305,29 @@ class SubtitleGenerator:
                     srt_content_clean = []
                     segment_idx = 1
                     import re
+                    from utils.translator import translate_text
+
+                    # CỨU HỘ SIÊU TỐC BẰNG BATCH GOOGLE TRANSLATE
+                    # Tìm tất cả câu AI bị sót hoặc còn chứa chữ Hán:
+                    missing_indices = []
+                    missing_texts = []
+                    for idx, data in enumerate(segment_data):
+                        t_text = trans_dict.get(idx)
+                        is_chinese = bool(t_text and re.search(r'[\u4e00-\u9fff]', t_text))
+                        if not t_text or is_chinese:
+                            missing_indices.append(idx)
+                            missing_texts.append(data['original_text'])
+
+                    if missing_texts:
+                        from utils.translator import translate_lines_batch
+                        logger.info(f"⚡ Đang tự động cứu hộ {len(missing_texts)} câu phụ đề bằng Google Translate (Batch siêu tốc)...")
+                        rescued_batch = translate_lines_batch(missing_texts, src="zh-CN", dest="vi")
+                        for idx, rescued_vi in zip(missing_indices, rescued_batch):
+                            trans_dict[idx] = rescued_vi
+
                     for idx, data in enumerate(segment_data):
                         t_text = trans_dict.get(idx, data['original_text'])
+                        t_text = t_text.strip().strip('|').strip()
                         
                         # LOG: Hiển thị text gốc và text dịch để User kiểm tra chất lượng
                         logger.info(f"[Dịch Sub {idx+1}] {data['original_text']} ➔ {t_text}")
@@ -282,8 +339,8 @@ class SubtitleGenerator:
                                 logger.warning(f"Đã bỏ qua câu AI ảo giác: {t_text[:30]}...")
                                 continue
                                 
-                        # Xóa tags [M], [F], [N] để tạo bản clean cho Subtitle hiển thị trên Video
-                        clean_text = re.sub(r'\[[MFNmf]\]', '', t_text).strip()
+                        # Xóa tags [M], [F], [N] và ký tự phân cách | để tạo bản clean cho Subtitle hiển thị trên Video
+                        clean_text = re.sub(r'\[[MFNmf]\]', '', t_text).strip().strip('|').strip()
                         
                         time_line = f"{data['start_time']} --> {data['end_time']}"
                         

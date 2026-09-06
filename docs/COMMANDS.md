@@ -96,3 +96,7 @@ Nếu bạn không chạy Docker mà chạy trực tiếp code Python trên máy
    python main.py crawl --urls "link"
    python main.py auto --once
    ```
+3. Kiểm tra & Đo tốc độ Dịch AI (Ollama Local 1-Pass):
+   ```bash
+   python test_ai_ollama.py
+   ```

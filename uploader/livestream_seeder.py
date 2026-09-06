@@ -178,6 +178,14 @@ class LivestreamSeeder:
         from pathlib import Path
         import hashlib
 
+        import sys
+        if sys.platform == 'win32':
+            try:
+                if not isinstance(asyncio.get_event_loop_policy(), asyncio.WindowsProactorEventLoopPolicy):
+                    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            except Exception:
+                pass
+
         try:
             from playwright.async_api import async_playwright
         except ImportError:

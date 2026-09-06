@@ -6,6 +6,8 @@ Tool tự động crawl video từ **Douyin** (TikTok Trung Quốc) → xử lý
 > - 📘 [Hướng dẫn cấu hình & thêm Facebook Reels](docs/HUONG_DAN_CAU_HINH_FACEBOOK_REELS.md)
 > - 📖 [Hướng dẫn lệnh & vận hành hệ thống VPS](docs/COMMANDS.md)
 > - 📌 [Ghi chú đồng bộ VPS & Chống trùng lặp](docs/NOTE_QUAN_TRONG.md)
+> - 🛠️ [Tổng hợp lỗi hóc búa & Cách giải quyết (Known Bugs & Fixes)](docs/KNOWN_BUGS_AND_FIXES.md)
+> - 🏛️ [Kiến trúc hệ thống & Luồng hoạt động (Project Architecture)](docs/PROJECT_ARCHITECTURE.md)
 
 ---
 
@@ -89,6 +91,8 @@ passport_csrf_token=xxxxxxxx
 ]
 ```
 
+> 💡 **Cơ chế tự phục hồi cookie Douyin**: Douyin yêu cầu cookie thiết bị `s_v_web_id`. Nếu bạn copy thiếu token này, hệ thống sẽ **tự động sinh mã hợp lệ** và bổ sung vào file cookie của bạn, chống lỗi `Fresh cookies needed`.
+
 ### Cookies TikTok (để upload video)
 
 1. Mở Chrome, vào [tiktok.com](https://www.tiktok.com) và đăng nhập
@@ -102,6 +106,45 @@ copy(JSON.stringify(document.cookie.split("; ").map(c => {
 ```
 
 3. Paste kết quả vào file `config/cookies/tiktok_cookies.json`
+
+---
+
+## 🤖 Cấu hình AI Phụ Đề & Lồng Tiếng (AI Subtitles & Voiceover)
+
+Hệ thống tích hợp quy trình nhận diện tiếng nói (Whisper), dịch phụ đề Vietsub bằng AI, và lồng tiếng tự động (TTS):
+
+### 1. Dịch Phụ Đề AI (AI Provider)
+
+Bạn có thể cấu hình trong file `.env` hoặc trực tiếp trên giao diện GUI:
+
+- **Cloud AI (Khuyến nghị nếu có mạng mạnh/API Key)**:
+  - **Groq**: Dùng model `llama-3.3-70b-versatile` - tốc độ dịch siêu nhanh (1-2s), chất lượng ngữ nghĩa mượt mà.
+  - **Gemini**: Dùng model `gemini-1.5-flash` - dịch chuẩn xác và tự nhiên.
+- **Local Offline AI (Ollama - Chạy trên máy cá nhân không tốn phí)**:
+  - Cấu hình trong `.env`:
+    ```ini
+    AI_PROVIDER='ollama'
+    OLLAMA_URL='http://localhost:11434'
+    OLLAMA_MODEL='qwen2.5:latest'
+    ```
+  - **Chế độ 1-Pass Siêu Tốc**: Được tối ưu hóa chuyên sâu cho CPU (giảm prompt từ 600 dòng xuống 20 dòng tiếng Trung, cấm `<think>`, context 2048, 8 luồng CPU, gộp sửa Whisper và dịch trong 1 lần gọi). Giúp cắt giảm 50% thời gian xử lý và chống lỗi timeout 180s.
+  - **Kiểm tra nhanh kết nối Ollama**:
+    ```bash
+    python test_ai_ollama.py
+    ```
+
+### 2. Giọng Đọc Thuyết Minh (AI Voiceover TTS)
+
+Hệ thống hỗ trợ 2 nguồn giọng đọc thông minh:
+
+- **Microsoft Edge TTS (Mặc định - Khuyến nghị)**:
+  - **Miễn phí 100%**, không giới hạn ký tự, không cần API Key.
+  - Hỗ trợ giọng tự nhiên: `vi-VN-NamMinhNeural` (Nam), `vi-VN-HoaiMyNeural` (Nữ).
+  - Hỗ trợ chế độ **Đa giọng (Đoản kịch)**: Tự động phân tích hội thoại nam/nữ để đổi giọng khớp với từng nhân vật trong video.
+- **Vbee TTS**:
+  - Dành cho các giọng đọc độc quyền như `Vbee - Ngọc Huyền`, `Vbee - Đa giọng`.
+  - Cần cấu hình `VBEE_API_KEY` trong `.env`.
+  - 🛡️ **Cơ chế Auto-Fallback Thông Minh**: Nếu bạn chọn Vbee nhưng quên cấu hình API Key hoặc tài khoản Vbee hết quota/lỗi mạng, hệ thống sẽ **tự động chuyển sang Microsoft Edge TTS tương ứng** để đọc thuyết minh, đảm bảo 100% video xuất ra luôn có giọng lồng tiếng, không bao giờ bị câm.
 
 ---
 
@@ -245,9 +288,11 @@ Chỉnh sửa file `config/settings.py`:
 | Lỗi | Nguyên nhân | Giải pháp |
 |-----|-------------|-----------|
 | `Cookies file not found` | Chưa cấu hình cookies | Xem phần "Cấu hình Cookies" |
-| `Video download failed` | Cookies hết hạn hoặc bị block | Cập nhật cookies Douyin |
+| `Video download failed` / `Fresh cookies needed` | Cookies Douyin thiếu token thiết bị `s_v_web_id` | Tool đã tích hợp tự động sinh mã, hoặc cập nhật lại cookies từ trình duyệt |
 | `Not logged in` | Cookies TikTok hết hạn | Export lại cookies TikTok |
 | `Cannot find file input` | TikTok thay đổi UI | Update selectors trong `tiktok_uploader.py` |
+| `Read timed out (180s)` khi dịch AI | Ollama Local bị nghẽn thinking hoặc prompt quá dài | Đã chuyển sang chế độ 1-Pass Siêu Tốc, cấm `<think>`, context 2048, 8 CPU threads |
+| `Không tạo được segment TTS nào` | Chọn Vbee TTS nhưng chưa có API Key | Hệ thống tự động fallback sang Edge TTS; kiểm tra lại `VBEE_API_KEY` nếu muốn dùng Vbee |
 | `moviepy error` | Thiếu FFmpeg | Cài FFmpeg và thêm vào PATH |
 | `Playwright error` | Chưa cài browser | Chạy `playwright install chromium` |
 

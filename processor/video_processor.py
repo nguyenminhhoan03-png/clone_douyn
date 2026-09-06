@@ -8,6 +8,7 @@ Chức năng chính:
   - Apply filter nhẹ (brightness, contrast)
 Mục đích: Biến đổi video đủ để TikTok không detect trùng lặp.
 """
+from ast import Tuple
 import os
 import random
 import subprocess
@@ -89,14 +90,54 @@ class VideoProcessor:
         except:
             return -1.0
 
-    def _get_video_height(self, input_path: str) -> int:
-        cmd = [FFPROBE_BIN, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height", "-of", "default=noprint_wrappers=1:nokey=1", input_path]
+    def _get_video_dimensions(self, input_path: str) -> Tuple[int, int]:
+        cmd = [FFPROBE_BIN, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", input_path]
         try:
             creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
-            return int(result.stdout.strip())
+            parts = result.stdout.strip().split("x")
+            return int(parts[0]), int(parts[1])
         except:
-            return 1920 # Fallback 1080p portrait (1080x1920)
+            return 1080, 1920 # Fallback 1080p portrait (1080x1920)
+
+    def _get_video_height(self, input_path: str) -> int:
+        _, h = self._get_video_dimensions(input_path)
+        return h
+
+    def _compute_blur_coordinates(self, input_path: str):
+        """Tính toán tọa độ và độ cao dải mờ phụ đề độc lập (Smart Subtitle Blur)."""
+        blur_enabled = bool(self.config.get("blur_enabled", True))
+        if not blur_enabled:
+            return False, 0.0, 0.0
+
+        blur_pos_cfg = str(self.config.get("blur_position", "auto")).lower()
+        custom_h = self.config.get("blur_height", None)
+
+        if any(k in blur_pos_cfg for k in ("auto", "tự động")):
+            try:
+                from utils.subtitle_detector import detect_subtitle_y_range
+                y_start, h = detect_subtitle_y_range(str(input_path))
+                if custom_h is not None and isinstance(custom_h, (int, float)) and custom_h > 0:
+                    h = float(custom_h)
+                return True, y_start, h
+            except Exception as e:
+                logger.warning(f"Lỗi detect subtitle y range: {e}, fallback chuẩn Douyin 8.5%")
+                return True, 0.725, 0.085
+        elif any(k in blur_pos_cfg for k in ("douyin", "20%")):
+            h = float(custom_h) if (custom_h and custom_h > 0) else 0.085
+            y_start = max(0.0, 1.0 - 0.20 - h / 2.0)
+            return True, y_start, h
+        elif any(k in blur_pos_cfg for k in ("cao", "tiktok")):
+            h = float(custom_h) if (custom_h and custom_h > 0) else 0.085
+            y_start = max(0.0, 1.0 - 0.35 - h / 2.0)
+            return True, y_start, h
+        elif any(k in blur_pos_cfg for k in ("trên cùng", "top")):
+            h = float(custom_h) if (custom_h and custom_h > 0) else 0.085
+            return True, 0.0, h
+        else: # Dưới cùng (Đáy video)
+            h = float(custom_h) if (custom_h and custom_h > 0) else 0.15
+            y_start = max(0.0, 1.0 - h)
+            return True, y_start, h
 
     def process_video(self, input_path: str, title: str = None,
                       output_path: str = None, progress_cb: Optional[Callable] = None) -> Optional[str]:
@@ -163,9 +204,14 @@ class VideoProcessor:
         
         # -------------------------------------------------------------------------------
             
-        # 5. Phụ đề (Auto Subtitle + Black bar)
+        # 5. Phụ đề & Làm mờ phụ đề gốc
         has_subtitles = False
         srt_path = None
+        
+        # ─── 5.1. Tính toán vùng làm mờ thông minh (Smart Subtitle Blur) ĐỘC LẬP ───
+        blur_enabled, blur_y_start, blur_h = self._compute_blur_coordinates(str(input_path))
+        self._current_blur_params = (blur_enabled, blur_y_start, blur_h)
+
         if self.config.get("auto_subtitle") and self.subtitle_generator:
             if progress_cb:
                 progress_cb(10, "Đang dịch AI...")
@@ -192,33 +238,46 @@ class VideoProcessor:
                     clean_srt_str = clean_srt_str.replace(char, f"\\{char}")
                     
                 srt_path_unix = clean_srt_str
-                
-                # Lấy cấu hình vùng mờ để tính tọa độ
-                blur_height = self.config.get("blur_height", 0.15)
-                blur_pos = self.config.get("blur_position", "bottom")
-                video_height = self._get_video_height(str(input_path))
+                video_width, video_height = self._get_video_dimensions(str(input_path))
 
-                # Xử lý Vị trí Subtitle (Tuỳ chỉnh theo UI)
+                # Font size tương thích chuẩn theo độ phân giải video (33px trên 720p, 50px trên 1080p)
+                font_size = max(24, int(video_height * 0.026))
+
+                # Xử lý Vị trí Subtitle (Tuỳ chỉnh theo UI & Vùng mờ)
                 sub_pos_opt = self.config.get("sub_pos", "Đè lên vùng mờ")
                 if "Đè lên vùng mờ" in sub_pos_opt:
-                    # Tính khoảng cách MarginV để chữ nằm vào giữa vùng làm mờ
-                    margin_v = int((blur_height * video_height) / 2)
-                    if blur_pos == "bottom":
-                        alignment = 2 # Néo vào đáy
+                    if blur_enabled and blur_h > 0:
+                        center_y_ratio = blur_y_start + (blur_h / 2.0)
+                        if center_y_ratio < 0.25:
+                            alignment = 8 # Đỉnh video
+                            margin_v = int(video_height * center_y_ratio - (font_size / 2.0))
+                        else:
+                            alignment = 2 # Đáy video
+                            margin_v = int(video_height * (1.0 - center_y_ratio) - (font_size / 2.0))
                     else:
-                        alignment = 8 # Néo vào đỉnh
+                        margin_v = int(video_height * 0.18) # Vị trí chuẩn cách đáy 18%
+                        alignment = 2
                 elif "Cao" in sub_pos_opt:
-                    margin_v = 280  # Đẩy lên cao tránh UI TikTok
+                    margin_v = int(video_height * 0.35)  # Đẩy lên cao tránh UI TikTok
+                    alignment = 2
+                elif "Dưới cùng" in sub_pos_opt:
+                    margin_v = int(video_height * 0.12)
                     alignment = 2
                 else: # Giữa màn hình
                     margin_v = 0
                     alignment = 5 # Center screen
 
-                # Style đoản kịch chuyên nghiệp (Trắng tinh tế, viền mỏng, đổ bóng nhẹ)
-                style = f"FontName=Arial,FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Alignment={alignment},MarginV={margin_v},Bold=1,BorderStyle=1,Outline=1.2,Shadow=0.5"
+                # Style đoản kịch chuyên nghiệp với PlayResX/PlayResY chuẩn xác 100% tọa độ video
+                style = (
+                    f"PlayResX={video_width},PlayResY={video_height},"
+                    f"FontName=Arial,FontSize={font_size},"
+                    f"PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+                    f"Alignment={alignment},MarginV={margin_v},"
+                    f"Bold=1,BorderStyle=1,Outline=2.2,Shadow=1.0"
+                )
                 filters.append(f"subtitles={srt_path_unix}:force_style='{style}'")
                 has_subtitles = True
-                logger.debug("  ✓ Subtitles applied")
+                logger.debug(f"  ✓ Subtitles applied (Alignment={alignment}, MarginV={margin_v}, FontSize={font_size})")
             else:
                 if progress_cb: progress_cb(10, "Lỗi: Không thể tạo Phụ đề (Bỏ qua Sub & Voice)")
                 logger.warning("Subtitle generation failed or returned None, skipping subtitles.")
@@ -312,23 +371,20 @@ class VideoProcessor:
         filter_complex = ""
         last_vid_pad = "0:v"
         
-        blur_enabled = self.config.get("blur_enabled", True)
+        # Lấy thông số làm mờ đã tính (hoặc tính mới nếu không bật sub)
+        blur_params = getattr(self, "_current_blur_params", None)
+        if blur_params:
+            blur_enabled, blur_y_start, blur_h = blur_params
+        else:
+            blur_enabled, blur_y_start, blur_h = self._compute_blur_coordinates(str(input_path))
+
         if blur_enabled:
-            blur_height = self.config.get("blur_height", 0.15)
-            blur_pos = self.config.get("blur_position", "bottom")
-            
             filter_complex += f"[{last_vid_pad}]split=2[vmain][vtmp];"
-            if blur_pos == "bottom":
-                # Crop phần dưới cùng
-                crop_y = f"ih*{1.0 - blur_height}"
-                filter_complex += f"[vtmp]crop=iw:ih*{blur_height}:0:{crop_y},gblur=sigma=15[vblur];"
-                filter_complex += f"[vmain][vblur]overlay=0:H*{1.0 - blur_height}[vwithblur];"
-            else:
-                # Crop phần trên cùng
-                filter_complex += f"[vtmp]crop=iw:ih*{blur_height}:0:0,gblur=sigma=15[vblur];"
-                filter_complex += f"[vmain][vblur]overlay=0:0[vwithblur];"
-                
+            # Crop dải mờ vừa khít chữ theo tọa độ chính xác và làm mờ gblur
+            filter_complex += f"[vtmp]crop=iw:ih*{blur_h:.4f}:0:ih*{blur_y_start:.4f},gblur=sigma=18[vblur];"
+            filter_complex += f"[vmain][vblur]overlay=0:H*{blur_y_start:.4f}[vwithblur];"
             last_vid_pad = "vwithblur"
+            logger.debug(f"  ✓ Smart Subtitle Blur áp dụng: Y={blur_y_start*100:.1f}%, H={blur_h*100:.1f}%")
 
         if filters:
             filter_complex += f"[{last_vid_pad}]{','.join(filters)}[vout_main];"
@@ -405,8 +461,10 @@ class VideoProcessor:
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
             
             time_pattern = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
+            stderr_lines = []
             
             for line in process.stderr:
+                stderr_lines.append(line)
                 match = time_pattern.search(line)
                 if match and progress_cb:
                     h, m, s = match.groups()
@@ -420,7 +478,8 @@ class VideoProcessor:
                         
             process.wait()
             if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, cmd, stderr=process.stderr.read() if not process.stderr.closed else "")
+                err_text = "".join(stderr_lines)
+                raise subprocess.CalledProcessError(process.returncode, cmd, stderr=err_text)
                 
             if not output_path.exists():
                 raise Exception(f"FFmpeg chạy xong nhưng không tạo được file ở {output_path.name}")

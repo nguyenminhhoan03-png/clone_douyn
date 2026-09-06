@@ -85,6 +85,15 @@ class DatabaseManager:
                 )
             """)
 
+            # Bảng lưu tên bí danh (alias) cho tác giả/kênh Douyin
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS author_aliases (
+                    original_author TEXT PRIMARY KEY,
+                    alias TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             conn.commit()
 
             # Migration: thêm cột title_vi nếu chưa có
@@ -145,6 +154,17 @@ class DatabaseManager:
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
+
+            # Kiểm tra xem tác giả có tên bí danh (alias) không
+            if author:
+                try:
+                    cursor.execute("SELECT alias FROM author_aliases WHERE original_author = ?", (author,))
+                    row_alias = cursor.fetchone()
+                    if row_alias and row_alias["alias"]:
+                        author = row_alias["alias"]
+                except Exception:
+                    pass
+
             cursor.execute("""
                 INSERT OR IGNORE INTO crawled_videos 
                 (video_id, source_url, title, author, music_title, tags, download_path, duration, username, drive_download_id)
@@ -228,6 +248,46 @@ class DatabaseManager:
             )
             conn.commit()
             logger.info(f"Đã lưu custom caption cho video {video_id}")
+        finally:
+            conn.close()
+
+    def rename_author(self, old_author: str, new_author: str, username: str = None) -> int:
+        """Đổi tên author/kênh hàng loạt cho các video trong database."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            # Cập nhật bảng alias để lưu lại ánh xạ
+            try:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS author_aliases (
+                        original_author TEXT PRIMARY KEY,
+                        alias TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cursor.execute("""
+                    INSERT INTO author_aliases (original_author, alias, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(original_author) DO UPDATE SET alias = excluded.alias, updated_at = CURRENT_TIMESTAMP
+                """, (old_author, new_author))
+            except Exception as e:
+                logger.warning(f"Error updating author_aliases: {e}")
+
+            # Cập nhật tất cả video có author cũ
+            if username:
+                cursor.execute(
+                    "UPDATE crawled_videos SET author = ? WHERE author = ? AND (username = ? OR username IS NULL)",
+                    (new_author, old_author, username)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE crawled_videos SET author = ? WHERE author = ?",
+                    (new_author, old_author)
+                )
+            affected = cursor.rowcount
+            conn.commit()
+            logger.info(f"Đã đổi tên kênh từ '{old_author}' thành '{new_author}' ({affected} video được cập nhật).")
+            return affected
         finally:
             conn.close()
 

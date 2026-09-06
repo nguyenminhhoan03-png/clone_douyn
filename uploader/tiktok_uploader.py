@@ -72,6 +72,14 @@ class TikTokUploader:
 
     async def _init_browser(self):
         """Khởi tạo Playwright browser với cookies, proxy, và random fingerprint."""
+        import sys
+        if sys.platform == 'win32':
+            try:
+                if not isinstance(asyncio.get_event_loop_policy(), asyncio.WindowsProactorEventLoopPolicy):
+                    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            except Exception:
+                pass
+
         try:
             from playwright.async_api import async_playwright
         except ImportError:

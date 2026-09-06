@@ -87,18 +87,13 @@ class DouyinCrawler:
 
     def _build_ydl_opts(self, skip_download=True, outtmpl=None, progress_hook=None) -> dict:
         """
-        Build yt-dlp options chung — tự động lấy cookies từ Chrome/Edge.
+        Build yt-dlp options chung — tự động lấy cookies từ file hoặc browser.
         """
         opts = {
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
             "skip_download": skip_download,
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                              "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                "Referer": "https://www.douyin.com/",
-            },
         }
 
         if not skip_download and outtmpl:
@@ -115,8 +110,20 @@ class DouyinCrawler:
         cookies_path = Path(str(cookies_file)) if cookies_file else None
         if cookies_path and cookies_path.exists():
             try:
-                first_line = cookies_path.read_text(encoding="utf-8", errors="ignore").split("\n")[0]
-                if "Netscape" in first_line or "\t" in first_line or len(cookies_path.read_text(encoding="utf-8", errors="ignore")) > 10:
+                content = cookies_path.read_text(encoding="utf-8", errors="ignore")
+                # Douyin yêu cầu bắt buộc có cookie thiết bị s_v_web_id để không bị lỗi 'Fresh cookies needed'
+                if "s_v_web_id" not in content and len(content) > 10:
+                    import random, time
+                    chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                    t = hex(int(time.time() * 1000))[2:]
+                    rand = "".join(random.choices(chars, k=32))
+                    s_v_web_id = f"verify_{t}_{rand}"
+                    line = f"\n.douyin.com\tTRUE\t/\tTRUE\t1819677709\ts_v_web_id\t{s_v_web_id}\n"
+                    cookies_path.write_text(content.rstrip() + line, encoding="utf-8")
+                    content = cookies_path.read_text(encoding="utf-8", errors="ignore")
+
+                first_line = content.split("\n")[0]
+                if "Netscape" in first_line or "\t" in first_line or len(content) > 10:
                     opts["cookiefile"] = str(cookies_path)
                     logger.debug(f"Using cookies file: {cookies_path}")
             except Exception as e:
@@ -147,13 +154,13 @@ class DouyinCrawler:
             logger.error("yt-dlp chưa được cài! Chạy: pip install yt-dlp")
             return None
 
-        # Thử lần lượt: có cookies browser, rồi không có
-        for attempt, use_browser_cookies in enumerate([True, False], 1):
+        # Thử extract info (ưu tiên cookiefile, fallback browser)
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
             opts = self._build_ydl_opts(skip_download=True)
-            if not use_browser_cookies:
-                # Lần 2: bỏ cookiesfrombrowser, thử không cookies
+            if attempt == 2 and "cookiefile" not in opts:
+                # Nếu không có cookie file thì lần 2 mới bỏ cookiesfrombrowser
                 opts.pop("cookiesfrombrowser", None)
-                opts.pop("cookiefile", None)
                 logger.debug("Attempt 2: trying without browser cookies...")
 
             try:
@@ -163,7 +170,10 @@ class DouyinCrawler:
                         logger.debug(f"yt-dlp attempt {attempt} success")
                         return info
             except Exception as e:
-                logger.debug(f"yt-dlp attempt {attempt} error: {e}")
+                logger.warning(f"yt-dlp attempt {attempt} error: {e}")
+                if attempt < max_attempts:
+                    import time
+                    time.sleep(1.0)
 
         return None
 

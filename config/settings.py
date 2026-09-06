@@ -144,9 +144,9 @@ PROCESSOR_CONFIG = {
     # Subtitles & Blur
     "auto_subtitle": True,  # Auto-Vietsub: BẬT
     "subtitle_overlay": "overlay_blur",  # Vị trí sub: Đè lên vùng mờ
-    "blur_enabled": False,  # Làm mờ phụ đề gốc: TẮT
-    "blur_pct": 0.15,  # Vùng làm mờ: 15%
-    "blur_position": "bottom",  # Vị trí làm mờ: Dưới cùng
+    "blur_enabled": True,   # Làm mờ phụ đề gốc: BẬT
+    "blur_pct": 0.15,       # Vùng làm mờ: 15%
+    "blur_position": "auto", # Vị trí làm mờ: Tự động (AI Auto-Detect)
 
     # Voiceover AI
     "ai_dubbing": True,  # Thuyết minh AI: BẬT
@@ -156,7 +156,11 @@ PROCESSOR_CONFIG = {
     
     # Whisper Model (Local PC Windows: medium, Docker VPS Linux: base)
     "whisper_model": os.getenv("WHISPER_MODEL", "base" if os.name != "nt" else "medium"),
-    # Gemini AI Translation (Hỗ trợ xoay tua nhiều key, cách nhau dấu phẩy)
+    # AI Translation Provider: "ollama" (Local offline), "gemini", hoặc "groq"
+    "ai_provider": os.getenv("AI_PROVIDER", "ollama"),
+    "ollama_url": os.getenv("OLLAMA_URL", "http://localhost:11434"),
+    "ollama_model": os.getenv("OLLAMA_MODEL", "qwen2.5"),
+    # Gemini/Groq AI Translation (Hỗ trợ xoay tua nhiều key, cách nhau dấu phẩy)
     "gemini_api_keys": [k.strip() for k in os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", "")).split(",") if k.strip()],
     
     # Nền tảng đích: TikTok

@@ -167,11 +167,100 @@ class AuthClient:
         except Exception as e:
             return False, str(e)
 
-    def generate_ai(self, prompt, api_key=None, model=None):
+    def test_ollama_connection(self, url="http://localhost:11434"):
+        """Kiểm tra kết nối tới Ollama và lấy danh sách model đã tải."""
+        import requests as http_requests
+        try:
+            clean_url = (url or "http://localhost:11434").rstrip("/")
+            resp = http_requests.get(f"{clean_url}/api/tags", timeout=4)
+            if resp.status_code == 200:
+                data = resp.json()
+                models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+                return True, models
+            return False, f"HTTP {resp.status_code}: {resp.text[:60]}"
+        except Exception as e:
+            return False, f"Không thể kết nối đến Ollama: {str(e)}"
+
+    def generate_ai(self, prompt, api_key=None, model=None, provider=None, ollama_url=None):
+        import os
+        import requests as http_requests
+
+        # 1. Xử lý qua Ollama Local nếu được chỉ định
+        if provider == "ollama" or (not api_key and os.getenv("AI_PROVIDER") == "ollama"):
+            target_url = (ollama_url or os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
+            target_model = model or os.getenv("OLLAMA_MODEL", "qwen2.5")
+            
+            def _clean_think(txt: str) -> str:
+                if not txt:
+                    return ""
+                import re
+                # Lọc bỏ toàn bộ đoạn suy nghĩ nội tâm <think>...</think>
+                cleaned = re.sub(r"<think>.*?</think>", "", txt, flags=re.DOTALL)
+                return cleaned.strip()
+
+            cpu_threads = os.cpu_count() or 8
+            ollama_options = {
+                "temperature": 0.2,
+                "num_thread": cpu_threads,
+                "num_ctx": 4096,
+                "num_predict": 2048,
+                "stop": ["<think>", "</think>"]
+            }
+
+            system_instruction = (
+                "You are a professional subtitle translator. Follow the user's instructions strictly. "
+                "Do NOT think, do NOT reason, do NOT output internal thoughts or <think> tags. "
+                "Directly output the required ID|text format."
+            )
+
+            # 1. Gọi trực tiếp native endpoint /api/generate của Ollama (hỗ trợ đầy đủ options tăng tốc)
+            try:
+                resp = http_requests.post(
+                    f"{target_url}/api/generate",
+                    json={
+                        "model": target_model,
+                        "system": system_instruction,
+                        "prompt": prompt,
+                        "stream": False,
+                        "options": ollama_options
+                    },
+                    headers={"Content-Type": "application/json"},
+                    timeout=180
+                )
+                if resp.status_code == 200:
+                    return _clean_think(resp.json().get("response", ""))
+            except Exception as e:
+                pass
+
+            # 2. Fallback sang OpenAI-compatible endpoint /v1/chat/completions
+            try:
+                resp = http_requests.post(
+                    f"{target_url}/v1/chat/completions",
+                    json={
+                        "model": target_model,
+                        "messages": [
+                            {"role": "system", "content": system_instruction},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": 0.2,
+                        "max_tokens": 2048,
+                    },
+                    headers={"Content-Type": "application/json"},
+                    timeout=180
+                )
+                if resp.status_code == 200:
+                    choices = resp.json().get("choices", [])
+                    if choices:
+                        raw_content = choices[0].get("message", {}).get("content", "")
+                        return _clean_think(raw_content)
+                else:
+                    raise Exception(f"Ollama trả về lỗi {resp.status_code}: {resp.text}")
+            except Exception as e:
+                raise Exception(f"Lỗi kết nối Ollama ({target_model} tại {target_url}): {str(e)}")
+
         if api_key:
             # Make direct API calls from the client to avoid backend proxy errors
             if api_key.startswith("gsk_"):
-                import requests as http_requests
                 groq_model = model or "llama-3.3-70b-versatile"
                 
                 # Groq has a strict 12,000 TPM limit on free tier. 

@@ -874,7 +874,11 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         crawler.current_username = auth_client.user_info.get("username") if auth_client.user_info else None
         self._log(f"Crawling {len(urls)} URLs...", "INFO")
         results = asyncio.run(crawler.crawl_multiple_videos(urls))
-        self._log(f"✅ Crawled {len(results)} videos!", "SUCCESS")
+        if results:
+            self._log(f"✅ Crawled thành công {len(results)}/{len(urls)} video!", "SUCCESS")
+        else:
+            self._log(f"⚠️ Crawled 0/{len(urls)} video. Vui lòng kiểm tra lại link hoặc làm mới cookie Douyin!", "WARNING")
+            self.after(0, lambda: self._status_badge.set("Thất bại", WARNING))
         auth_client.send_telemetry("CRAWL", f"Tải xong {len(results)} video từ list URL")
 
     def _do_crawl_profile(self, profile, count):
@@ -938,6 +942,92 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         self.after(0, lambda: self._status_badge.set("Xong", SUCCESS))
 
 
+def show_rename_author_dialog(parent, opt_widget, reload_callback):
+    """Mở hộp thoại đổi tên Kênh/Tác giả Douyin thân thiện."""
+    from database.db_manager import DatabaseManager
+    from auth_client import auth_client
+    db = DatabaseManager()
+    current_user = auth_client.user_info.get("username") if auth_client.user_info else None
+
+    current_authors = db.get_authors(username=current_user)
+    if not current_authors:
+        messagebox.showinfo("Thông báo", "Chưa có kênh nào trong cơ sở dữ liệu để đổi tên!")
+        return
+
+    curr_selected = opt_widget.get() if opt_widget else "Tất cả Kênh"
+
+    dialog = ctk.CTkToplevel(parent)
+    dialog.title("Đổi tên Kênh Douyin")
+    dialog.geometry("440x260")
+    dialog.resizable(False, False)
+    dialog.configure(fg_color=BG_CARD)
+    dialog.transient(parent.winfo_toplevel())
+    dialog.grab_set()
+
+    # Căn giữa cửa sổ
+    dialog.update_idletasks()
+    try:
+        x = parent.winfo_toplevel().winfo_x() + (parent.winfo_toplevel().winfo_width() - 440) // 2
+        y = parent.winfo_toplevel().winfo_y() + (parent.winfo_toplevel().winfo_height() - 260) // 2
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+    except Exception:
+        pass
+
+    frame = ctk.CTkFrame(dialog, fg_color="transparent")
+    frame.pack(fill="both", expand=True, padx=24, pady=20)
+
+    ctk.CTkLabel(frame, text="🏷️ Đổi Tên Kênh Douyin", font=("Segoe UI", 16, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 12))
+
+    ctk.CTkLabel(frame, text="Chọn kênh Douyin cần đổi tên:", font=("Segoe UI", 12), text_color=TEXT_DIM).pack(anchor="w", pady=(0, 4))
+    opt_choose = ctk.CTkOptionMenu(
+        frame, values=current_authors, font=("Segoe UI", 12),
+        fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
+    )
+    if curr_selected in current_authors:
+        opt_choose.set(curr_selected)
+    else:
+        opt_choose.set(current_authors[0])
+    opt_choose.pack(fill="x", pady=(0, 12))
+
+    ctk.CTkLabel(frame, text="Nhập tên mới dễ nhớ (VD: Kênh Bác Sĩ, Kênh Hài):", font=("Segoe UI", 12), text_color=TEXT_DIM).pack(anchor="w", pady=(0, 4))
+    entry_new_name = ctk.CTkEntry(
+        frame, font=("Segoe UI", 12), fg_color=BG_DARK, border_color=BORDER,
+        placeholder_text="Nhập tên mới gợi nhớ..."
+    )
+    entry_new_name.pack(fill="x", pady=(0, 16))
+    entry_new_name.focus()
+
+    def on_confirm():
+        old_name = opt_choose.get().strip()
+        new_name = entry_new_name.get().strip()
+        if not new_name:
+            messagebox.showwarning("Cảnh báo", "Vui lòng nhập tên mới!", parent=dialog)
+            return
+        if old_name == new_name:
+            messagebox.showinfo("Thông báo", "Tên mới trùng với tên cũ!", parent=dialog)
+            dialog.destroy()
+            return
+
+        affected = db.rename_author(old_name, new_name, username=current_user)
+        dialog.destroy()
+
+        if opt_widget:
+            all_authors = db.get_authors(username=current_user)
+            opt_widget.configure(values=["Tất cả Kênh"] + all_authors)
+            opt_widget.set(new_name)
+
+        reload_callback()
+        messagebox.showinfo("Thành công", f"Đã đổi tên kênh '{old_name}' thành '{new_name}' ({affected} video được cập nhật)!")
+
+    btn_row = ctk.CTkFrame(frame, fg_color="transparent")
+    btn_row.pack(fill="x")
+
+    ctk.CTkButton(btn_row, text="Hủy", width=80, fg_color=BORDER, hover_color=BG_CARD, command=dialog.destroy).pack(side="right", padx=(10, 0))
+    ctk.CTkButton(btn_row, text="💾 Lưu Tên", width=110, fg_color=SUCCESS, hover_color="#27ae60", command=on_confirm).pack(side="right")
+
+    entry_new_name.bind("<Return>", lambda _: on_confirm())
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Tab: Process
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -977,6 +1067,11 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkLabel(list_header, text="Danh sách Video đã tải:", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="left")
         self._opt_author_filter = ctk.CTkOptionMenu(list_header, values=["Tất cả Kênh"], width=130, command=lambda _: self._load_videos())
         self._opt_author_filter.pack(side="left", padx=(10, 0))
+        self._btn_rename_author = ctk.CTkButton(
+            list_header, text="✏️ Đổi tên", width=75, height=24, font=("Segoe UI", 11, "bold"),
+            fg_color="#2980b9", hover_color="#3498db", command=self._rename_author_dialog
+        )
+        self._btn_rename_author.pack(side="left", padx=(6, 0))
         
         ctk.CTkButton(list_header, text="🔄 Refresh", width=60, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._load_videos).pack(side="right")
         ctk.CTkButton(list_header, text="🗑 Xóa", width=60, height=24, fg_color="#e74c3c", hover_color="#c0392b", command=self._delete_selected).pack(side="right", padx=(0, 10))
@@ -1082,37 +1177,80 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         # --- Chế độ Tùy chỉnh Cao cấp ---
         sub_frame = ctk.CTkFrame(row2, fg_color="transparent")
         sub_frame.pack(fill="x", pady=(0, 10))
-        self._sw_subtitle = ctk.CTkSwitch(sub_frame, text="Auto-Vietsub ❔", font=("Segoe UI", 11), text_color=TEXT_MAIN, cursor="hand2")
+        
+        def _toggle_sub_widgets():
+            is_on = int(self._sw_subtitle.get()) == 1
+            self._opt_sub_pos.configure(state="normal" if is_on else "disabled")
+            
+        self._toggle_sub_widgets = _toggle_sub_widgets
+        self._sw_subtitle = ctk.CTkSwitch(sub_frame, text="Auto-Vietsub ❔", font=("Segoe UI", 11), text_color=TEXT_MAIN, command=_toggle_sub_widgets, cursor="hand2")
         self._sw_subtitle.select()
         self._sw_subtitle.pack(side="left")
         ToolTip(self._sw_subtitle, "Tự động trích xuất phụ đề gốc, dịch sang tiếng Việt và gắn cứng (hardsub) lên video mới.")
         
         self._opt_sub_pos = ctk.CTkOptionMenu(
-            sub_frame, values=["Đè lên vùng mờ", "Cao (Tránh TikTok UI)", "Giữa màn hình"], 
-            width=130, font=("Segoe UI", 11), fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
+            sub_frame, values=["Đè lên vùng mờ", "Cao (Tránh TikTok UI)", "Dưới cùng (Chuẩn đáy)", "Giữa màn hình"], 
+            width=140, font=("Segoe UI", 11), fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
         )
         self._opt_sub_pos.set("Đè lên vùng mờ")
         self._opt_sub_pos.pack(side="left", padx=(10, 0))
+        ToolTip(self._opt_sub_pos, "Đè lên vùng mờ: Tự động in đè lên đúng tâm dải mờ.\nCao: Đẩy lên cách đáy 35% tránh khung chat TikTok.\nDưới cùng: Nằm ở đáy video (cách đáy 12%).\nGiữa màn hình: Nằm ở chính giữa.")
 
-        self._sw_blur = ctk.CTkSwitch(row2, text="Làm mờ phụ đề gốc ❔", font=("Segoe UI", 11), text_color=TEXT_MAIN, cursor="hand2")
+        def _toggle_blur_widgets():
+            is_on = int(self._sw_blur.get()) == 1
+            st = "normal" if is_on else "disabled"
+            c_bg = BG_DARK if is_on else BORDER
+            self._opt_blur_pos.configure(state=st)
+            self._entry_blur_height.configure(state=st, fg_color=c_bg)
+
+        self._toggle_blur_widgets = _toggle_blur_widgets
+        self._sw_blur = ctk.CTkSwitch(row2, text="Làm mờ phụ đề gốc ❔", font=("Segoe UI", 11), text_color=TEXT_MAIN, command=_toggle_blur_widgets, cursor="hand2")
         self._sw_blur.select()
         self._sw_blur.pack(anchor="w", pady=(0, 10))
-        ToolTip(self._sw_blur, "Tạo một dải mờ (blur) ở dưới cùng hoặc trên cùng để che đi chữ Trung Quốc cũ.")
+        ToolTip(self._sw_blur, "Tự động phát hiện vị trí phụ đề tiếng Trung cũ bằng Computer Vision (OpenCV) và tạo dải mờ vừa khít che đi, sau đó in đè phụ đề tiếng Việt lên đúng vị trí.")
 
         blur_tools = ctk.CTkFrame(row2, fg_color="transparent")
         blur_tools.pack(fill="x")
-        lbl_blur_h = ctk.CTkLabel(blur_tools, text="Vùng làm mờ: ❔", font=("Segoe UI", 11), text_color=TEXT_DIM, cursor="hand2")
+        lbl_blur_h = ctk.CTkLabel(blur_tools, text="Vị trí mờ: ❔", font=("Segoe UI", 11), text_color=TEXT_DIM, cursor="hand2")
         lbl_blur_h.pack(side="left", padx=(0, 5))
-        ToolTip(lbl_blur_h, "Kích thước của dải làm mờ tính theo % chiều cao video (15% là mức tối ưu).")
-        self._entry_blur_height = ctk.CTkEntry(blur_tools, width=45, placeholder_text="15%", font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
-        self._entry_blur_height.insert(0, "15%")
-        self._entry_blur_height.pack(side="left", padx=(0, 10))
+        ToolTip(lbl_blur_h, "🤖 Tự động quét: AI phân tích khung hình video để tìm chính xác dòng chữ phụ đề tiếng Trung cũ và tạo dải mờ vừa khít.\nHoặc chọn các vị trí cố định theo ý bạn.")
         
-        self._opt_blur_pos = ctk.CTkOptionMenu(blur_tools, values=["Dưới cùng", "Trên cùng"], width=100, font=("Segoe UI", 11), fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD)
-        self._opt_blur_pos.set("Dưới cùng")
-        self._opt_blur_pos.pack(side="left")
+        def _on_blur_pos_changed(choice):
+            self._entry_blur_height.delete(0, "end")
+            if "tự động" in choice.lower() or "auto" in choice.lower():
+                self._entry_blur_height.insert(0, "Auto")
+            elif "douyin" in choice.lower() or "20%" in choice:
+                self._entry_blur_height.insert(0, "8%")
+            elif "cao" in choice.lower() or "tiktok" in choice.lower():
+                self._entry_blur_height.insert(0, "8%")
+            elif "trên cùng" in choice.lower():
+                self._entry_blur_height.insert(0, "8%")
+            else: # Dưới cùng
+                self._entry_blur_height.insert(0, "15%")
+
+        blur_pos_values = [
+            "🤖 Tự động (AI Auto-Detect)",
+            "Chuẩn Douyin (Cách đáy ~20%)",
+            "Phụ đề cao (Tránh UI TikTok)",
+            "Dưới cùng (Đáy video)",
+            "Trên cùng (Đỉnh video)"
+        ]
+        self._opt_blur_pos = ctk.CTkOptionMenu(
+            blur_tools, values=blur_pos_values, width=205, font=("Segoe UI", 11, "bold"),
+            fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD,
+            command=_on_blur_pos_changed
+        )
+        self._opt_blur_pos.set("🤖 Tự động (AI Auto-Detect)")
+        self._opt_blur_pos.pack(side="left", padx=(0, 8))
+
+        lbl_blur_pct = ctk.CTkLabel(blur_tools, text="Độ dày:", font=("Segoe UI", 11), text_color=TEXT_DIM)
+        lbl_blur_pct.pack(side="left", padx=(0, 4))
+        self._entry_blur_height = ctk.CTkEntry(blur_tools, width=48, placeholder_text="Auto", font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_blur_height.insert(0, "Auto")
+        self._entry_blur_height.pack(side="left")
+        ToolTip(self._entry_blur_height, "Độ dày dải mờ (% chiều cao video). Nhập 'Auto' để AI tự đo độ cao chữ gốc.")
         
-        ctk.CTkLabel(row2, text="💡 Gán API Key (Gemini/Groq) ở mục Settings để AI dịch Sub chuẩn nhất", font=("Segoe UI", 10, "italic"), text_color="#F9A826").pack(anchor="w", pady=(10, 0))
+        ctk.CTkLabel(row2, text="💡 Chọn Ollama (Local) hoặc API Key ở mục Settings để AI dịch Sub chuẩn nhất", font=("Segoe UI", 10, "italic"), text_color="#F9A826").pack(anchor="w", pady=(10, 0))
 
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
 
@@ -1317,7 +1455,9 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             info_frame = ctk.CTkFrame(card, fg_color="transparent")
             info_frame.pack(side="left", fill="x", expand=True, padx=10, pady=8)
             
-            id_lbl = ctk.CTkLabel(info_frame, text=f"ID: {vid}", font=("Segoe UI", 10), text_color=ACCENT)
+            author_name = video.get("author")
+            id_text = f"ID: {vid}" + (f"  |  🏷️ {author_name}" if author_name else "")
+            id_lbl = ctk.CTkLabel(info_frame, text=id_text, font=("Segoe UI", 10, "bold" if author_name else "normal"), text_color="#3498db" if author_name else ACCENT)
             id_lbl.pack(anchor="w")
             
             title_lbl = ctk.CTkLabel(info_frame, text=title[:80] + ("..." if len(title) > 80 else ""), 
@@ -1371,6 +1511,10 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             self._entry_limit.configure(state="disabled", text_color=TEXT_DIM)
         else:
             self._entry_limit.configure(text_color=TEXT_MAIN)
+
+    def _rename_author_dialog(self):
+        show_rename_author_dialog(self, self._opt_author_filter, self._load_videos)
+
     def _delete_selected(self):
         selected_ids = [vid for vid, var in self._checkboxes.items() if var.get()]
         if not selected_ids:
@@ -1583,12 +1727,22 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
                 if "opt_ai_mode" in config: self._opt_ai_mode.set(config["opt_ai_mode"])
                 if "opt_voice" in config: self._opt_voice.set(config["opt_voice"])
                 if "opt_sub_pos" in config: self._opt_sub_pos.set(config["opt_sub_pos"])
-                if "opt_blur_pos" in config: self._opt_blur_pos.set(config["opt_blur_pos"])
+                if "opt_blur_pos" in config:
+                    loaded_pos = config["opt_blur_pos"]
+                    if loaded_pos == "Dưới cùng":
+                        self._opt_blur_pos.set("Dưới cùng (Đáy video)")
+                    elif loaded_pos == "Trên cùng":
+                        self._opt_blur_pos.set("Trên cùng (Đỉnh video)")
+                    elif loaded_pos in self._opt_blur_pos.cget("values"):
+                        self._opt_blur_pos.set(loaded_pos)
                 if "opt_logo_pos" in config: self._opt_logo_pos.set(config["opt_logo_pos"])
                 
                 if "blur_height" in config:
+                    b_h = str(config["blur_height"]).strip()
+                    if b_h == "15%" and ("tự động" in self._opt_blur_pos.get().lower() or "auto" in self._opt_blur_pos.get().lower()):
+                        b_h = "Auto"
                     self._entry_blur_height.delete(0, "end")
-                    self._entry_blur_height.insert(0, config["blur_height"])
+                    self._entry_blur_height.insert(0, b_h)
                 if "bg_vol" in config:
                     self._entry_bg_vol.delete(0, "end")
                     self._entry_bg_vol.insert(0, config["bg_vol"])
@@ -1607,6 +1761,11 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
                         self._slider_tts_rate.set(rate_val)
                     except:
                         pass
+                
+                if hasattr(self, "_toggle_sub_widgets"):
+                    self._toggle_sub_widgets()
+                if hasattr(self, "_toggle_blur_widgets"):
+                    self._toggle_blur_widgets()
             except:
                 pass
 
@@ -1742,20 +1901,29 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         except Exception:
             PROCESSOR_CONFIG["blur_enabled"] = False
             
-        blur_height_str = getattr(self, "_entry_blur_height", ctk.CTkEntry(self)).get().strip().replace("%", "")
-        try:
-            blur_height_float = float(blur_height_str) / 100.0
-            if blur_height_float <= 0: PROCESSOR_CONFIG["blur_enabled"] = False
-            if blur_height_float > 1: blur_height_float = 1.0
-            PROCESSOR_CONFIG["blur_height"] = blur_height_float
-        except Exception:
-            PROCESSOR_CONFIG["blur_height"] = 0.15
+        blur_height_str = getattr(self, "_entry_blur_height", ctk.CTkEntry(self)).get().strip().replace("%", "").lower()
+        if blur_height_str in ("auto", "tự động", ""):
+            PROCESSOR_CONFIG["blur_height"] = None
+        else:
+            try:
+                blur_height_float = float(blur_height_str) / 100.0
+                if blur_height_float <= 0: PROCESSOR_CONFIG["blur_enabled"] = False
+                if blur_height_float > 1: blur_height_float = 1.0
+                PROCESSOR_CONFIG["blur_height"] = blur_height_float
+            except Exception:
+                PROCESSOR_CONFIG["blur_height"] = None
         
-        blur_pos_map = {
-            "Dưới cùng": "bottom",
-            "Trên cùng": "top",
-        }
-        PROCESSOR_CONFIG["blur_position"] = blur_pos_map.get(getattr(self, "_opt_blur_pos", ctk.CTkOptionMenu(self, values=[""])).get(), "bottom")
+        raw_blur_pos = getattr(self, "_opt_blur_pos", ctk.CTkOptionMenu(self, values=[""])).get()
+        if "tự động" in raw_blur_pos.lower() or "auto" in raw_blur_pos.lower():
+            PROCESSOR_CONFIG["blur_position"] = "auto"
+        elif "douyin" in raw_blur_pos.lower() or "20%" in raw_blur_pos:
+            PROCESSOR_CONFIG["blur_position"] = "douyin"
+        elif "cao" in raw_blur_pos.lower() or "tiktok" in raw_blur_pos.lower():
+            PROCESSOR_CONFIG["blur_position"] = "high"
+        elif "trên cùng" in raw_blur_pos.lower():
+            PROCESSOR_CONFIG["blur_position"] = "top"
+        else:
+            PROCESSOR_CONFIG["blur_position"] = "bottom"
         
         # Parse TTS Options
         voice_sel = self._opt_voice.get()
@@ -1952,6 +2120,11 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkLabel(list_header, text="Danh sách Video đã xử lý:", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="left")
         self._opt_author_filter_up = ctk.CTkOptionMenu(list_header, values=["Tất cả Kênh"], width=130, command=lambda _: self._load_videos())
         self._opt_author_filter_up.pack(side="left", padx=(10, 0))
+        self._btn_rename_author_up = ctk.CTkButton(
+            list_header, text="✏️ Đổi tên", width=75, height=24, font=("Segoe UI", 11, "bold"),
+            fg_color="#2980b9", hover_color="#3498db", command=self._rename_author_dialog
+        )
+        self._btn_rename_author_up.pack(side="left", padx=(6, 0))
         
         ctk.CTkButton(list_header, text="🔄 Refresh", width=60, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._load_videos).pack(side="right")
         ctk.CTkButton(list_header, text="🗑 Xóa", width=60, height=24, fg_color="#e74c3c", hover_color="#c0392b", command=self._delete_selected).pack(side="right", padx=(0, 10))
@@ -2016,6 +2189,28 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
 
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
 
+        # --- Phân bổ tự động (Dải đều video) ---
+        ctk.CTkLabel(config_frame, text="⚡ Phân bổ tự động (Dải đều nick)", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
+        
+        row_dist = ctk.CTkFrame(config_frame, fg_color="transparent")
+        row_dist.pack(fill="x", pady=(0, 8))
+        
+        ctk.CTkLabel(row_dist, text="Số video / nick:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(0, 5))
+        self._entry_vids_per_acc = ctk.CTkEntry(row_dist, width=45, font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_vids_per_acc.insert(0, "2")
+        self._entry_vids_per_acc.pack(side="left", padx=(0, 10))
+        
+        self._sw_round_robin = ctk.CTkSwitch(row_dist, text="Lặp vòng", font=("Segoe UI", 11), text_color=TEXT_MAIN)
+        self._sw_round_robin.pack(side="left")
+        
+        self._btn_dist_all = ctk.CTkButton(
+            config_frame, text="🔀 Dải đều tất cả nền tảng", height=28, font=("Segoe UI", 11, "bold"),
+            fg_color="#2980b9", hover_color="#3498db", command=self._distribute_all
+        )
+        self._btn_dist_all.pack(fill="x", pady=(0, 6))
+
+        ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
+
         # --- Tài khoản TikTok ---
         ctk.CTkLabel(config_frame, text="Tài khoản TikTok mặc định", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
         
@@ -2032,13 +2227,19 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         tt_btns = ctk.CTkFrame(row3, fg_color="transparent")
         tt_btns.pack(fill="x")
         self._btn_apply_acc = ctk.CTkButton(
-            tt_btns, text="Áp dụng All", width=90, height=24, font=("Segoe UI", 11),
+            tt_btns, text="Áp dụng All", width=80, height=24, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=self._apply_account_to_all
         )
-        self._btn_apply_acc.pack(side="left", padx=(0, 10))
+        self._btn_apply_acc.pack(side="left", padx=(0, 5))
+        
+        self._btn_dist_acc = ctk.CTkButton(
+            tt_btns, text="🔀 Dải đều", width=75, height=24, font=("Segoe UI", 11, "bold"),
+            fg_color="#2980b9", hover_color="#3498db", command=lambda: self._distribute_single("tiktok")
+        )
+        self._btn_dist_acc.pack(side="left", padx=(0, 5))
         
         self._btn_manage_acc = ctk.CTkButton(
-            tt_btns, text="⚙ Quản lý", width=70, height=24, font=("Segoe UI", 11),
+            tt_btns, text="⚙ Quản lý", width=65, height=24, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=lambda: self.app._nav(5)
         )
         self._btn_manage_acc.pack(side="left")
@@ -2061,13 +2262,19 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         yt_btns = ctk.CTkFrame(row4, fg_color="transparent")
         yt_btns.pack(fill="x")
         self._btn_apply_acc_yt = ctk.CTkButton(
-            yt_btns, text="Áp dụng All", width=90, height=24, font=("Segoe UI", 11),
+            yt_btns, text="Áp dụng All", width=80, height=24, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=self._apply_account_to_all_yt
         )
-        self._btn_apply_acc_yt.pack(side="left", padx=(0, 10))
+        self._btn_apply_acc_yt.pack(side="left", padx=(0, 5))
+        
+        self._btn_dist_acc_yt = ctk.CTkButton(
+            yt_btns, text="🔀 Dải đều", width=75, height=24, font=("Segoe UI", 11, "bold"),
+            fg_color="#2980b9", hover_color="#3498db", command=lambda: self._distribute_single("youtube")
+        )
+        self._btn_dist_acc_yt.pack(side="left", padx=(0, 5))
         
         self._btn_manage_acc_yt = ctk.CTkButton(
-            yt_btns, text="⚙ Quản lý", width=70, height=24, font=("Segoe UI", 11),
+            yt_btns, text="⚙ Quản lý", width=65, height=24, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=lambda: self.app._nav(5)
         )
         self._btn_manage_acc_yt.pack(side="left")
@@ -2090,13 +2297,19 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         fb_btns = ctk.CTkFrame(row5, fg_color="transparent")
         fb_btns.pack(fill="x")
         self._btn_apply_acc_fb = ctk.CTkButton(
-            fb_btns, text="Áp dụng All", width=90, height=24, font=("Segoe UI", 11),
+            fb_btns, text="Áp dụng All", width=80, height=24, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=self._apply_account_to_all_fb
         )
-        self._btn_apply_acc_fb.pack(side="left", padx=(0, 10))
+        self._btn_apply_acc_fb.pack(side="left", padx=(0, 5))
+        
+        self._btn_dist_acc_fb = ctk.CTkButton(
+            fb_btns, text="🔀 Dải đều", width=75, height=24, font=("Segoe UI", 11, "bold"),
+            fg_color="#2980b9", hover_color="#3498db", command=lambda: self._distribute_single("facebook")
+        )
+        self._btn_dist_acc_fb.pack(side="left", padx=(0, 5))
         
         self._btn_manage_acc_fb = ctk.CTkButton(
-            fb_btns, text="⚙ Quản lý", width=70, height=24, font=("Segoe UI", 11),
+            fb_btns, text="⚙ Quản lý", width=65, height=24, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=lambda: self.app._nav(5)
         )
         self._btn_manage_acc_fb.pack(side="left")
@@ -2170,6 +2383,9 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             cb.pack(side="left")
             
             ctk.CTkLabel(row1, text=f"ID: {vid}", font=("Consolas", 11, "bold"), text_color=ACCENT).pack(side="left", padx=5)
+            author_name = video.get("author")
+            if author_name:
+                ctk.CTkLabel(row1, text=f"🏷️ {author_name}", font=("Segoe UI", 11, "bold"), text_color="#3498db").pack(side="left", padx=(2, 8))
             
             path = video.get("processed_path")
             drive_processed_id = video.get("drive_processed_id")
@@ -2196,6 +2412,34 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                 ).pack(side="left", padx=(0, 10))
             else:
                 ctk.CTkLabel(row1, text=f"📦 {size_mb:.1f} MB", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(5, 10))
+
+            # --- THỜI LƯỢNG (Duration) & THỜI GIAN XỬ LÝ (Timestamp) ---
+            duration = video.get("duration")
+            if duration and float(duration) > 0:
+                d_sec = int(float(duration))
+                d_min = d_sec // 60
+                d_rem = d_sec % 60
+                duration_text = f"⏱️ {d_min:02d}:{d_rem:02d}"
+                ctk.CTkLabel(row1, text=duration_text, font=("Segoe UI", 11, "bold"), text_color=SUCCESS).pack(side="left", padx=(0, 10))
+
+            ts_raw = video.get("processed_at") or video.get("crawled_at")
+            if ts_raw:
+                try:
+                    clean_ts = str(ts_raw).replace("T", " ").split(".")[0].strip()
+                    parts = clean_ts.split(" ")
+                    if len(parts) == 2:
+                        d_part, t_part = parts
+                        ymd = d_part.split("-")
+                        time_hm = ":".join(t_part.split(":")[:2])
+                        if len(ymd) == 3:
+                            time_disp = f"🕒 {time_hm} ({ymd[2]}/{ymd[1]})"
+                        else:
+                            time_disp = f"🕒 {time_hm}"
+                    else:
+                        time_disp = f"🕒 {clean_ts[:16]}"
+                except Exception:
+                    time_disp = f"🕒 {str(ts_raw)[:16]}"
+                ctk.CTkLabel(row1, text=time_disp, font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(0, 10))
 
             # --- ROW 1.5: Platform Account Selector Bar ---
             acc_bar = ctk.CTkFrame(card, fg_color=BG_DARK, corner_radius=6)
@@ -2233,6 +2477,14 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
 
             # --- ROW 2: Editable Caption Title ---
             display_title = video.get("title_vi") or video.get("title") or "No title"
+            if isinstance(display_title, str) and display_title.startswith("['") and "'," in display_title:
+                try:
+                    import ast
+                    parsed = ast.literal_eval(display_title)
+                    if isinstance(parsed, list) and len(parsed) > 0:
+                        display_title = str(parsed[0])
+                except Exception:
+                    pass
             row2 = ctk.CTkFrame(card, fg_color="transparent")
             row2.pack(fill="x", padx=10, pady=(0, 2))
             ctk.CTkLabel(row2, text=display_title[:80] + ("..." if len(display_title) > 80 else ""), font=("Segoe UI", 13, "bold"), text_color=TEXT_MAIN).pack(side="left")
@@ -2305,6 +2557,9 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                 db.update_video_status(video_id=vid, status="downloaded")
             self._log(f"Đã đưa {len(selected_ids)} video trở lại hàng chờ Xử lý.", "SUCCESS")
             self._load_videos()
+
+    def _rename_author_dialog(self):
+        show_rename_author_dialog(self, self._opt_author_filter_up, self._load_videos)
 
     def _update_selected_count(self, *args):
         count = sum(1 for var in self._checkboxes.values() if var.get())
@@ -2607,6 +2862,142 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             elif curr not in accounts:
                 opt.set(accounts[0])
 
+    def _get_vids_per_acc_input(self):
+        try:
+            val = int(self._entry_vids_per_acc.get().strip())
+            return max(1, val)
+        except Exception:
+            return 2
+
+    def _distribute_accounts(self, platform="tiktok", vids_per_acc=2, round_robin=False):
+        """Phân bổ đều vids_per_acc video cho từng tài khoản hợp lệ."""
+        selected_vids = [vid for vid, var in self._checkboxes.items() if var.get()]
+        if not selected_vids:
+            for var in self._checkboxes.values():
+                var.set(True)
+            self._update_selected_count()
+            selected_vids = list(self._checkboxes.keys())
+
+        if not selected_vids:
+            return 0, 0, "Không có video nào trong danh sách!"
+
+        user_dir = self._get_user_cookies_dir()
+        if platform == "tiktok":
+            acc_dict = self._video_accounts
+            raw_accs = [f.name for f in sorted(user_dir.glob("tiktok_*.json")) if f.stat().st_size > 10]
+            proxy_file = user_dir / "proxies.json"
+            if proxy_file.exists():
+                try:
+                    import json
+                    with open(proxy_file, "r", encoding="utf-8") as f:
+                        proxies = json.load(f)
+                    if proxies:
+                        active_set = set(proxies.keys())
+                        p_accs = [a for a in raw_accs if a in active_set or a.replace(".json", "") in active_set]
+                        other_accs = [a for a in raw_accs if a not in p_accs]
+                        raw_accs = p_accs + other_accs
+                except Exception:
+                    pass
+        elif platform == "youtube":
+            acc_dict = self._video_accounts_yt
+            raw_accs = [f.name for f in sorted(user_dir.glob("youtube_*.json")) if f.stat().st_size > 10]
+        elif platform == "facebook":
+            acc_dict = self._video_accounts_fb
+            raw_accs = [f.name for f in sorted(user_dir.glob("facebook_*.json")) if f.stat().st_size > 10]
+        else:
+            return 0, 0, f"Nền tảng không hợp lệ: {platform}"
+
+        if not raw_accs:
+            return 0, 0, f"Chưa có tài khoản {platform.capitalize()} nào hợp lệ (file rỗng hoặc chưa thêm)!"
+
+        acc_count = len(raw_accs)
+        assigned_vids = 0
+
+        for idx, vid in enumerate(selected_vids):
+            if round_robin:
+                acc_idx = (idx // vids_per_acc) % acc_count
+                acc_name = raw_accs[acc_idx]
+                assigned_vids += 1
+            else:
+                acc_idx = idx // vids_per_acc
+                if acc_idx < acc_count:
+                    acc_name = raw_accs[acc_idx]
+                    assigned_vids += 1
+                else:
+                    acc_name = "Không up"
+
+            if vid in acc_dict:
+                acc_dict[vid].set(acc_name)
+
+        return acc_count, assigned_vids, None
+
+    def _distribute_single(self, platform):
+        vids_per_acc = self._get_vids_per_acc_input()
+        round_robin = self._sw_round_robin.get() == 1
+        acc_count, assigned_count, err = self._distribute_accounts(platform, vids_per_acc, round_robin)
+        if err:
+            messagebox.showwarning("Cảnh báo", err)
+            return
+
+        if not round_robin:
+            for vid, var in self._checkboxes.items():
+                up_tt = self._video_accounts.get(vid) and self._video_accounts[vid].get() != "Không up"
+                up_yt = self._video_accounts_yt.get(vid) and self._video_accounts_yt[vid].get() != "Không up"
+                up_fb = self._video_accounts_fb.get(vid) and self._video_accounts_fb[vid].get() != "Không up"
+                var.set(bool(up_tt or up_yt or up_fb))
+            self._update_selected_count()
+
+        p_name = "TikTok" if platform == "tiktok" else ("YouTube" if platform == "youtube" else "Facebook")
+        msg = f"Đã dải đều {vids_per_acc} video/nick cho {p_name}!\n• Số tài khoản sử dụng: {acc_count}\n• Số video được gán: {assigned_count}"
+        if not round_robin and assigned_count < len(self._checkboxes):
+            msg += f"\n• Các video còn lại đặt 'Không up' để đúng chỉ tiêu {vids_per_acc} video/nick."
+        messagebox.showinfo("Thành công", msg)
+
+    def _distribute_all(self):
+        vids_per_acc = self._get_vids_per_acc_input()
+        round_robin = self._sw_round_robin.get() == 1
+
+        do_tt = self._sw_platform_tt.get() == 1
+        do_yt = self._sw_platform_yt.get() == 1
+        do_fb = self._sw_platform_fb.get() == 1
+
+        if not do_tt and not do_yt and not do_fb:
+            messagebox.showwarning("Cảnh báo", "Vui lòng bật ít nhất 1 công tắc nền tảng (TikTok, YouTube, Facebook)!")
+            return
+
+        results = []
+        if do_tt:
+            c, a, err = self._distribute_accounts("tiktok", vids_per_acc, round_robin)
+            if err:
+                results.append(f"• TikTok: ⚠️ {err}")
+            else:
+                results.append(f"• TikTok: {c} nick → {a} video")
+
+        if do_yt:
+            c, a, err = self._distribute_accounts("youtube", vids_per_acc, round_robin)
+            if err:
+                results.append(f"• YouTube: ⚠️ {err}")
+            else:
+                results.append(f"• YouTube: {c} kênh → {a} video")
+
+        if do_fb:
+            c, a, err = self._distribute_accounts("facebook", vids_per_acc, round_robin)
+            if err:
+                results.append(f"• Facebook: ⚠️ {err}")
+            else:
+                results.append(f"• Facebook: {c} Page → {a} video")
+
+        if not round_robin:
+            for vid, var in self._checkboxes.items():
+                up_tt = self._video_accounts.get(vid) and self._video_accounts[vid].get() != "Không up"
+                up_yt = self._video_accounts_yt.get(vid) and self._video_accounts_yt[vid].get() != "Không up"
+                up_fb = self._video_accounts_fb.get(vid) and self._video_accounts_fb[vid].get() != "Không up"
+                var.set(bool(up_tt or up_yt or up_fb))
+            self._update_selected_count()
+
+        msg = f"Kết quả phân bổ {vids_per_acc} video/tài khoản:\n\n" + "\n".join(results)
+        messagebox.showinfo("Phân bổ tự động hoàn tất", msg)
+
     def _do_upload(self, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, video_accounts_fb_dict, cleanup_upload, do_tt, do_yt, do_fb):
         from config.settings import TIKTOK_CONFIG, YOUTUBE_CONFIG, FACEBOOK_CONFIG
         TIKTOK_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
@@ -2640,6 +3031,12 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                     account_groups_fb[acc_fb].append(vid)
 
         import asyncio
+        import sys
+        if sys.platform == 'win32':
+            try:
+                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            except Exception:
+                pass
         asyncio.run(self._async_upload_groups(limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb))
 
 
@@ -3233,6 +3630,12 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
                             pass
                     finally:
                         await uploader.close()
+                import sys
+                if sys.platform == 'win32':
+                    try:
+                        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+                    except Exception:
+                        pass
                 asyncio.run(_run())
                 
                 def _on_succ():
@@ -3980,45 +4383,122 @@ class SettingsTab(ctk.CTkFrame):
         
         plan_frame.grid_columnconfigure(1, weight=1)
         
-        # ── Gemini API Key (Người dùng tự điền) ──
+        # ── AI Provider (Ollama Local / Cloud API) ──
         ctk.CTkLabel(
-            self, text="🔑  Tự Túc API Key (Sử dụng AI Tốc độ cao)",
+            self, text="🧠  Cấu Hình AI Dịch Thuật (Ollama Local / API Key)",
             font=("Segoe UI", 18, "bold"), text_color=TEXT_MAIN,
         ).grid(row=2, column=0, sticky="w", pady=(30, 10))
         
         ai_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
         ai_frame.grid(row=3, column=0, sticky="ew")
         ai_frame.grid_columnconfigure(1, weight=1)
-        
-        ctk.CTkLabel(ai_frame, text="Gemini API Key:", font=("Segoe UI", 13, "bold")).grid(row=0, column=0, padx=16, pady=16)
-        
-        self._entry_user_gemini = ctk.CTkEntry(ai_frame, font=("Consolas", 12), fg_color=BG_DARK, border_color=BORDER, show="*")
-        self._entry_user_gemini.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=16)
-        
-        btn_toggle_user_key = ctk.CTkButton(
-            ai_frame, text="👁", width=30, height=28, fg_color="transparent", hover_color=BG_CARD, text_color=TEXT_DIM,
-            command=lambda: self._entry_user_gemini.configure(show="" if self._entry_user_gemini.cget("show") == "*" else "*")
-        )
-        btn_toggle_user_key.grid(row=0, column=2, padx=(0, 16), pady=16)
-        
-        # Load existing key
+
         import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        current_provider = os.getenv("AI_PROVIDER", "ollama").lower()
         existing_key = os.getenv("GEMINI_API_KEY", "")
-            
+        ollama_url_val = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        ollama_model_val = os.getenv("OLLAMA_MODEL", "qwen2.5")
+
+        ctk.CTkLabel(ai_frame, text="Nhà cung cấp AI:", font=("Segoe UI", 13, "bold")).grid(row=0, column=0, padx=16, pady=(16, 8), sticky="w")
+        
+        provider_options = ["Ollama (Local Offline)", "Gemini Cloud", "Groq Cloud"]
+        if current_provider == "ollama":
+            default_choice = "Ollama (Local Offline)"
+        elif current_provider == "groq":
+            default_choice = "Groq Cloud"
+        elif current_provider == "gemini":
+            default_choice = "Gemini Cloud"
+        elif existing_key and existing_key.startswith("gsk_"):
+            default_choice = "Groq Cloud"
+        elif existing_key:
+            default_choice = "Gemini Cloud"
+        else:
+            default_choice = "Ollama (Local Offline)"
+
+        self._opt_provider_user = ctk.CTkOptionMenu(
+            ai_frame, values=provider_options, font=("Segoe UI", 12),
+            fg_color=BG_DARK, button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+            command=self._on_provider_change_user
+        )
+        self._opt_provider_user.set(default_choice)
+        self._opt_provider_user.grid(row=0, column=1, sticky="w", padx=(0, 16), pady=(16, 8))
+
+        # Subframe cho Ollama
+        self._frame_ollama_user = ctk.CTkFrame(ai_frame, fg_color="transparent")
+        self._frame_ollama_user.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(self._frame_ollama_user, text="Ollama URL:", font=("Segoe UI", 12), text_color=TEXT_DIM).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=6)
+        row_url_user = ctk.CTkFrame(self._frame_ollama_user, fg_color="transparent")
+        row_url_user.grid(row=0, column=1, sticky="ew", pady=6)
+        row_url_user.grid_columnconfigure(0, weight=1)
+
+        self._entry_ollama_url_user = ctk.CTkEntry(row_url_user, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_ollama_url_user.insert(0, ollama_url_val)
+        self._entry_ollama_url_user.grid(row=0, column=0, sticky="ew")
+
+        btn_test_ollama_user = ctk.CTkButton(
+            row_url_user, text="🔍 Kiểm tra & Lấy Model", width=160, font=("Segoe UI", 11, "bold"),
+            fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            command=self._test_ollama_user
+        )
+        btn_test_ollama_user.grid(row=0, column=1, padx=(8, 0))
+
+        ctk.CTkLabel(self._frame_ollama_user, text="Model Ollama:", font=("Segoe UI", 12), text_color=TEXT_DIM).grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
+        model_suggestions = ["qwen2.5", "qwen2.5:7b", "qwen2.5:3b", "qwen3:4b", "qwen:latest"]
+        self._combo_ollama_model_user = ctk.CTkComboBox(
+            self._frame_ollama_user, values=model_suggestions, font=("Consolas", 11),
+            fg_color=BG_DARK, border_color=BORDER, dropdown_fg_color=BG_CARD
+        )
+        self._combo_ollama_model_user.set(ollama_model_val)
+        self._combo_ollama_model_user.grid(row=1, column=1, sticky="ew", pady=6)
+
+        self._lbl_ollama_status_user = ctk.CTkLabel(
+            self._frame_ollama_user,
+            text="* Chạy 100% trên máy tính qua Ollama, miễn phí không giới hạn. Khuyên dùng qwen2.5 để dịch nhanh nhất.",
+            font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM
+        )
+        self._lbl_ollama_status_user.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 8))
+
+        # Subframe cho Cloud Key
+        self._frame_cloud_user = ctk.CTkFrame(ai_frame, fg_color="transparent")
+        self._frame_cloud_user.grid_columnconfigure(1, weight=1)
+
+        self._lbl_key_title_user = ctk.CTkLabel(self._frame_cloud_user, text="API Key:", font=("Segoe UI", 12), text_color=TEXT_DIM)
+        self._lbl_key_title_user.grid(row=0, column=0, sticky="w", padx=(0, 12), pady=6)
+
+        row_key_user = ctk.CTkFrame(self._frame_cloud_user, fg_color="transparent")
+        row_key_user.grid(row=0, column=1, sticky="ew", pady=6)
+        row_key_user.grid_columnconfigure(0, weight=1)
+
+        self._entry_user_gemini = ctk.CTkEntry(row_key_user, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER, show="*")
         if existing_key:
             self._entry_user_gemini.insert(0, existing_key)
-            
+        self._entry_user_gemini.grid(row=0, column=0, sticky="ew")
+
+        btn_toggle_user_key = ctk.CTkButton(
+            row_key_user, text="👁", width=30, height=28, fg_color="transparent", hover_color=BG_CARD, text_color=TEXT_DIM,
+            command=lambda: self._entry_user_gemini.configure(show="" if self._entry_user_gemini.cget("show") == "*" else "*")
+        )
+        btn_toggle_user_key.grid(row=0, column=1, padx=(6, 0))
+
+        self._lbl_cloud_hint_user = ctk.CTkLabel(
+            self._frame_cloud_user,
+            text="* Hỗ trợ nhiều key cách nhau bằng dấu phẩy để tự động xoay tua.",
+            font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM
+        )
+        self._lbl_cloud_hint_user.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 8))
+
+        # Nút Lưu cấu hình
         btn_save_key = ctk.CTkButton(
-            ai_frame, text="💾 Lưu Key", width=100, font=("Segoe UI", 12, "bold"),
+            ai_frame, text="💾 Lưu Cấu Hình AI", width=150, height=36, font=("Segoe UI", 12, "bold"),
             fg_color=SUCCESS, hover_color="#27ae60",
             command=self._save_user_gemini_key
         )
-        btn_save_key.grid(row=0, column=3, padx=(0, 16), pady=16)
-        
-        ctk.CTkLabel(
-            ai_frame, text="*Sử dụng API Key cá nhân để mở khóa tính năng AI mạnh mẽ nhất mà không phụ thuộc Server.", 
-            font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM
-        ).grid(row=1, column=0, columnspan=3, sticky="w", padx=16, pady=(0, 16))
+        btn_save_key.grid(row=2, column=0, columnspan=2, padx=16, pady=(4, 16), sticky="w")
+
+        self._on_provider_change_user(default_choice)
 
         self._build_drive_settings()
 
@@ -4097,19 +4577,117 @@ class SettingsTab(ctk.CTkFrame):
         threading.Thread(target=_do_auth, daemon=True).start()
 
 
+    def _on_provider_change_user(self, choice):
+        if "Ollama" in choice:
+            self._frame_cloud_user.grid_forget()
+            self._frame_ollama_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
+        elif "Groq" in choice:
+            self._frame_ollama_user.grid_forget()
+            self._frame_cloud_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
+            self._lbl_key_title_user.configure(text="Groq API Key:")
+            self._lbl_cloud_hint_user.configure(text="* Key bắt đầu bằng gsk_ (Dùng Llama-3.3-70b siêu tốc, miễn phí).")
+        else: # Gemini
+            self._frame_ollama_user.grid_forget()
+            self._frame_cloud_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
+            self._lbl_key_title_user.configure(text="Gemini API Key:")
+            self._lbl_cloud_hint_user.configure(text="* Hỗ trợ nhiều key cách nhau bằng dấu phẩy để tự động xoay tua.")
+
+    def _test_ollama_user(self):
+        url = self._entry_ollama_url_user.get().strip() or "http://localhost:11434"
+        self._lbl_ollama_status_user.configure(text="⏳ Đang kiểm tra kết nối tới Ollama...", text_color=TEXT_DIM)
+        
+        def _test():
+            from auth_client import auth_client
+            ok, res = auth_client.test_ollama_connection(url)
+            def _update():
+                if ok:
+                    models = res
+                    if models:
+                        self._combo_ollama_model_user.configure(values=models)
+                        curr = self._combo_ollama_model_user.get().strip()
+                        if curr not in models:
+                            self._combo_ollama_model_user.set(models[0])
+                        self._lbl_ollama_status_user.configure(
+                            text=f"✅ Đã kết nối Ollama! Tìm thấy {len(models)} model ({', '.join(models[:4])})",
+                            text_color=SUCCESS
+                        )
+                    else:
+                        self._lbl_ollama_status_user.configure(
+                            text="✅ Kết nối thành công, nhưng chưa có model nào tải xong trong Ollama.",
+                            text_color=WARNING
+                        )
+                else:
+                    self._lbl_ollama_status_user.configure(
+                        text=f"❌ Lỗi: {res[:50]}. Hãy kiểm tra app Ollama đang bật!",
+                        text_color=DANGER
+                    )
+            self.after(0, _update)
+            
+        import threading
+        threading.Thread(target=_test, daemon=True).start()
+
     def _save_user_gemini_key(self):
-        gemini_key = self._entry_user_gemini.get().strip()
-        from config.settings import BASE_DIR
+        choice = getattr(self, "_opt_provider_user", None)
+        provider_choice = choice.get() if choice else "Ollama (Local Offline)"
+        
+        provider = "ollama" if "Ollama" in provider_choice else ("groq" if "Groq" in provider_choice else "gemini")
+        ollama_url = getattr(self, "_entry_ollama_url_user", ctk.CTkEntry(self)).get().strip() or "http://localhost:11434"
+        ollama_model = getattr(self, "_combo_ollama_model_user", ctk.CTkComboBox(self)).get().strip() or "qwen2.5"
+        gemini_key = self._entry_user_gemini.get().strip() if hasattr(self, "_entry_user_gemini") else ""
+        
+        from config.settings import BASE_DIR, PROCESSOR_CONFIG, COOKIES_DIR
         env_path = BASE_DIR / ".env"
         from dotenv import set_key
-        set_key(env_path, "GEMINI_API_KEY", gemini_key)
-            
         import os
-        os.environ["GEMINI_API_KEY"] = gemini_key # Update immediately in current process
+        
+        set_key(env_path, "AI_PROVIDER", provider)
+        set_key(env_path, "OLLAMA_URL", ollama_url)
+        set_key(env_path, "OLLAMA_MODEL", ollama_model)
+        os.environ["AI_PROVIDER"] = provider
+        os.environ["OLLAMA_URL"] = ollama_url
+        os.environ["OLLAMA_MODEL"] = ollama_model
+        
+        PROCESSOR_CONFIG["ai_provider"] = provider
+        PROCESSOR_CONFIG["ollama_url"] = ollama_url
+        PROCESSOR_CONFIG["ollama_model"] = ollama_model
+        
+        if gemini_key:
+            set_key(env_path, "GEMINI_API_KEY", gemini_key)
+            os.environ["GEMINI_API_KEY"] = gemini_key
+            PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in gemini_key.split(",") if k.strip()]
+
+        # Lưu cả vào settings.json của user
+        try:
+            from auth_client import auth_client
+            import json
+            username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            user_clean = username.replace("@", "_").replace(".", "_")
+            user_dir = COOKIES_DIR / user_clean
+            user_dir.mkdir(parents=True, exist_ok=True)
+            user_settings_path = user_dir / "settings.json"
+            
+            user_data = {}
+            if user_settings_path.exists():
+                try:
+                    with open(user_settings_path, "r", encoding="utf-8") as f:
+                        user_data = json.load(f)
+                except:
+                    pass
+                    
+            user_data["ai_provider"] = provider
+            user_data["ollama_url"] = ollama_url
+            user_data["ollama_model"] = ollama_model
+            if gemini_key:
+                user_data["gemini_api_key"] = gemini_key
+                
+            with open(user_settings_path, "w", encoding="utf-8") as f:
+                json.dump(user_data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
             
         messagebox.showinfo(
             "Đã lưu",
-            "Đã lưu Gemini API Key. Bạn có thể sử dụng các tính năng AI không giới hạn!"
+            f"Đã lưu cấu hình AI ({provider_choice}). Bạn có thể sử dụng tính năng Auto-Vietsub & Thuyết minh!"
         )
         self.app._update_user_ui()
 
@@ -4232,6 +4810,7 @@ class SettingsTab(ctk.CTkFrame):
         win.protocol("WM_DELETE_WINDOW", _on_close)
         
         ctk.CTkButton(win, text="Đóng", command=_on_close, fg_color=BORDER, hover_color=BG_CARD).pack(pady=(10, 20))
+
     def _build_admin(self):
         ctk.CTkLabel(
             self, text="⚙️  Quản trị Hệ thống (Admin Dashboard)",
@@ -4244,6 +4823,7 @@ class SettingsTab(ctk.CTkFrame):
         
         self.tab_sys = self.tabview.add("Hệ thống")
         self.tab_sys.grid_columnconfigure(0, weight=1)
+        self.tab_sys.grid_rowconfigure(0, weight=1)
         self.tab_users = self.tabview.add("Người dùng")
         self.tab_users.grid_columnconfigure(0, weight=1)
         self.tab_stats = self.tabview.add("Thống kê")
@@ -4266,9 +4846,16 @@ class SettingsTab(ctk.CTkFrame):
         self._build_admin_logs(self.tab_logs)
 
     def _build_admin_system(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scroll.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+        scroll.grid_columnconfigure(0, weight=1)
+
         # ── Cookies section ──────────────────────────────────────────────────
-        self._section(parent, "🍪  Cookies", row=0)
-        cook = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12,
+        self._section(scroll, "🍪  Cookies", row=0)
+        cook = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12,
                              border_width=1, border_color=BORDER)
         cook.grid(row=1, column=0, sticky="ew", pady=(0, 16))
         cook.grid_columnconfigure(1, weight=1)
@@ -4297,37 +4884,137 @@ class SettingsTab(ctk.CTkFrame):
         self._entry_douyin.insert(0, "config/cookies/douyin_cookies.txt")
         self._entry_tiktok.insert(0, "config/cookies/tiktok_cookies.json")
 
-        # ── Gemini AI section ──────────────────────────────────────────────────
-        self._section(parent, "🧠  AI Translation (Gemini)", row=2)
-        ai = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12,
+        # ── AI Provider section ──────────────────────────────────────────────
+        self._section(scroll, "🧠  AI Dịch thuật & Phụ đề (AI Provider)", row=2)
+        ai = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12,
                            border_width=1, border_color=BORDER)
         ai.grid(row=3, column=0, sticky="ew", pady=(0, 16))
         ai.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(ai, text="Gemini API Key", font=("Segoe UI", 12),
-                     text_color=TEXT_DIM).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 14))
-        self._entry_gemini = ctk.CTkEntry(ai, font=("Consolas", 11),
-                                             fg_color=BG_DARK, border_color=BORDER, show="*")
-        
-        # Load from .env if available
         import os
         from dotenv import load_dotenv
         load_dotenv()
+        current_provider = os.getenv("AI_PROVIDER", "ollama").lower()
         existing_key = os.getenv("GEMINI_API_KEY", "")
+        ollama_url_val = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        ollama_model_val = os.getenv("OLLAMA_MODEL", "qwen2.5")
+
+        # Row 0: Chọn Nhà Cung Cấp
+        ctk.CTkLabel(ai, text="Nhà cung cấp AI:", font=("Segoe UI", 12, "bold"),
+                     text_color=TEXT_MAIN).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 8))
+        
+        provider_options = ["Ollama (Local Offline)", "Gemini Cloud", "Groq Cloud"]
+        if current_provider == "ollama":
+            default_choice = "Ollama (Local Offline)"
+        elif current_provider == "groq":
+            default_choice = "Groq Cloud"
+        elif current_provider == "gemini":
+            default_choice = "Gemini Cloud"
+        elif existing_key and existing_key.startswith("gsk_"):
+            default_choice = "Groq Cloud"
+        elif existing_key:
+            default_choice = "Gemini Cloud"
+        else:
+            default_choice = "Ollama (Local Offline)"
+
+        self._opt_provider_admin = ctk.CTkOptionMenu(
+            ai, values=provider_options, font=("Segoe UI", 12),
+            fg_color=BG_DARK, button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+            command=self._on_provider_change_admin
+        )
+        self._opt_provider_admin.set(default_choice)
+        self._opt_provider_admin.grid(row=0, column=1, sticky="w", padx=(0, 16), pady=(14, 8))
+
+        # ── Frame cho Ollama Local ──
+        self._frame_ollama_admin = ctk.CTkFrame(ai, fg_color="transparent")
+        self._frame_ollama_admin.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(self._frame_ollama_admin, text="Ollama Server URL:", font=("Segoe UI", 12),
+                     text_color=TEXT_DIM).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=6)
+        
+        row_url = ctk.CTkFrame(self._frame_ollama_admin, fg_color="transparent")
+        row_url.grid(row=0, column=1, sticky="ew", pady=6)
+        row_url.grid_columnconfigure(0, weight=1)
+
+        self._entry_ollama_url_admin = ctk.CTkEntry(
+            row_url, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER
+        )
+        self._entry_ollama_url_admin.insert(0, ollama_url_val)
+        self._entry_ollama_url_admin.grid(row=0, column=0, sticky="ew")
+
+        btn_test_ollama = ctk.CTkButton(
+            row_url, text="🔍 Kiểm tra & Lấy Model", width=160, font=("Segoe UI", 11, "bold"),
+            fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            command=self._test_ollama_admin
+        )
+        btn_test_ollama.grid(row=0, column=1, padx=(8, 0))
+
+        ctk.CTkLabel(self._frame_ollama_admin, text="Model Ollama:", font=("Segoe UI", 12),
+                     text_color=TEXT_DIM).grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
+
+        model_suggestions = ["qwen2.5", "qwen2.5:7b", "qwen2.5:3b", "qwen3:4b", "qwen:latest"]
+        self._combo_ollama_model_admin = ctk.CTkComboBox(
+            self._frame_ollama_admin, values=model_suggestions, font=("Consolas", 11),
+            fg_color=BG_DARK, border_color=BORDER, dropdown_fg_color=BG_CARD
+        )
+        self._combo_ollama_model_admin.set(ollama_model_val)
+        self._combo_ollama_model_admin.grid(row=1, column=1, sticky="ew", pady=6)
+
+        self._lbl_ollama_status_admin = ctk.CTkLabel(
+            self._frame_ollama_admin,
+            text="* Chạy 100% trên máy tính qua Ollama, miễn phí không giới hạn. Khuyên dùng qwen2.5 để dịch nhanh nhất.",
+            font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM
+        )
+        self._lbl_ollama_status_admin.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 8))
+
+        # ── Frame cho Cloud Key (Gemini / Groq) ──
+        self._frame_cloud_admin = ctk.CTkFrame(ai, fg_color="transparent")
+        self._frame_cloud_admin.grid_columnconfigure(1, weight=1)
+
+        self._lbl_key_title_admin = ctk.CTkLabel(
+            self._frame_cloud_admin, text="API Key:", font=("Segoe UI", 12), text_color=TEXT_DIM
+        )
+        self._lbl_key_title_admin.grid(row=0, column=0, sticky="w", padx=(0, 12), pady=6)
+
+        row_key = ctk.CTkFrame(self._frame_cloud_admin, fg_color="transparent")
+        row_key.grid(row=0, column=1, sticky="ew", pady=6)
+        row_key.grid_columnconfigure(0, weight=1)
+
+        self._entry_gemini = ctk.CTkEntry(
+            row_key, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER, show="*"
+        )
         if existing_key:
             self._entry_gemini.insert(0, existing_key)
-            
-        self._entry_gemini.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=(14, 14))
-        
+        self._entry_gemini.grid(row=0, column=0, sticky="ew")
+
         btn_toggle_key = ctk.CTkButton(
-            ai, text="👁", width=30, height=28, fg_color="transparent", hover_color=BG_CARD, text_color=TEXT_DIM,
+            row_key, text="👁", width=30, height=28, fg_color="transparent", hover_color=BG_CARD, text_color=TEXT_DIM,
             command=lambda: self._entry_gemini.configure(show="" if self._entry_gemini.cget("show") == "*" else "*")
         )
-        btn_toggle_key.grid(row=0, column=2, padx=(0, 16), pady=(14, 14))
+        btn_toggle_key.grid(row=0, column=1, padx=(6, 0))
+
+        self._lbl_cloud_hint_admin = ctk.CTkLabel(
+            self._frame_cloud_admin,
+            text="* Hỗ trợ nhiều key cách nhau bằng dấu phẩy để tự động xoay tua.",
+            font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM
+        )
+        self._lbl_cloud_hint_admin.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 8))
+
+        # Nút Lưu Cấu Hình AI nhanh ngay trong mục AI (không cần cuộn chuột)
+        btn_quick_save_ai = ctk.CTkButton(
+            ai, text="💾 Lưu Cấu Hình AI", width=160, height=34,
+            font=("Segoe UI", 12, "bold"),
+            fg_color=SUCCESS, hover_color="#27ae60",
+            command=self._save
+        )
+        btn_quick_save_ai.grid(row=2, column=0, columnspan=2, padx=16, pady=(4, 14), sticky="w")
+
+        # Khởi tạo frame tương ứng
+        self._on_provider_change_admin(default_choice)
 
         # ── TikTok section ───────────────────────────────────────────────────
-        self._section(parent, "🎵  TikTok Upload", row=4)
-        tt = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12,
+        self._section(scroll, "🎵  TikTok Upload", row=4)
+        tt = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12,
                            border_width=1, border_color=BORDER)
         tt.grid(row=5, column=0, sticky="ew", pady=(0, 16))
         tt.grid_columnconfigure(1, weight=1)
@@ -4348,8 +5035,8 @@ class SettingsTab(ctk.CTkFrame):
         self._entry_hashtags.grid(row=1, column=1, sticky="ew", padx=(0, 16), pady=(4, 14))
 
         # ── Google Drive section ─────────────────────────────────────────────
-        self._section(parent, "☁️  Google Drive Backup", row=6)
-        drive_frame = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=12,
+        self._section(scroll, "☁️  Google Drive Backup", row=6)
+        drive_frame = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12,
                                    border_width=1, border_color=BORDER)
         drive_frame.grid(row=7, column=0, sticky="ew", pady=(0, 16))
         drive_frame.grid_columnconfigure(1, weight=1)
@@ -4397,11 +5084,11 @@ class SettingsTab(ctk.CTkFrame):
 
         # Save button
         ctk.CTkButton(
-            parent, text="💾  Lưu cài đặt", height=40,
+            scroll, text="💾  Lưu cài đặt", height=40,
             font=("Segoe UI", 13, "bold"),
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
             command=self._save,
-        ).grid(row=8, column=0, sticky="w", pady=(4, 0))
+        ).grid(row=8, column=0, sticky="w", pady=(8, 30))
 
     def _save_drive_settings_admin(self):
         from config.settings import GOOGLE_DRIVE_CONFIG, BASE_DIR
@@ -4432,22 +5119,123 @@ class SettingsTab(ctk.CTkFrame):
             entry.delete(0, "end")
             entry.insert(0, path)
 
-    def _save(self):
-        gemini_key = self._entry_gemini.get().strip()
-        vbee_key = getattr(self, "_entry_vbee", ctk.CTkEntry(self)).get().strip()
-        env_path = Path(__file__).parent / ".env"
+    def _on_provider_change_admin(self, choice):
+        if "Ollama" in choice:
+            self._frame_cloud_admin.grid_forget()
+            self._frame_ollama_admin.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
+        elif "Groq" in choice:
+            self._frame_ollama_admin.grid_forget()
+            self._frame_cloud_admin.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
+            self._lbl_key_title_admin.configure(text="Groq API Key:")
+            self._lbl_cloud_hint_admin.configure(text="* Key bắt đầu bằng gsk_ (Dùng Llama-3.3-70b siêu tốc, miễn phí).")
+        else: # Gemini
+            self._frame_ollama_admin.grid_forget()
+            self._frame_cloud_admin.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
+            self._lbl_key_title_admin.configure(text="Gemini API Key:")
+            self._lbl_cloud_hint_admin.configure(text="* Hỗ trợ nhiều key cách nhau bằng dấu phẩy để tự động xoay tua.")
+
+    def _test_ollama_admin(self):
+        url = self._entry_ollama_url_admin.get().strip() or "http://localhost:11434"
+        self._lbl_ollama_status_admin.configure(text="⏳ Đang kiểm tra kết nối tới Ollama...", text_color=TEXT_DIM)
         
+        def _test():
+            from auth_client import auth_client
+            ok, res = auth_client.test_ollama_connection(url)
+            def _update():
+                if ok:
+                    models = res
+                    if models:
+                        self._combo_ollama_model_admin.configure(values=models)
+                        curr = self._combo_ollama_model_admin.get().strip()
+                        if curr not in models:
+                            self._combo_ollama_model_admin.set(models[0])
+                        self._lbl_ollama_status_admin.configure(
+                            text=f"✅ Đã kết nối Ollama! Tìm thấy {len(models)} model ({', '.join(models[:4])})",
+                            text_color=SUCCESS
+                        )
+                    else:
+                        self._lbl_ollama_status_admin.configure(
+                            text="✅ Kết nối thành công, nhưng chưa có model nào tải xong trong Ollama.",
+                            text_color=WARNING
+                        )
+                else:
+                    self._lbl_ollama_status_admin.configure(
+                        text=f"❌ Lỗi: {res[:50]}. Hãy kiểm tra app Ollama đang bật!",
+                        text_color=DANGER
+                    )
+            self.after(0, _update)
+            
+        import threading
+        threading.Thread(target=_test, daemon=True).start()
+
+    def _save(self):
+        choice = getattr(self, "_opt_provider_admin", None)
+        provider_choice = choice.get() if choice else "Ollama (Local Offline)"
+        
+        provider = "ollama" if "Ollama" in provider_choice else ("groq" if "Groq" in provider_choice else "gemini")
+        ollama_url = getattr(self, "_entry_ollama_url_admin", ctk.CTkEntry(self)).get().strip() or "http://localhost:11434"
+        ollama_model = getattr(self, "_combo_ollama_model_admin", ctk.CTkComboBox(self)).get().strip() or "qwen2.5"
+        gemini_key = self._entry_gemini.get().strip() if hasattr(self, "_entry_gemini") else ""
+        vbee_key = getattr(self, "_entry_vbee", ctk.CTkEntry(self)).get().strip()
+        
+        from config.settings import BASE_DIR, PROCESSOR_CONFIG, COOKIES_DIR
+        env_path = BASE_DIR / ".env"
         from dotenv import set_key
+        import os
+        
+        set_key(env_path, "AI_PROVIDER", provider)
+        set_key(env_path, "OLLAMA_URL", ollama_url)
+        set_key(env_path, "OLLAMA_MODEL", ollama_model)
+        os.environ["AI_PROVIDER"] = provider
+        os.environ["OLLAMA_URL"] = ollama_url
+        os.environ["OLLAMA_MODEL"] = ollama_model
+        
+        PROCESSOR_CONFIG["ai_provider"] = provider
+        PROCESSOR_CONFIG["ollama_url"] = ollama_url
+        PROCESSOR_CONFIG["ollama_model"] = ollama_model
+        
         if gemini_key:
             set_key(env_path, "GEMINI_API_KEY", gemini_key)
+            os.environ["GEMINI_API_KEY"] = gemini_key
+            PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in gemini_key.split(",") if k.strip()]
         if vbee_key:
             set_key(env_path, "VBEE_API_KEY", vbee_key)
+
+        # Lưu cả vào settings.json của current user
+        try:
+            from auth_client import auth_client
+            import json
+            username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+            user_clean = username.replace("@", "_").replace(".", "_")
+            user_dir = COOKIES_DIR / user_clean
+            user_dir.mkdir(parents=True, exist_ok=True)
+            user_settings_path = user_dir / "settings.json"
+            
+            user_data = {}
+            if user_settings_path.exists():
+                try:
+                    with open(user_settings_path, "r", encoding="utf-8") as f:
+                        user_data = json.load(f)
+                except:
+                    pass
+                    
+            user_data["ai_provider"] = provider
+            user_data["ollama_url"] = ollama_url
+            user_data["ollama_model"] = ollama_model
+            if gemini_key:
+                user_data["gemini_api_key"] = gemini_key
+                
+            with open(user_settings_path, "w", encoding="utf-8") as f:
+                json.dump(user_data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
             
         messagebox.showinfo(
             "Đã lưu",
-            "Cài đặt đã được ghi nhận.\n"
-            "(Lưu ý: API Key sẽ có hiệu lực ngay trong lần dịch tiếp theo.)"
+            f"Cấu hình AI ({provider_choice}) đã được lưu thành công!\n"
+            "(Cài đặt sẽ có hiệu lực ngay trong lần dịch tiếp theo.)"
         )
+        self.app._update_user_ui()
 
     # ── ADMIN: User Management ────────────────────────────────────────────────
     def _build_admin_users(self, parent):
@@ -5243,6 +6031,18 @@ class App(ctk.CTk):
                             PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in key.split(",") if k.strip()]
                         else:
                             PROCESSOR_CONFIG["gemini_api_keys"] = []
+                        
+                        # Load Ollama / AI Provider
+                        import os
+                        if data.get("ai_provider"):
+                            PROCESSOR_CONFIG["ai_provider"] = data.get("ai_provider")
+                            os.environ["AI_PROVIDER"] = data.get("ai_provider")
+                        if data.get("ollama_url"):
+                            PROCESSOR_CONFIG["ollama_url"] = data.get("ollama_url")
+                            os.environ["OLLAMA_URL"] = data.get("ollama_url")
+                        if data.get("ollama_model"):
+                            PROCESSOR_CONFIG["ollama_model"] = data.get("ollama_model")
+                            os.environ["OLLAMA_MODEL"] = data.get("ollama_model")
                 except:
                     pass
             else:
