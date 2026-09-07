@@ -233,15 +233,15 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
         is_ollama = (not is_groq) and (not is_gemini) and ((provider == "ollama") or (api_key == "ollama") or (os.getenv("AI_PROVIDER") == "ollama"))
         
         target_ollama_model = model or os.getenv("OLLAMA_MODEL", "qwen2.5")
-        ai_name = "Groq (Llama-70B)" if is_groq else ("Gemini" if is_gemini else f"Ollama ({target_ollama_model})")
+        ai_name = "Groq (Qwen-27B)" if is_groq else ("Gemini" if is_gemini else f"Ollama ({target_ollama_model})")
         
         # Model cho từng Pass
         if is_ollama:
             PASS1_MODEL = target_ollama_model
             PASS2_MODEL = target_ollama_model
         else:
-            PASS1_MODEL = "llama-3.1-8b-instant" if is_groq else None       # Dùng model nhỏ/nhanh để sửa lỗi chính tả
-            PASS2_MODEL = "llama-3.3-70b-versatile" if is_groq else None  # Llama mạnh nhất cho dịch thuật
+            PASS1_MODEL = "qwen/qwen3.8-27b" if is_groq else None       # Dùng model Groq Qwen-27B siêu tốc
+            PASS2_MODEL = "qwen/qwen3.8-27b" if is_groq else None  # Groq Qwen-27B dịch thuật mượt mà đỉnh cao
         
         # ═══════════════════════════════════════════════════════════
         # NHÁNH 1: OLLAMA LOCAL — CHẾ ĐỘ 1-PASS SIÊU TỐC (Tiết kiệm 50% thời gian)
@@ -250,29 +250,35 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
         if is_ollama:
             if multi_speaker:
                 instruction = (
-                    "NHẬN DIỆN NHÂN VẬT (BẮT BUỘC): Thêm chính xác một trong các nhãn [M], [F], hoặc [N] vào ngay sau dấu |. Tuyệt đối không thêm chữ (Nam) hay (Nữ).\n"
+                    "NHẬN DIỆN NHÂN VẬT (BẮT BUỘC): Thêm chính xác nhãn có ngoặc vuông [M], [F], hoặc [N] vào ngay sau dấu |. BẮT BUỘC phải có ngoặc vuông [ ], tuyệt đối không viết chữ trần M hay F.\n"
                     "- [M]: Giọng Nam\n"
                     "- [F]: Giọng Nữ\n"
                     "- [N]: Người kể chuyện / Không rõ\n"
-                    "Ví dụ: '1|你好帅哥' → '1|[F] Chào anh đẹp trai nhé.'\n"
+                    "Ví dụ: 1|[F] Ối dồi ôi, tai của mày bị gió thổi bay mất tiêu rồi kìa!\n"
+                    "Ví dụ: 2|[M] Mày xem lại chữ Phúc kia đi!\n"
                 )
             else:
                 instruction = (
-                    "Câu văn phải ngắn gọn, súc tích, nhịp điệu nhanh phù hợp giọng đọc AI.\n"
-                    "Không dùng đại từ 'Tôi' trừ khi đó là góc nhìn thứ nhất.\n"
+                    "Câu văn phải tự nhiên, thuần Việt, nhịp điệu nhanh lôi cuốn phù hợp lồng tiếng video ngắn.\n"
                 )
 
             translation_prompt = (
-                "你是专业的中越影视短剧与短视频字幕翻译专家。\n"
-                "以下数据是Whisper语音识别自动提取的中文字幕，可能存在同音听错字。\n"
-                "请结合完整上下文语境，自动纠正听错字，并逐行翻译成自然流畅、地道、生动的越南语（Vietnamese）。\n\n"
-                "核心要求：\n"
-                "1. 严格保持 'ID|越南语文本' 格式不变，绝不要增删或合并行。\n"
-                "2. 每一行翻译必须完全使用越南语，绝对禁止输出中文。\n"
-                "3. 根据上下文正确理解人物关系与情绪，使用自然地道的越南语人称代词（anh, em, chị, bạn, tôi...）。\n"
-                "4. 拒绝生硬直译，符合越南人日常口语和短视频节奏。\n"
-                "5. 不要输出任何思考过程或多余解释，直接输出翻译结果。\n\n"
-                f"{instruction}\n\n"
+                "你是一名精通中越双语的影视短剧与短视频金牌字幕翻译大师。\n"
+                "请将以下由Whisper语音识别自动提取的中文台词，逐行翻译为【极其自然地道、生动传神、100% thuần Việt】的越南语（Vietnamese）。\n\n"
+                "【核心翻译法则 - CHUẨN ĐIỆN ẢNH & VIRAL SHORT VIDEO】:\n"
+                "1. 🎭 Xưng hô linh hoạt, tự nhiên như đời thực:\n"
+                "   - Thú cưng / bạn bè thân thiết / hài hước troll: Dùng 'mày - tao', 'cậu - tớ', 'ông - tôi', 'đại ca' (Tuyệt đối KHÔNG dùng 'bạn - tôi', 'ngươi - ta' cứng nhắc).\n"
+                "   - Nam nữ tình cảm: 'anh - em'.\n"
+                "   - Gia đình / tiền bối: 'bố - con', 'chú - cháu', 'anh/chị - em'.\n"
+                "2. 🔥 Văn phong biểu cảm, cuốn hút:\n"
+                "   - Dịch thoát nghĩa, thêm từ cảm thán tự nhiên ở cuối câu ('nè', 'á', 'đấy', 'kìa', 'mất tiêu rồi', 'trời đất ơi', 'nhìn kìa', 'thôi nào'...). Tuyệt đối loại bỏ lối dịch máy thô cứng.\n"
+                "3. 🈲 100% TIẾNG VIỆT - KHÔNG SÓT CHỮ HÁN:\n"
+                "   - Phiên âm tất cả tên riêng nhân vật, thú cưng, địa danh sang âm Hán-Việt hoặc thuần Việt (Ví dụ: 望仔 → Vọng Vĩ / Vọng Tử; 小美 → Tiểu Mỹ; 强哥 → anh Cường). Tuyệt đối KHÔNG để lại bất kỳ chữ Hán nào!\n"
+                "4. 🛠️ Tự động sửa lỗi Whisper: Nếu có từ đồng âm vô nghĩa trong ngữ cảnh, hãy tự sửa đúng ngữ cảnh trước khi dịch.\n\n"
+                f"{instruction}\n"
+                "【BẮT BUỘC ĐỊNH DẠNG ĐẦU RA】:\n"
+                "- Mỗi dòng đúng cấu trúc: ID|câu dịch tiếng Việt hoàn chỉnh\n"
+                "- Tuyệt đối KHÔNG lặp lại tiếng Trung gốc, KHÔNG dùng dấu '-' hay '→', KHÔNG giải thích, KHÔNG thêm ký tự lạ.\n\n"
                 f"待翻译数据：\n{payload_text}"
             )
 
@@ -283,7 +289,8 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
                     api_key=None, 
                     model=PASS2_MODEL,
                     provider="ollama",
-                    ollama_url=ollama_url
+                    ollama_url=ollama_url,
+                    temperature=0.35
                 )
             except Exception as e:
                 logger.error(f"Lỗi gọi Ollama 1-Pass: {e}")
@@ -355,11 +362,12 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
         
         if multi_speaker:
             instruction = (
-                "NHẬN DIỆN NHÂN VẬT (BẮT BUỘC): Thêm chính xác một trong các nhãn [M], [F], hoặc [N] vào ngay sau dấu |. Tuyệt đối không thêm chữ (Nam) hay (Nữ).\n"
+                "NHẬN DIỆN NHÂN VẬT (BẮT BUỘC): Thêm chính xác nhãn có ngoặc vuông [M], [F], hoặc [N] vào ngay sau dấu |. BẮT BUỘC phải có ngoặc vuông [ ], tuyệt đối không viết chữ trần M hay F.\n"
                 "- [M]: Giọng Nam\n"
                 "- [F]: Giọng Nữ\n"
                 "- [N]: Người kể chuyện / Không rõ\n"
                 "Ví dụ: '1|你好帅哥' → '1|[F] Chào anh đẹp trai nhé.'\n"
+                "Ví dụ: '2|你看那福字' → '2|[M] Mày xem lại chữ Phúc kia đi!'\n"
             )
         else:
             instruction = (

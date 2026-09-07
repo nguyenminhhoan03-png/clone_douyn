@@ -338,14 +338,33 @@ class YouTubeUploader:
         video_ids: list = None,
         custom_captions: dict = None,
         cancel_check: Optional[Callable[[], bool]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> list:
         """
         Upload tất cả video pending lên YouTube.
         Trả về list các video_id đã upload thành công.
         """
+        def _report(msg: str, level: str = "INFO"):
+            if level == "ERROR":
+                logger.error(msg)
+            elif level == "WARNING":
+                logger.warning(msg)
+            else:
+                logger.info(msg)
+            if log_callback:
+                try:
+                    log_callback(msg, level)
+                except Exception:
+                    pass
+
         if video_ids is not None:
-            all_pending = self.db.get_pending_videos(limit=1000, platform="youtube")
-            videos = [v for v in all_pending if v["video_id"] in video_ids]
+            videos = []
+            for vid in video_ids:
+                v = self.db.get_video_by_id(vid)
+                if v:
+                    videos.append(v)
+                else:
+                    _report(f"⚠️ Video {vid} không tìm thấy trong database.", "WARNING")
         else:
             max_posts = limit or self.config.get("max_posts_per_day", 5)
             today_count = self.db.get_today_post_count(platform="youtube")
@@ -358,7 +377,7 @@ class YouTubeUploader:
             videos = self.db.get_pending_videos(limit=remaining, platform="youtube")
 
         if not videos:
-            logger.info("Không có video nào pending để upload YouTube")
+            _report("Không có video nào pending để upload YouTube", "INFO")
             return []
 
         logger.info(f"Found {len(videos)} videos to upload to YouTube")
@@ -366,7 +385,7 @@ class YouTubeUploader:
         # Check service
         service = self._get_service()
         if not service:
-            logger.error("Cannot upload: YouTube not authenticated")
+            _report("❌ Không thể upload: YouTube chưa xác thực tài khoản!", "ERROR")
             return []
 
         uploaded_ids = []
@@ -400,7 +419,7 @@ class YouTubeUploader:
             
             if not video_path or not Path(video_path).exists():
                 if drive_processed_id:
-                    logger.info("Đang tải video từ Google Drive để upload YouTube...")
+                    _report(f"☁️ Đang tải video từ Google Drive ({drive_processed_id[:12]}...)...", "INFO")
                     from uploader.google_drive_uploader import GoogleDriveUploader
                     uploader = GoogleDriveUploader(self.current_username or "default")
                     import uuid
@@ -409,11 +428,11 @@ class YouTubeUploader:
                     if uploader.download_file(drive_processed_id, temp_downloaded_path):
                         video_path = temp_downloaded_path
                     else:
-                        logger.error("Không thể tải video từ Google Drive (File 404), lưu trữ video...")
+                        _report(f"❌ Video ID {video.get('video_id')} không thể tải từ Google Drive (File 404 hoặc bị xóa). Bỏ qua!", "ERROR")
                         self.db.update_video_status(video["video_id"], "archived")
                         continue
                 else:
-                    logger.error("Không tìm thấy file video (cả local và Drive)")
+                    _report(f"❌ Không tìm thấy file video cho ID {video.get('video_id')} (cả local và Drive). Bỏ qua!", "ERROR")
                     continue
 
             # Upload
@@ -455,18 +474,18 @@ class YouTubeUploader:
                     if cleaned_files > 0:
                         logger.info(f"  🧹 Đã xóa {cleaned_files} file cục bộ.")
 
-                # Xóa file trên Google Drive nếu có
-                if drive_processed_id:
-                    try:
-                        from uploader.google_drive_uploader import GoogleDriveUploader
-                        uploader = GoogleDriveUploader(self.current_username or "default")
-                        uploader.delete_file(drive_processed_id)
-                        # Có thể xóa luôn bản chưa process (drive_download_id) nếu user muốn sạch sẽ
-                        drive_download_id = video.get("drive_download_id")
-                        if drive_download_id:
-                            uploader.delete_file(drive_download_id)
-                    except Exception as e:
-                        logger.warning(f"Lỗi khi xóa file trên Drive: {e}")
+                    # Xóa file trên Google Drive nếu có
+                    if drive_processed_id:
+                        try:
+                            from uploader.google_drive_uploader import GoogleDriveUploader
+                            uploader = GoogleDriveUploader(self.current_username or "default")
+                            uploader.delete_file(drive_processed_id)
+                            # Có thể xóa luôn bản chưa process (drive_download_id) nếu user muốn sạch sẽ
+                            drive_download_id = video.get("drive_download_id")
+                            if drive_download_id:
+                                uploader.delete_file(drive_download_id)
+                        except Exception as e:
+                            logger.warning(f"Lỗi khi xóa file trên Drive: {e}")
                 
                 # Dọn dẹp file temp upload (nếu có tải từ drive)
                 if temp_downloaded_path and Path(temp_downloaded_path).exists():

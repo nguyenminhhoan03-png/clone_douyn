@@ -181,7 +181,7 @@ class AuthClient:
         except Exception as e:
             return False, f"Không thể kết nối đến Ollama: {str(e)}"
 
-    def generate_ai(self, prompt, api_key=None, model=None, provider=None, ollama_url=None):
+    def generate_ai(self, prompt, api_key=None, model=None, provider=None, ollama_url=None, temperature=None):
         import os
         import requests as http_requests
 
@@ -198,9 +198,10 @@ class AuthClient:
                 cleaned = re.sub(r"<think>.*?</think>", "", txt, flags=re.DOTALL)
                 return cleaned.strip()
 
+            eff_temp = float(temperature) if temperature is not None else 0.35
             cpu_threads = os.cpu_count() or 8
             ollama_options = {
-                "temperature": 0.2,
+                "temperature": eff_temp,
                 "num_thread": cpu_threads,
                 "num_ctx": 4096,
                 "num_predict": 2048,
@@ -208,7 +209,8 @@ class AuthClient:
             }
 
             system_instruction = (
-                "You are a professional subtitle translator. Follow the user's instructions strictly. "
+                "You are an elite, native Vietnamese film subtitle and short-video translator. "
+                "Translate Chinese dialogue into natural, expressive, lively, and culturally authentic Vietnamese. "
                 "Do NOT think, do NOT reason, do NOT output internal thoughts or <think> tags. "
                 "Directly output the required ID|text format."
             )
@@ -242,7 +244,7 @@ class AuthClient:
                             {"role": "system", "content": system_instruction},
                             {"role": "user", "content": prompt}
                         ],
-                        "temperature": 0.2,
+                        "temperature": eff_temp,
                         "max_tokens": 2048,
                     },
                     headers={"Content-Type": "application/json"},
@@ -261,7 +263,7 @@ class AuthClient:
         if api_key:
             # Make direct API calls from the client to avoid backend proxy errors
             if api_key.startswith("gsk_"):
-                groq_model = model or "llama-3.3-70b-versatile"
+                groq_model = model or "qwen/qwen3.8-27b"
                 
                 # Groq has a strict 12,000 TPM limit on free tier. 
                 # Groq calculates: Requested Tokens = Input Tokens + max_tokens.

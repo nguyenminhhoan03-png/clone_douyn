@@ -59,13 +59,14 @@ _ANTI_DETECT_SCRIPT = """
 class TikTokUploader:
     """Tự động upload video lên TikTok qua Playwright browser automation."""
 
-    def __init__(self, db: DatabaseManager = None, cookies_file: str = None, proxy: str = None, window_idx: int = 0, username: str = None):
+    def __init__(self, db: DatabaseManager = None, cookies_file: str = None, proxy: str = None, window_idx: int = 0, username: str = None, headless: Optional[bool] = None):
         self.db = db or DatabaseManager()
         self.current_username = username
         self.config = TIKTOK_CONFIG
         self.cookies_file = cookies_file or self.config.get("cookies_file")
         self.proxy = proxy  # Format: "http://user:pass@ip:port" hoặc "socks5://ip:port"
         self.window_idx = window_idx # Dùng để sắp xếp vị trí cửa sổ
+        self.headless = headless # Cho phép override headless từ UI
         self.browser = None
         self.context = None
         self.page = None
@@ -121,9 +122,10 @@ class TikTokUploader:
         pos_y = row * 50 # Xuống dòng thì thụt xuống 1 xíu để thấy viền trên
 
         # ── Build launch kwargs (có thể có proxy) ────────────────────────
+        is_headless = self.headless if self.headless is not None else browser_config.get("headless", False)
         launch_kwargs = {
-            "headless": browser_config.get("headless", False),
-            "slow_mo": browser_config.get("slow_mo", 500),
+            "headless": is_headless,
+            "slow_mo": browser_config.get("slow_mo", 500) if not is_headless else 0,
             "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
@@ -862,16 +864,35 @@ class TikTokUploader:
         limit: int = None, 
         video_ids: list = None, 
         custom_captions: dict = None,
-        cancel_check: Optional[Callable[[], bool]] = None
+        cancel_check: Optional[Callable[[], bool]] = None,
+        log_callback: Optional[Callable[[str, str], None]] = None
     ) -> list:
         """
         Upload tất cả video pending lên TikTok.
         Trả về list các video_id đã upload thành công.
         """
+        def _report(msg: str, level: str = "INFO"):
+            if level == "ERROR":
+                logger.error(msg)
+            elif level == "WARNING":
+                logger.warning(msg)
+            else:
+                logger.info(msg)
+            if log_callback:
+                try:
+                    log_callback(msg, level)
+                except Exception:
+                    pass
+
         if video_ids is not None:
             # Manual mode: Bỏ qua giới hạn ngày, chỉ upload các video được chọn
-            all_pending = self.db.get_pending_videos(limit=1000)
-            videos = [v for v in all_pending if v["video_id"] in video_ids]
+            videos = []
+            for vid in video_ids:
+                v = self.db.get_video_by_id(vid)
+                if v:
+                    videos.append(v)
+                else:
+                    _report(f"⚠️ Video {vid} không tìm thấy trong database.", "WARNING")
             today_count = self.db.get_today_post_count()
             max_posts = "Unlimited (Manual)"
         else:
@@ -888,7 +909,7 @@ class TikTokUploader:
 
             
         if not videos:
-            logger.info("Không có video nào pending để upload")
+            _report("Không có video nào pending để upload", "INFO")
             return []
 
         logger.info(f"Found {len(videos)} videos to upload (today: {today_count}/{max_posts})")
@@ -899,7 +920,7 @@ class TikTokUploader:
 
         # Check login
         if not await self.check_login():
-            logger.error("Cannot upload: Not logged in")
+            _report("❌ Không thể upload: Chưa đăng nhập hoặc cookie hết hạn!", "ERROR")
             return []
 
         uploaded_ids = []
@@ -919,7 +940,7 @@ class TikTokUploader:
                     logger.info("Browser session closed, re-initializing...")
                     await self._init_browser()
                     if not await self.check_login():
-                        logger.error("Không thể đăng nhập lại sau khi khởi tạo browser.")
+                        _report("❌ Không thể đăng nhập lại sau khi khởi tạo browser.", "ERROR")
                         break
 
                 # Tạo caption
@@ -947,7 +968,7 @@ class TikTokUploader:
 
                 if not video_path or not Path(video_path).exists():
                     if drive_processed_id:
-                        logger.info("Đang tải video từ Google Drive để upload...")
+                        _report(f"☁️ Đang tải video từ Google Drive ({drive_processed_id[:12]}...)...", "INFO")
                         from uploader.google_drive_uploader import GoogleDriveUploader
                         uploader = GoogleDriveUploader(self.current_username or "default")
                         import uuid
@@ -956,11 +977,11 @@ class TikTokUploader:
                         if uploader.download_file(drive_processed_id, temp_downloaded_path):
                             video_path = temp_downloaded_path
                         else:
-                            logger.error("Không thể tải video từ Google Drive (File 404 hoặc lỗi mạng), bỏ qua video này.")
-                            self.db.update_video_status(video["id"], "archived")
+                            _report(f"❌ Video ID {video.get('video_id')} không thể tải từ Google Drive (File 404 hoặc bị xóa: {drive_processed_id}). Bỏ qua!", "ERROR")
+                            self.db.update_video_status(video["video_id"], "archived")
                             continue
                     else:
-                        logger.error("Không tìm thấy file video (cả local và Drive)")
+                        _report(f"❌ Không tìm thấy file video cho ID {video.get('video_id')} (cả local và Drive). Bỏ qua!", "ERROR")
                         continue
 
                 # Upload
@@ -995,23 +1016,23 @@ class TikTokUploader:
                         if cleaned_files > 0:
                             logger.info(f"  🧹 Đã xóa {cleaned_files} file cục bộ để tiết kiệm dung lượng.")
                             
-                    # Xóa file trên Google Drive nếu có
-                    if drive_processed_id:
-                        try:
-                            from uploader.google_drive_uploader import GoogleDriveUploader
-                            uploader = GoogleDriveUploader(self.current_username or "default")
-                            uploader.delete_file(drive_processed_id)
-                            # Có thể xóa luôn bản chưa process (drive_download_id) nếu khác ID
-                            drive_download_id = video.get("drive_download_id")
-                            if drive_download_id and drive_download_id != drive_processed_id:
-                                uploader.delete_file(drive_download_id)
-                        except Exception as e:
-                            logger.warning(f"Lỗi khi xóa file trên Drive: {e}")
+                        # Xóa file trên Google Drive nếu có
+                        if drive_processed_id:
+                            try:
+                                from uploader.google_drive_uploader import GoogleDriveUploader
+                                uploader = GoogleDriveUploader(self.current_username or "default")
+                                uploader.delete_file(drive_processed_id)
+                                # Có thể xóa luôn bản chưa process (drive_download_id) nếu khác ID
+                                drive_download_id = video.get("drive_download_id")
+                                if drive_download_id and drive_download_id != drive_processed_id:
+                                    uploader.delete_file(drive_download_id)
+                            except Exception as e:
+                                logger.warning(f"Lỗi khi xóa file trên Drive: {e}")
                 else:
-                    logger.error(f"❌ Upload TikTok thất bại cho video: {video.get('video_id')}, tự động bỏ qua để đăng video tiếp theo.")
+                    _report(f"❌ Upload TikTok thất bại cho video: {video.get('video_id')}, tự động bỏ qua để đăng video tiếp theo.", "ERROR")
 
             except Exception as e:
-                logger.error(f"❌ Ngoại lệ khi xử lý upload video {video.get('video_id')}: {e}")
+                _report(f"❌ Ngoại lệ khi xử lý upload video {video.get('video_id')}: {e}", "ERROR")
             finally:
                 if temp_downloaded_path and Path(temp_downloaded_path).exists():
                     try:

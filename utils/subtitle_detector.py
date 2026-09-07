@@ -10,8 +10,8 @@ from typing import Tuple
 from loguru import logger
 
 # Preset mặc định theo tỉ lệ khung hình
-DEFAULT_PORTRAIT_SUB_Y = (0.72, 0.085)   # Video dọc: cách đáy ~20% (ngang ngực nhân vật)
-DEFAULT_LANDSCAPE_SUB_Y = (0.90, 0.080)  # Video ngang: sát mép dưới cùng (chuẩn phim/drama)
+DEFAULT_PORTRAIT_SUB_Y = (0.72, 0.075)  # Video dọc: cách đáy ~20% (ngang ngực nhân vật, dày 7.5%)
+DEFAULT_LANDSCAPE_SUB_Y = (0.86, 0.085)  # Video ngang: sát mép đáy (chuẩn phim/drama 16:9, dày 8.5%)
 
 
 def detect_subtitle_y_range(
@@ -19,10 +19,12 @@ def detect_subtitle_y_range(
     search_y_min: float = None,
     search_y_max: float = None,
     num_samples: int = 15,
-    blur_padding: float = 0.015
+    blur_padding: float = 0.025
 ) -> Tuple[float, float]:
     """
     Tự động dò tìm tọa độ Y của dòng phụ đề hardsub tiếng Trung trong video.
+    Hỗ trợ cả phụ đề màu vàng (Douyin/Kuaishou) và chữ trắng có viền đen.
+    Tự động mở rộng dải mờ chạm mép đáy nếu phụ đề nằm sát đáy để không bị lòi chữ bên dưới.
     
     Args:
         video_path: Đường dẫn tới file video (.mp4)
@@ -63,12 +65,11 @@ def detect_subtitle_y_range(
 
         # Xác định vùng quét thích ứng theo tỉ lệ khung hình
         if search_y_min is None:
-            # Video ngang: Phụ đề luôn ở sát đáy (80% -> 98.5%)
-            # Video dọc: Phụ đề từ ngang ngực xuống (48% -> 92% bao gồm cả sub 2 dòng)
-            search_y_min = 0.80 if is_landscape else 0.48
+            # Quét toàn bộ nửa dưới màn hình để không bỏ sót phụ đề 2 dòng hoặc phụ đề cao
+            search_y_min = 0.50 if is_landscape else 0.45
             
         if search_y_max is None:
-            search_y_max = 0.985 if is_landscape else 0.92
+            search_y_max = 0.99
 
         # Downscale frame về chiều rộng 360px để tăng tốc độ xử lý gấp 5-10 lần
         target_w = 360
@@ -95,18 +96,25 @@ def detect_subtitle_y_range(
             if not ret or frame is None:
                 continue
 
-            # Resize siêu tốc và chuyển xám
+            # Resize siêu tốc và chuyển màu
             resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
             gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+            hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
 
-            # Lọc các điểm ảnh sáng đặc trưng của chữ phụ đề (độ sáng >= 180)
-            _, bright_mask = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+            # 1. Mặt nạ chữ sáng (chữ trắng, chữ vàng nhạt)
+            _, white_mask = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+
+            # 2. Mặt nạ màu vàng (đặc trưng phụ đề Douyin/TikTok vàng chanh/vàng kim)
+            yellow_mask = cv2.inRange(hsv, np.array([15, 60, 100]), np.array([45, 255, 255]))
+
+            # Kết hợp cả 2 mặt nạ để bắt trọn 100% các loại phụ đề
+            text_mask = cv2.bitwise_or(white_mask, yellow_mask)
 
             # Canny edge detector: Bắt cạnh chữ sắc nét
-            edges = cv2.Canny(gray, 80, 180)
+            edges = cv2.Canny(gray, 60, 150)
 
-            # Chỉ giữ lại cạnh thuộc về vùng chữ sáng
-            text_edges = cv2.bitwise_and(edges, edges, mask=bright_mask)
+            # Chỉ giữ lại cạnh thuộc về vùng chữ sáng hoặc vàng
+            text_edges = cv2.bitwise_and(edges, edges, mask=text_mask)
 
             # Cộng dồn mật độ cạnh theo từng hàng Y ở dải ngang giữa
             horiz_profile = np.sum(text_edges[:, w_crop_start:w_crop_end] > 0, axis=1)
@@ -138,12 +146,12 @@ def detect_subtitle_y_range(
             logger.debug(f"Mật độ cạnh chữ ({peak_val:.1f}) không vượt ngưỡng. Dùng preset ({'Ngang' if is_landscape else 'Dọc'}).")
             return default_preset
 
-        # Ngưỡng phát hiện hàng chứa chữ: cao hơn baseline 5%
-        thresh = baseline + (peak_val - baseline) * 0.05
+        # Ngưỡng phát hiện hàng chứa chữ: bắt đúng peak xung của chữ (40% prominence)
+        thresh = baseline + (peak_val - baseline) * 0.40
 
-        # Cho phép bắc cầu qua khoảng cách giữa 2 dòng (tối đa 3.5% chiều cao video ~ 25px)
-        max_gap_allowed_px = int(target_h * 0.035)
-        max_reach_px = int(target_h * 0.16)
+        # Giới hạn vươn tới tối đa 8% chiều cao video (đủ trọn 1-2 dòng sub, không lan ra bối cảnh)
+        max_gap_allowed_px = int(target_h * 0.02)
+        max_reach_px = int(target_h * 0.08)
 
         # Quét lên trên từ peak_idx để tìm điểm bắt đầu của khối chữ (bao trọn dòng trên)
         top_rel = peak_idx
@@ -172,17 +180,23 @@ def detect_subtitle_y_range(
         sub_top_px = y_min_px + top_rel
         sub_bottom_px = y_min_px + bottom_rel
 
-        # Thêm padding an toàn ở cả mép trên và dưới
-        pad_px = int(target_h * blur_padding)
-        y_start_px = max(0, sub_top_px - pad_px)
-        y_end_px = min(target_h, sub_bottom_px + pad_px)
+        # Đệm an toàn thanh thoát: vừa khít viền/bóng đổ của font chữ mà không ăn vào nhân vật
+        pad_top_px = int(target_h * 0.010)
+        pad_bottom_px = int(target_h * 0.015)
+
+        y_start_px = max(0, sub_top_px - pad_top_px)
+        y_end_px = min(target_h, sub_bottom_px + pad_bottom_px)
+
+        # Nếu mép dưới dải mờ ăn sát chạm đáy (>= 96%) thì mới kéo chạm mép đáy
+        if (y_end_px / float(target_h)) >= 0.96:
+            y_end_px = target_h
 
         y_start_ratio = y_start_px / float(target_h)
         height_ratio = (y_end_px - y_start_px) / float(target_h)
 
-        # Giới hạn an toàn: video dọc từ 8.5% đến 18%, video ngang từ 7.5% đến 12%
-        min_h = 0.075 if is_landscape else 0.085
-        max_h = 0.12 if is_landscape else 0.18
+        # Giới hạn an toàn vừa khít: video dọc từ 5.5% đến 8.5%, video ngang từ 6.0% đến 9.5%
+        min_h = 0.060 if is_landscape else 0.055
+        max_h = 0.095 if is_landscape else 0.085
         height_ratio = max(min_h, min(max_h, height_ratio))
         y_start_ratio = max(0.0, min(1.0 - height_ratio, y_start_ratio))
 

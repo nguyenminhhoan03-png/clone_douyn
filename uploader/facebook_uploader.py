@@ -435,23 +435,39 @@ class FacebookUploader:
         limit: int = 4,
         video_ids: list = None,
         custom_captions: dict = None,
-        cancel_check = None
+        cancel_check = None,
+        log_callback: Optional[Callable[[str, str], None]] = None,
     ) -> List[int]:
         """
         Upload danh sách video đã processed lên Facebook Reels.
         """
+        def _report(msg: str, level: str = "INFO"):
+            if level == "ERROR":
+                logger.error(msg)
+            elif level == "WARNING":
+                logger.warning(msg)
+            else:
+                logger.info(msg)
+            if log_callback:
+                try:
+                    log_callback(msg, level)
+                except Exception:
+                    pass
+
         if video_ids:
             videos = []
             for vid in video_ids:
                 v = self.db.get_video_by_id(vid)
                 if v:
                     videos.append(v)
+                else:
+                    _report(f"⚠️ Video {vid} không tìm thấy trong database.", "WARNING")
             videos = videos[:limit]
         else:
             videos = self.db.get_processed_videos(limit=limit, username=self.current_username, platform="facebook")
 
         if not videos:
-            logger.info("Không có video nào cần upload lên Facebook Reels.")
+            _report("Không có video nào cần upload lên Facebook Reels.", "INFO")
             return []
 
         # Check daily limit
@@ -460,7 +476,7 @@ class FacebookUploader:
         remaining = max(0, max_daily - today_count)
 
         if remaining <= 0:
-            logger.warning(f"Đã đạt giới hạn upload Facebook hôm nay ({today_count}/{max_daily} posts)")
+            _report(f"Đã đạt giới hạn upload Facebook hôm nay ({today_count}/{max_daily} posts)", "WARNING")
             return []
 
         videos = videos[:remaining]
@@ -481,7 +497,7 @@ class FacebookUploader:
 
             if not proc_path or not Path(proc_path).exists():
                 if drive_processed_id:
-                    logger.info(f"[{i}/{len(videos)}] ☁️ Đang tải video từ Google Drive để upload Facebook Reels...")
+                    _report(f"☁️ Đang tải video từ Google Drive ({drive_processed_id[:12]}...)...", "INFO")
                     from uploader.google_drive_uploader import GoogleDriveUploader
                     uploader = GoogleDriveUploader(self.current_username or "default")
                     import uuid
@@ -490,11 +506,11 @@ class FacebookUploader:
                     if uploader.download_file(drive_processed_id, temp_downloaded_path):
                         proc_path = temp_downloaded_path
                     else:
-                        logger.error(f"[{i}/{len(videos)}] Không thể tải video từ Google Drive (File 404), lưu trữ video...")
+                        _report(f"❌ Video ID {video_id} không thể tải từ Google Drive (File 404 hoặc bị xóa). Bỏ qua!", "ERROR")
                         self.db.update_video_status(video_id, "archived")
                         continue
                 else:
-                    logger.warning(f"[{i}/{len(videos)}] File processed không tồn tại: {proc_path}")
+                    _report(f"❌ File video không tồn tại cho ID: {video_id} (cả local và Drive). Bỏ qua!", "ERROR")
                     continue
 
             logger.info(f"[{i}/{len(videos)}] Processing upload: {video.get('title', 'N/A')[:40]}...")
@@ -538,20 +554,20 @@ class FacebookUploader:
                     except Exception:
                         pass
 
-                # Xóa file trên Google Drive sau khi đăng Facebook thành công
-                if drive_processed_id:
-                    try:
-                        from uploader.google_drive_uploader import GoogleDriveUploader
-                        g_uploader = GoogleDriveUploader(self.current_username or "default")
-                        g_uploader.delete_file(drive_processed_id)
-                        drive_download_id = video.get("drive_download_id")
-                        if drive_download_id:
-                            g_uploader.delete_file(drive_download_id)
-                    except Exception as e:
-                        logger.warning(f"Lỗi khi xóa file trên Drive sau khi đăng FB: {e}")
+                # Xóa file trên Google Drive sau khi đăng Facebook thành công (chỉ khi bật auto_cleanup)
+                if self.config.get("auto_cleanup_after_upload"):
+                    if drive_processed_id:
+                        try:
+                            from uploader.google_drive_uploader import GoogleDriveUploader
+                            g_uploader = GoogleDriveUploader(self.current_username or "default")
+                            g_uploader.delete_file(drive_processed_id)
+                            drive_download_id = video.get("drive_download_id")
+                            if drive_download_id:
+                                g_uploader.delete_file(drive_download_id)
+                        except Exception as e:
+                            logger.warning(f"Lỗi khi xóa file trên Drive sau khi đăng FB: {e}")
 
-                # Auto cleanup nếu bật
-                if self.config.get("auto_cleanup_after_upload", True):
+                    # Auto cleanup file local nếu bật
                     try:
                         p = Path(proc_path)
                         if p.exists():

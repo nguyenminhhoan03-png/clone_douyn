@@ -104,6 +104,8 @@ _CLEAN_RE = re.compile(rf"[^\w\s\.,!?\-{_VIET_CHARS}]")
 
 def _clean_text(raw: str) -> str:
     """Loại bỏ emoji và ký tự không đọc được, chuẩn hoá dấu câu."""
+    # Xóa sạch bất kỳ thẻ [M], [F], [Nam] nào còn sót trước khi lọc ký tự
+    raw = re.sub(r'\[\s*(?:M|F|N|Nam|Nữ|Nu)\s*\]|\(\s*(?:M|F|N|Nam|Nữ|Nu)\s*\)', '', raw, flags=re.IGNORECASE)
     text = _CLEAN_RE.sub("", raw)
     text = text.replace("...", ",").replace("..", ",").strip()
     # Loại bỏ dấu câu ở cuối (edge-tts bug: kết thúc bằng "," gây No audio)
@@ -252,8 +254,19 @@ async def _fetch_single_chunk(
             except Exception as exc:
                 err = str(exc)
                 if "No audio was received" in err:
-                    # Lỗi tham số/text không tương thích với voice (ví dụ text chứa ký tự lạ)
-                    # Chỉ thử lại tối đa 2 lần (attempt 0 và 1) để tránh treo kẹt vô ích hàng chục phút
+                    # Lỗi tham số/text không tương thích với voice (đặc biệt giọng Nam vi-VN-NamMinhNeural hay bị lỗi trên server Edge)
+                    # Tự động cứu hộ bằng giọng Hoài My hạ tone trầm (-20Hz) để bảo toàn 100% âm thanh không bị mất
+                    if voice != "vi-VN-HoaiMyNeural":
+                        try:
+                            fallback_pitch = "-20Hz" if ("male" in voice.lower() or "nam" in voice.lower()) else "+0Hz"
+                            communicate = edge_tts.Communicate(text.strip(), "vi-VN-HoaiMyNeural", rate=rate, pitch=fallback_pitch)
+                            await asyncio.wait_for(communicate.save(out_file), timeout=15.0)
+                            if os.path.exists(out_file) and os.path.getsize(out_file) > 0:
+                                logger.info(f"  🚑 TTS {label} đã cứu hộ thành công bằng Hoài My (Pitch: {fallback_pitch})")
+                                return True
+                        except Exception as rescue_err:
+                            logger.debug(f"Cứu hộ TTS {label} thất bại: {rescue_err}")
+
                     if attempt >= 1:
                         logger.warning(f"TTS {label} bỏ qua sau 2 lần lỗi 'No audio was received' ({text[:40]})")
                         return False
@@ -356,17 +369,12 @@ async def _async_generate_voiceover(
             current_voice = "vbee-hn_female_ngochuyen_vdc_cg"
 
         import re
-        # Bắt các định dạng tag đa dạng mà AI có thể sinh ra: [M], (M), [Nam], [Nữ], v.v.
-        match = re.search(r'\[\s*(M|F|N|Nam|Nữ|Nu)\s*\]|\(\s*(M|F|N|Nam|Nữ|Nu)\s*\)', raw_text, re.IGNORECASE)
-        if match:
-            raw_tag = (match.group(1) or match.group(2)).upper()
-            if 'M' in raw_tag or 'NAM' in raw_tag:
-                tag = 'M'
-            elif 'F' in raw_tag or 'NỮ' in raw_tag or 'NU' in raw_tag:
-                tag = 'F'
-            else:
-                tag = 'N'
-                
+        # Bắt các định dạng tag ở BẤT KỲ VỊ TRÍ NÀO trong câu (đầu câu, cuối câu như "Anh xem|[M]"):
+        tag_match = re.search(r'\[\s*(M|F|N|Nam|Nữ|Nu)\s*\]|\(\s*(M|F|N|Nam|Nữ|Nu)\s*\)|(?:^|\s)(M|F|N|Nam|Nữ|Nu)[:\s]+', raw_text, re.IGNORECASE)
+        if tag_match:
+            raw_tag = (tag_match.group(1) or tag_match.group(2) or tag_match.group(3)).upper()
+            tag = 'M' if ('M' in raw_tag or 'NAM' in raw_tag) else ('F' if ('F' in raw_tag or 'NỮ' in raw_tag or 'NU' in raw_tag) else 'N')
+            
             # CHỈ đổi giọng nếu user chọn chế độ Đa giọng (Multi hoặc vbee-multi)
             if voice in ("Multi", "vbee-multi"):
                 if is_vbee:
@@ -380,10 +388,11 @@ async def _async_generate_voiceover(
                     elif tag in ('F', 'N'):
                         current_voice = "vi-VN-HoaiMyNeural"
             
-            # Xóa tag khỏi text để TTS không đọc nhầm
-            raw_text = re.sub(r'\[\s*(M|F|N|Nam|Nữ|Nu)\s*\]|\(\s*(M|F|N|Nam|Nữ|Nu)\s*\)', '', raw_text, flags=re.IGNORECASE).strip()
-            # Xóa luôn dấu hai chấm dư thừa ở đầu (nếu có, VD: "[Nam]: Chào")
-            raw_text = re.sub(r'^:\s*', '', raw_text).strip()
+        # Xóa triệt để mọi tag và ký tự | dù ở đầu, giữa hay cuối câu để TTS không đọc nhầm
+        raw_text = re.sub(r'\[\s*(?:M|F|N|Nam|Nữ|Nu)\s*\]|\(\s*(?:M|F|N|Nam|Nữ|Nu)\s*\)', '', raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r'^(?:M|F|N|Nam|Nữ|Nu)[:\s]+', '', raw_text, flags=re.IGNORECASE)
+        raw_text = raw_text.replace('|', ' ').strip()
+        raw_text = re.sub(r'^[:|\-\s]+|[:|\-\s]+$', '', raw_text).strip()
 
         start_ms = sub.start.ordinal
         end_ms = sub.end.ordinal

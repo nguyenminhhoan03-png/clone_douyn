@@ -11,6 +11,7 @@ Mục đích: Biến đổi video đủ để TikTok không detect trùng lặp.
 from ast import Tuple
 import os
 import random
+import threading
 import subprocess
 from pathlib import Path
 from typing import Optional, Callable
@@ -118,24 +119,32 @@ class VideoProcessor:
                 from utils.subtitle_detector import detect_subtitle_y_range
                 y_start, h = detect_subtitle_y_range(str(input_path))
                 if custom_h is not None and isinstance(custom_h, (int, float)) and custom_h > 0:
-                    h = float(custom_h)
+                    center_y = y_start + (h / 2.0)
+                    h = min(0.12, float(custom_h))
+                    y_start = max(0.0, min(1.0 - h, center_y - (h / 2.0)))
                 return True, y_start, h
             except Exception as e:
-                logger.warning(f"Lỗi detect subtitle y range: {e}, fallback chuẩn Douyin 8.5%")
-                return True, 0.725, 0.085
+                logger.warning(f"Lỗi detect subtitle y range: {e}, fallback theo tỉ lệ video")
+                try:
+                    w, vid_h = self._get_video_dimensions(str(input_path))
+                    if w > vid_h:
+                        return True, 0.86, 0.085
+                except:
+                    pass
+                return True, 0.72, 0.075
         elif any(k in blur_pos_cfg for k in ("douyin", "20%")):
-            h = float(custom_h) if (custom_h and custom_h > 0) else 0.085
+            h = min(0.12, float(custom_h)) if (custom_h and custom_h > 0) else 0.08
             y_start = max(0.0, 1.0 - 0.20 - h / 2.0)
             return True, y_start, h
         elif any(k in blur_pos_cfg for k in ("cao", "tiktok")):
-            h = float(custom_h) if (custom_h and custom_h > 0) else 0.085
+            h = min(0.12, float(custom_h)) if (custom_h and custom_h > 0) else 0.08
             y_start = max(0.0, 1.0 - 0.35 - h / 2.0)
             return True, y_start, h
         elif any(k in blur_pos_cfg for k in ("trên cùng", "top")):
-            h = float(custom_h) if (custom_h and custom_h > 0) else 0.085
+            h = min(0.12, float(custom_h)) if (custom_h and custom_h > 0) else 0.08
             return True, 0.0, h
         else: # Dưới cùng (Đáy video)
-            h = float(custom_h) if (custom_h and custom_h > 0) else 0.15
+            h = min(0.12, float(custom_h)) if (custom_h and custom_h > 0) else 0.09
             y_start = max(0.0, 1.0 - h)
             return True, y_start, h
 
@@ -371,17 +380,11 @@ class VideoProcessor:
         filter_complex = ""
         last_vid_pad = "0:v"
         
-        # Lấy thông số làm mờ đã tính (hoặc tính mới nếu không bật sub)
-        blur_params = getattr(self, "_current_blur_params", None)
-        if blur_params:
-            blur_enabled, blur_y_start, blur_h = blur_params
-        else:
-            blur_enabled, blur_y_start, blur_h = self._compute_blur_coordinates(str(input_path))
-
+        # Áp dụng thông số làm mờ đã tính cục bộ cho video này (Thread-safe)
         if blur_enabled:
             filter_complex += f"[{last_vid_pad}]split=2[vmain][vtmp];"
-            # Crop dải mờ vừa khít chữ theo tọa độ chính xác và làm mờ gblur
-            filter_complex += f"[vtmp]crop=iw:ih*{blur_h:.4f}:0:ih*{blur_y_start:.4f},gblur=sigma=18[vblur];"
+            # Crop dải mờ vừa khít chữ theo tọa độ chính xác và làm mờ sâu bằng Gaussian Blur (mịn đẹp, không bị giới hạn kích thước khung hình như boxblur)
+            filter_complex += f"[vtmp]crop=iw:ih*{blur_h:.4f}:0:ih*{blur_y_start:.4f},gblur=sigma=18:steps=2[vblur];"
             filter_complex += f"[vmain][vblur]overlay=0:H*{blur_y_start:.4f}[vwithblur];"
             last_vid_pad = "vwithblur"
             logger.debug(f"  ✓ Smart Subtitle Blur áp dụng: Y={blur_y_start*100:.1f}%, H={blur_h*100:.1f}%")
@@ -492,7 +495,10 @@ class VideoProcessor:
         except subprocess.CalledProcessError as e:
             err_msg = e.stderr if hasattr(e, 'stderr') else str(e)
             logger.error(f"FFmpeg failed: {err_msg}")
-            if progress_cb: progress_cb(0, f"Lỗi FFmpeg: {err_msg[:200]}")
+            # Lấy các dòng lỗi thực sự ở cuối stderr thay vì banner đầu file
+            lines = [l.strip() for l in err_msg.strip().splitlines() if l.strip() and not l.startswith("frame=")]
+            real_err = " | ".join(lines[-3:]) if lines else err_msg[:200]
+            if progress_cb: progress_cb(0, f"Lỗi FFmpeg: {real_err[:200]}")
             return None
         except Exception as e:
             logger.error(f"FFmpeg process error: {str(e)}")
@@ -513,7 +519,7 @@ class VideoProcessor:
 
         return str(output_path)
 
-    def process_downloaded_videos(self, titles: dict = None, limit: int = 10, video_ids: list = None, cancel_check: Optional[Callable[[], bool]] = None, progress_callback: Optional[Callable] = None) -> list:
+    def process_downloaded_videos(self, titles: dict = None, limit: int = 10, video_ids: list = None, cancel_check: Optional[Callable[[], bool]] = None, progress_callback: Optional[Callable] = None, max_workers: int = 1) -> list:
         if video_ids:
             # Lấy không giới hạn nếu người dùng đã tick chọn cụ thể
             videos = self.db.get_downloaded_videos(limit=999999)
@@ -529,24 +535,25 @@ class VideoProcessor:
 
         results = []
         titles = titles or {}
-        for video in videos:
+        results_lock = threading.Lock()
+
+        def _process_one(video):
             if cancel_check and cancel_check():
                 logger.warning("Quá trình xử lý video bị ngắt (Stop).")
-                break
+                return None
                 
             video_id = video["video_id"]
             title = titles.get(video_id) or self._generate_title(video)
             
             # Wrap progress callback for this specific video
-            # SENIOR FIX: vid=video_id để "đóng băng" giá trị tại thời điểm tạo closure
             def cb(pct, status, vid=video_id):
                 if progress_callback:
                     progress_callback(vid, pct, status)
                     
+            temp_downloaded_path = None
             try:
                 input_path = video.get("download_path")
                 drive_download_id = video.get("drive_download_id")
-                temp_downloaded_path = None
                 
                 # Cần tải từ Drive nếu không có file local
                 if not input_path or not Path(input_path).exists():
@@ -581,21 +588,47 @@ class VideoProcessor:
                     self.db.update_translated_title(video_id, title)
                     self.db.update_video_status(video_id=video_id, status="processed", processed_path=processed_path, drive_processed_id=drive_processed_id)
                     cb(100, "Hoàn thành!")
-                    results.append({"video_id": video_id, "processed_path": processed_path, "drive_processed_id": drive_processed_id})
+                    item = {"video_id": video_id, "processed_path": processed_path, "drive_processed_id": drive_processed_id}
+                    with results_lock:
+                        results.append(item)
+                    return item
                 else:
                     self.db.update_video_status(video_id=video_id, status="failed", error_message="Processing failed")
                     cb(0, "Lỗi xử lý!")
-                    
-                # Clean up file tải tạm từ Drive nếu có
-                if temp_downloaded_path and Path(temp_downloaded_path).exists():
-                    try: Path(temp_downloaded_path).unlink()
-                    except: pass
+                    return None
 
             except Exception as e:
                 import traceback
                 logger.error(f"Lỗi không xác định khi xử lý video {video_id}: {traceback.format_exc()}")
                 self.db.update_video_status(video_id=video_id, status="failed", error_message=str(e))
                 cb(0, f"Lỗi Code: {str(e)[:100]}")
+                return None
+            finally:
+                # Clean up file tải tạm từ Drive nếu có
+                if temp_downloaded_path and Path(temp_downloaded_path).exists():
+                    try: Path(temp_downloaded_path).unlink()
+                    except: pass
+
+        if max_workers > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            logger.info(f"Khởi chạy đa luồng xử lý video (max_workers={max_workers})...")
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(_process_one, v): v for v in videos}
+                for future in as_completed(futures):
+                    if cancel_check and cancel_check():
+                        logger.warning("Quá trình xử lý video bị ngắt (Stop).")
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(f"Lỗi future xử lý video: {e}")
+        else:
+            for video in videos:
+                if cancel_check and cancel_check():
+                    logger.warning("Quá trình xử lý video bị ngắt (Stop).")
+                    break
+                _process_one(video)
 
         logger.info(f"Processed {len(results)}/{len(videos)} videos")
         return results

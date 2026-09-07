@@ -1114,11 +1114,22 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             fg_color=BG_DARK, border_color=BORDER,
         )
         self._entry_limit.insert(0, "10")
-        self._entry_limit.grid(row=1, column=1, sticky="w", padx=(0, 16), pady=(4, 14))
+        self._entry_limit.grid(row=1, column=1, sticky="w", padx=(0, 16), pady=(4, 6))
+
+        # Threads (Số luồng xử lý song song)
+        lbl_threads = ctk.CTkLabel(opts, text="Số luồng xử lý ❔", font=("Segoe UI", 12), text_color=TEXT_DIM, cursor="hand2")
+        lbl_threads.grid(row=2, column=0, sticky="w", padx=16, pady=4)
+        ToolTip(lbl_threads, "Số lượng video xử lý song song cùng lúc (Khuyên dùng: 2-3 luồng cho Ollama Local; 3-5 luồng cho Cloud API như Groq/Gemini).")
+        self._entry_threads = ctk.CTkEntry(
+            opts, width=80, font=("Segoe UI", 12),
+            fg_color=BG_DARK, border_color=BORDER,
+        )
+        self._entry_threads.insert(0, "2")
+        self._entry_threads.grid(row=2, column=1, sticky="w", padx=(0, 16), pady=(4, 14))
 
         # Cấu hình xếp dọc theo Sidebar
         config_frame = ctk.CTkFrame(opts, fg_color="transparent")
-        config_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 14))
+        config_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 14))
 
         # --- Hình ảnh & Âm thanh ---
         ctk.CTkLabel(config_frame, text="Hiệu ứng cơ bản", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
@@ -1196,25 +1207,47 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         self._opt_sub_pos.pack(side="left", padx=(10, 0))
         ToolTip(self._opt_sub_pos, "Đè lên vùng mờ: Tự động in đè lên đúng tâm dải mờ.\nCao: Đẩy lên cách đáy 35% tránh khung chat TikTok.\nDưới cùng: Nằm ở đáy video (cách đáy 12%).\nGiữa màn hình: Nằm ở chính giữa.")
 
-        def _toggle_blur_widgets():
-            is_on = int(self._sw_blur.get()) == 1
-            st = "normal" if is_on else "disabled"
-            c_bg = BG_DARK if is_on else BORDER
-            self._opt_blur_pos.configure(state=st)
-            self._entry_blur_height.configure(state=st, fg_color=c_bg)
-
-        self._toggle_blur_widgets = _toggle_blur_widgets
-        self._sw_blur = ctk.CTkSwitch(row2, text="Làm mờ phụ đề gốc ❔", font=("Segoe UI", 11), text_color=TEXT_MAIN, command=_toggle_blur_widgets, cursor="hand2")
-        self._sw_blur.select()
-        self._sw_blur.pack(anchor="w", pady=(0, 10))
-        ToolTip(self._sw_blur, "Tự động phát hiện vị trí phụ đề tiếng Trung cũ bằng Computer Vision (OpenCV) và tạo dải mờ vừa khít che đi, sau đó in đè phụ đề tiếng Việt lên đúng vị trí.")
-
         blur_tools = ctk.CTkFrame(row2, fg_color="transparent")
-        blur_tools.pack(fill="x")
+        
         lbl_blur_h = ctk.CTkLabel(blur_tools, text="Vị trí mờ: ❔", font=("Segoe UI", 11), text_color=TEXT_DIM, cursor="hand2")
         lbl_blur_h.pack(side="left", padx=(0, 5))
         ToolTip(lbl_blur_h, "🤖 Tự động quét: AI phân tích khung hình video để tìm chính xác dòng chữ phụ đề tiếng Trung cũ và tạo dải mờ vừa khít.\nHoặc chọn các vị trí cố định theo ý bạn.")
-        
+
+        lbl_blur_pct = ctk.CTkLabel(blur_tools, text="Độ dày:", font=("Segoe UI", 11), text_color=TEXT_DIM)
+        self._entry_blur_height = ctk.CTkEntry(blur_tools, width=46, placeholder_text="Auto", font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_blur_height.insert(0, "Auto")
+        ToolTip(self._entry_blur_height, "Độ dày dải mờ (% chiều cao video). Nhập 'Auto' hoặc để AI tự đo độ cao chữ gốc.")
+
+        def _update_blur_ui(choice=None):
+            if choice is None:
+                choice = self._opt_blur_pos.get()
+            is_on = int(self._sw_blur.get()) == 1
+            is_auto = "tự động" in choice.lower() or "auto" in choice.lower()
+
+            if not is_on:
+                self._opt_blur_pos.configure(state="disabled")
+                lbl_blur_pct.pack_forget()
+                self._entry_blur_height.pack_forget()
+                self._opt_blur_pos.configure(width=220)
+                return
+
+            self._opt_blur_pos.configure(state="normal")
+            if is_auto:
+                # Ẩn ô Độ dày khi chọn AI Auto-Detect vì AI tự đo vừa khít chữ (tránh tràn viền đè chữ)
+                lbl_blur_pct.pack_forget()
+                self._entry_blur_height.pack_forget()
+                self._opt_blur_pos.configure(width=220)
+                self._entry_blur_height.delete(0, "end")
+                self._entry_blur_height.insert(0, "Auto")
+            else:
+                # Hiện ô Độ dày khi chọn vị trí thủ công (Douyin, Dưới cùng...) để tùy biến
+                self._opt_blur_pos.configure(width=165)
+                lbl_blur_pct.pack(side="left", padx=(6, 4))
+                self._entry_blur_height.pack(side="left")
+                self._entry_blur_height.configure(state="normal", fg_color=BG_DARK)
+
+        self._update_blur_ui = _update_blur_ui
+
         def _on_blur_pos_changed(choice):
             self._entry_blur_height.delete(0, "end")
             if "tự động" in choice.lower() or "auto" in choice.lower():
@@ -1226,7 +1259,19 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             elif "trên cùng" in choice.lower():
                 self._entry_blur_height.insert(0, "8%")
             else: # Dưới cùng
-                self._entry_blur_height.insert(0, "15%")
+                self._entry_blur_height.insert(0, "10%")
+            _update_blur_ui(choice)
+
+        def _toggle_blur_widgets():
+            _update_blur_ui()
+
+        self._toggle_blur_widgets = _toggle_blur_widgets
+        self._sw_blur = ctk.CTkSwitch(row2, text="Làm mờ phụ đề gốc ❔", font=("Segoe UI", 11), text_color=TEXT_MAIN, command=_toggle_blur_widgets, cursor="hand2")
+        self._sw_blur.select()
+        self._sw_blur.pack(anchor="w", pady=(0, 10))
+        ToolTip(self._sw_blur, "Tự động phát hiện vị trí phụ đề tiếng Trung cũ bằng Computer Vision (OpenCV) và tạo dải mờ vừa khít che đi, sau đó in đè phụ đề tiếng Việt lên đúng vị trí.")
+
+        blur_tools.pack(fill="x")
 
         blur_pos_values = [
             "🤖 Tự động (AI Auto-Detect)",
@@ -1236,19 +1281,15 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             "Trên cùng (Đỉnh video)"
         ]
         self._opt_blur_pos = ctk.CTkOptionMenu(
-            blur_tools, values=blur_pos_values, width=205, font=("Segoe UI", 11, "bold"),
+            blur_tools, values=blur_pos_values, width=220, font=("Segoe UI", 11, "bold"),
             fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD,
             command=_on_blur_pos_changed
         )
         self._opt_blur_pos.set("🤖 Tự động (AI Auto-Detect)")
-        self._opt_blur_pos.pack(side="left", padx=(0, 8))
-
-        lbl_blur_pct = ctk.CTkLabel(blur_tools, text="Độ dày:", font=("Segoe UI", 11), text_color=TEXT_DIM)
-        lbl_blur_pct.pack(side="left", padx=(0, 4))
-        self._entry_blur_height = ctk.CTkEntry(blur_tools, width=48, placeholder_text="Auto", font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
-        self._entry_blur_height.insert(0, "Auto")
-        self._entry_blur_height.pack(side="left")
-        ToolTip(self._entry_blur_height, "Độ dày dải mờ (% chiều cao video). Nhập 'Auto' để AI tự đo độ cao chữ gốc.")
+        self._opt_blur_pos.pack(side="left", padx=(0, 4))
+        
+        # Khởi tạo trạng thái ẩn ô độ dày vì mặc định đang là Auto-Detect
+        _update_blur_ui("🤖 Tự động (AI Auto-Detect)")
         
         ctk.CTkLabel(row2, text="💡 Chọn Ollama (Local) hoặc API Key ở mục Settings để AI dịch Sub chuẩn nhất", font=("Segoe UI", 10, "italic"), text_color="#F9A826").pack(anchor="w", pady=(10, 0))
 
@@ -1688,7 +1729,8 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             "bg_vol": self._entry_bg_vol.get(),
             "sw_yt_crop": self._sw_yt_crop.get(),
             "sw_yt_noise": self._sw_yt_noise.get(),
-            "opt_logo_pos": self._opt_logo_pos.get()
+            "opt_logo_pos": self._opt_logo_pos.get(),
+            "process_threads": getattr(self, "_entry_threads", ctk.CTkEntry(self)).get()
         }
         from config.settings import BASE_DIR
         try:
@@ -1743,9 +1785,14 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
                         b_h = "Auto"
                     self._entry_blur_height.delete(0, "end")
                     self._entry_blur_height.insert(0, b_h)
+                if hasattr(self, "_update_blur_ui"):
+                    self._update_blur_ui(self._opt_blur_pos.get())
                 if "bg_vol" in config:
                     self._entry_bg_vol.delete(0, "end")
                     self._entry_bg_vol.insert(0, config["bg_vol"])
+                if "process_threads" in config and hasattr(self, "_entry_threads"):
+                    self._entry_threads.delete(0, "end")
+                    self._entry_threads.insert(0, str(config["process_threads"]))
                     
                 if "sw_yt_crop" in config:
                     self._sw_yt_crop.select() if config["sw_yt_crop"] else self._sw_yt_crop.deselect()
@@ -1804,9 +1851,15 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
 
         title = self._entry_title.get().strip() or None
         limit = int(self._entry_limit.get() or 10)
-        self._run_in_thread(self._do_process, title, limit, username)
+        try:
+            threads = int(self._entry_threads.get().strip() or 2)
+            if threads < 1: threads = 1
+            if threads > 10: threads = 10
+        except Exception:
+            threads = 2
+        self._run_in_thread(self._do_process, title, limit, username, threads)
 
-    def _do_process(self, title, limit, username):
+    def _do_process(self, title, limit, username, threads=2):
         from processor.video_processor import VideoProcessor
         from database.db_manager import DatabaseManager
         from config.settings import PROCESSOR_CONFIG
@@ -1832,6 +1885,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         # Lấy danh sách ID đã tick
         selected_ids = [vid for vid, var in self._checkboxes.items() if var.get()]
         self._log(f"[DEBUG] Đã phát hiện {len(selected_ids)} video được tick chọn.", "INFO")
+        self._log(f"Bắt đầu xử lý {len(selected_ids)} video với {threads} luồng song song...", "INFO")
         
         if not selected_ids:
             self._log("Không có video nào được chọn!", WARNING)
@@ -1962,7 +2016,8 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             limit=limit, 
             video_ids=selected_ids, 
             cancel_check=lambda: self.cancel_flag,
-            progress_callback=progress_cb
+            progress_callback=progress_cb,
+            max_workers=threads
         )
         if self.cancel_flag:
             self._log("Đã ngắt quá trình xử lý (Stop).", "WARNING")
@@ -2127,9 +2182,10 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._btn_rename_author_up.pack(side="left", padx=(6, 0))
         
         ctk.CTkButton(list_header, text="🔄 Refresh", width=60, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._load_videos).pack(side="right")
-        ctk.CTkButton(list_header, text="🗑 Xóa", width=60, height=24, fg_color="#e74c3c", hover_color="#c0392b", command=self._delete_selected).pack(side="right", padx=(0, 10))
-        ctk.CTkButton(list_header, text="⏪ Về Process", width=90, height=24, fg_color="#f39c12", hover_color="#e67e22", command=self._revert_to_process).pack(side="right", padx=(0, 10))
-        ctk.CTkButton(list_header, text="☑ Chọn", width=60, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._toggle_selection).pack(side="right", padx=(0, 10))
+        ctk.CTkButton(list_header, text="🧹 Dọn rác", width=65, height=24, fg_color="#7f8c8d", hover_color="#95a5a6", command=self._clean_missing_videos).pack(side="right", padx=(0, 6))
+        ctk.CTkButton(list_header, text="🗑 Xóa", width=60, height=24, fg_color="#e74c3c", hover_color="#c0392b", command=self._delete_selected).pack(side="right", padx=(0, 6))
+        ctk.CTkButton(list_header, text="⏪ Về Process", width=85, height=24, fg_color="#f39c12", hover_color="#e67e22", command=self._revert_to_process).pack(side="right", padx=(0, 6))
+        ctk.CTkButton(list_header, text="☑ Chọn", width=55, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._toggle_selection).pack(side="right", padx=(0, 6))
         
         self._video_list_frame = ctk.CTkScrollableFrame(left_frame, fg_color=BG_DARK, border_color=BORDER, border_width=1)
         self._video_list_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 12))
@@ -2208,6 +2264,25 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             fg_color="#2980b9", hover_color="#3498db", command=self._distribute_all
         )
         self._btn_dist_all.pack(fill="x", pady=(0, 6))
+
+        # --- Cấu hình Đa luồng Upload (Concurrent Threads) ---
+        row_threads = ctk.CTkFrame(config_frame, fg_color="transparent")
+        row_threads.pack(fill="x", pady=(2, 6))
+
+        lbl_threads = ctk.CTkLabel(row_threads, text="🚀 Số luồng up: ❔", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN, cursor="hand2")
+        lbl_threads.pack(side="left", padx=(0, 6))
+        ToolTip(lbl_threads, "Số lượng tài khoản / trình duyệt chạy upload đồng thời cùng lúc.\nVí dụ: Nhập 5 thì hệ thống sẽ mở 5 luồng upload song song cho 5 tài khoản thay vì chờ lần lượt từng nick.")
+
+        self._entry_upload_threads = ctk.CTkEntry(row_threads, width=45, font=("Segoe UI", 11, "bold"), fg_color=BG_DARK, border_color=BORDER, justify="center")
+        self._entry_upload_threads.insert(0, "3")
+        self._entry_upload_threads.pack(side="left", padx=(0, 6))
+
+        for t_val in ["1", "3", "5"]:
+            ctk.CTkButton(
+                row_threads, text=f"{t_val} luồng", width=52, height=24, font=("Segoe UI", 10),
+                fg_color=BORDER, hover_color=BG_CARD,
+                command=lambda v=t_val: self._set_upload_threads(v)
+            ).pack(side="left", padx=(0, 3))
 
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
 
@@ -2558,6 +2633,69 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             self._log(f"Đã đưa {len(selected_ids)} video trở lại hàng chờ Xử lý.", "SUCCESS")
             self._load_videos()
 
+    def _clean_missing_videos(self):
+        """Quét và tự động ẩn (archived) các video trong tab Upload mà file đã bị xóa trên máy tính và Google Drive."""
+        from database.db_manager import DatabaseManager
+        from auth_client import auth_client
+        from pathlib import Path
+        
+        db = DatabaseManager()
+        current_user = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        videos = db.get_pending_videos(limit=1000, username=current_user)
+        if not videos:
+            messagebox.showinfo("Dọn dẹp", "Không có video nào trong hàng chờ Upload.")
+            return
+
+        if not messagebox.askyesno("Dọn dẹp video mất file", f"Hệ thống sẽ quét {len(videos)} video trong tab Upload và tự động ẩn (lưu trữ) những video không còn file trên máy và đã bị xóa trên Google Drive.\n\nBạn có muốn thực hiện không?"):
+            return
+
+        self._log("🔍 Đang kiểm tra file cục bộ và Google Drive...", "INFO")
+        
+        # Lấy danh sách ID file còn sống trên Google Drive (nhanh ~0.5s)
+        drive_file_ids = set()
+        try:
+            from uploader.google_drive_uploader import GoogleDriveUploader
+            uploader = GoogleDriveUploader(current_user)
+            uploader.authenticate()
+            page_token = None
+            while True:
+                res = uploader.service.files().list(
+                    pageSize=1000, 
+                    fields='nextPageToken, files(id, trashed)',
+                    pageToken=page_token,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True
+                ).execute()
+                for f in res.get('files', []):
+                    if not f.get('trashed'):
+                        drive_file_ids.add(f['id'])
+                page_token = res.get('nextPageToken')
+                if not page_token:
+                    break
+        except Exception as e:
+            self._log(f"⚠️ Không thể kiểm tra Google Drive: {e}. Sẽ chỉ kiểm tra file local.", "WARNING")
+            drive_file_ids = None
+
+        archived_count = 0
+        for v in videos:
+            vid = v["video_id"]
+            p_path = v.get("processed_path")
+            local_ok = bool(p_path and Path(p_path).exists())
+            
+            d_id = v.get("drive_processed_id") or v.get("drive_download_id")
+            drive_ok = False
+            if drive_file_ids is not None:
+                drive_ok = bool(d_id and d_id in drive_file_ids)
+            else:
+                drive_ok = bool(d_id)
+
+            if not local_ok and not drive_ok:
+                db.update_video_status(vid, "archived")
+                archived_count += 1
+
+        self._log(f"🧹 Đã dọn dẹp và ẩn {archived_count} video mất file/đã xóa trên Drive.", "SUCCESS")
+        self._load_videos()
+
     def _rename_author_dialog(self):
         show_rename_author_dialog(self, self._opt_author_filter_up, self._load_videos)
 
@@ -2652,8 +2790,19 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         
         # Override limit bằng đúng số lượng video được chọn để đảm bảo up đủ
         limit = len(selected_vids)
-        
-        self._run_in_thread(self._do_upload, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, video_accounts_fb_dict, cleanup_upload, do_tt, do_yt, do_fb)
+
+        try:
+            threads_str = getattr(self, "_entry_upload_threads", None)
+            threads_val = int(threads_str.get().strip()) if threads_str else 3
+            upload_threads = max(1, min(20, threads_val))
+        except Exception:
+            upload_threads = 3
+
+        self._run_in_thread(
+            self._do_upload, limit, selected_vids, custom_captions_dict,
+            video_accounts_tt_dict, video_accounts_yt_dict, video_accounts_fb_dict,
+            cleanup_upload, do_tt, do_yt, do_fb, upload_threads
+        )
 
     def _on_task_done(self):
         super()._on_task_done()
@@ -2661,7 +2810,8 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self.after(0, lambda: self._btn_upload.configure(text="▶  Bắt đầu Upload", state="normal", fg_color="#e74c3c", hover_color="#c0392b"))
         self.after(0, lambda: self._status_badge.set("Xong", SUCCESS) if not getattr(self, "cancel_flag", False) else self._status_badge.set("Đã dừng", DANGER))
 
-    async def _async_upload_groups(self, limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb):
+    async def _async_upload_groups(self, limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb, max_workers=3):
+        import asyncio
         from database.db_manager import DatabaseManager
         from config.settings import COOKIES_DIR
         db = DatabaseManager()
@@ -2669,121 +2819,186 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         from auth_client import auth_client
         current_user = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
         
-        if do_tt:
-            from uploader.tiktok_uploader import TikTokUploader
-            total_uploaded = 0
-            for account_file, vids in account_groups_tt.items():
-                if self.cancel_flag:
-                    self._log("Đã ngắt quá trình upload (Stop).", "WARNING")
-                    break
-                if total_uploaded >= limit:
-                    break
-                    
-                vids_to_upload = vids[:limit - total_uploaded]
-                
-                self._log(f"Bắt đầu upload {len(vids_to_upload)} video lên TikTok bằng {account_file}...", "INFO")
-                user_dir = self._get_user_cookies_dir()
-                cookies_path = str(user_dir / account_file)
-                
-                # Lấy proxy từ file
-                proxy_str = None
-                try:
-                    import json
-                    proxy_file = user_dir / "proxies.json"
-                    if proxy_file.exists():
-                        with open(proxy_file, "r", encoding="utf-8") as f:
-                            proxies = json.load(f)
-                            proxy_str = proxies.get(account_file)
-                except Exception:
-                    pass
-                    
-                uploader = TikTokUploader(db=db, cookies_file=cookies_path, proxy=proxy_str, username=current_user)
-                
-                captions_to_pass = {
-                    vid: custom_captions_dict[vid] 
-                    for vid in vids_to_upload if vid in custom_captions_dict
-                }
-                
-                try:
-                    results = await uploader.upload_pending_videos(
-                        limit=len(vids_to_upload), 
-                        video_ids=vids_to_upload,
-                        custom_captions=captions_to_pass,
-                        cancel_check=lambda: self.cancel_flag
-                    )
-                    total_uploaded += len(results)
-                    self._log(f"✅ Upload xong {len(results)} videos lên TikTok ({account_file})!", "SUCCESS")
-                except Exception as e:
-                    self._log(f"Lỗi upload TikTok {account_file}: {e}", "ERROR")
-                finally:
-                    await uploader.close()
+        max_workers = max(1, int(max_workers))
+        self._log(f"⚙️ Chế độ Upload: Đa luồng ({max_workers} luồng đồng thời mỗi nền tảng)", "INFO")
 
-        if do_yt:
-            from uploader.youtube_uploader import YouTubeUploader
-            total_uploaded = 0
-            for account_file, vids in account_groups_yt.items():
-                if total_uploaded >= limit:
-                    break
-                    
-                vids_to_upload = vids[:limit - total_uploaded]
-                
-                self._log(f"Bắt đầu upload {len(vids_to_upload)} video lên YouTube bằng {account_file}...", "INFO")
-                user_dir = self._get_user_cookies_dir()
-                token_path = str(user_dir / account_file)
-                yt_uploader = YouTubeUploader(db=db, token_file=token_path, username=current_user)
-                
-                captions_to_pass = {
-                    vid: custom_captions_dict[vid] 
-                    for vid in vids_to_upload if vid in custom_captions_dict
-                }
-                
-                try:
-                    results = await yt_uploader.upload_pending_videos(
-                        limit=len(vids_to_upload), 
-                        video_ids=vids_to_upload,
-                        custom_captions=captions_to_pass,
-                        cancel_check=lambda: self.cancel_flag
-                    )
-                    total_uploaded += len(results)
-                    self._log(f"✅ Upload xong {len(results)} videos lên YouTube ({account_file})!", "SUCCESS")
-                except Exception as e:
-                    self._log(f"Lỗi upload YouTube {account_file}: {e}", "ERROR")
-                finally:
-                    await yt_uploader.close()
+        semaphore_tt = asyncio.Semaphore(max_workers)
+        window_slots = asyncio.Queue()
+        for i in range(max_workers):
+            await window_slots.put(i)
 
-        if do_fb:
-            from uploader.facebook_uploader import FacebookUploader
-            total_uploaded = 0
-            for account_file, vids in account_groups_fb.items():
-                if total_uploaded >= limit:
-                    break
-                    
-                vids_to_upload = vids[:limit - total_uploaded]
-                self._log(f"Bắt đầu upload {len(vids_to_upload)} video lên Facebook Reels bằng {account_file}...", "INFO")
-                user_dir = self._get_user_cookies_dir()
-                token_path = str(user_dir / account_file)
-                fb_uploader = FacebookUploader(db=db, token_file=token_path, username=current_user)
+        semaphore_yt = asyncio.Semaphore(max_workers)
+        semaphore_fb = asyncio.Semaphore(max_workers)
+
+        platform_tasks = []
+
+        # ─── NỀN TẢNG 1: TIKTOK ───
+        if do_tt and account_groups_tt:
+            async def _run_all_tt():
+                from uploader.tiktok_uploader import TikTokUploader
+                self._log(f"🎬 Bắt đầu upload TikTok cho {len(account_groups_tt)} tài khoản ({max_workers} luồng song song)...", "INFO")
                 
-                captions_to_pass = {
-                    vid: custom_captions_dict[vid] 
-                    for vid in vids_to_upload if vid in custom_captions_dict
-                }
+                async def _upload_single_tt(account_file, vids):
+                    if self.cancel_flag:
+                        return
+                    async with semaphore_tt:
+                        if self.cancel_flag:
+                            return
+                        slot = await window_slots.get()
+                        try:
+                            self._log(f"🚀 [TikTok - Luồng {slot+1}] Bắt đầu upload {len(vids)} video ({account_file})...", "INFO")
+                            user_dir = self._get_user_cookies_dir()
+                            cookies_path = str(user_dir / account_file)
+                            
+                            proxy_str = None
+                            try:
+                                import json
+                                proxy_file = user_dir / "proxies.json"
+                                if proxy_file.exists():
+                                    with open(proxy_file, "r", encoding="utf-8") as f:
+                                        proxies = json.load(f)
+                                        proxy_str = proxies.get(account_file)
+                            except Exception:
+                                pass
+                                
+                            uploader = TikTokUploader(db=db, cookies_file=cookies_path, proxy=proxy_str, window_idx=slot, username=current_user)
+                            
+                            captions_to_pass = {
+                                vid: custom_captions_dict[vid] 
+                                for vid in vids if vid in custom_captions_dict
+                            }
+                            
+                            def _tt_log_cb(msg, lvl="INFO"):
+                                self._log(f"[TikTok - Luồng {slot+1}] {msg}", lvl)
+
+                            try:
+                                results = await uploader.upload_pending_videos(
+                                    limit=len(vids), 
+                                    video_ids=vids,
+                                    custom_captions=captions_to_pass,
+                                    cancel_check=lambda: self.cancel_flag,
+                                    log_callback=_tt_log_cb
+                                )
+                                if len(results) > 0:
+                                    self._log(f"✅ [TikTok - Luồng {slot+1}] Upload xong {len(results)}/{len(vids)} video ({account_file})!", "SUCCESS")
+                                else:
+                                    self._log(f"⚠️ [TikTok - Luồng {slot+1}] Không upload được video nào ({account_file})! Vui lòng kiểm tra lại file.", "WARNING")
+                            except Exception as e:
+                                self._log(f"❌ [TikTok - Luồng {slot+1}] Lỗi upload TikTok {account_file}: {e}", "ERROR")
+                            finally:
+                                await uploader.close()
+                        finally:
+                            await window_slots.put(slot)
+
+                tt_tasks = [_upload_single_tt(acc, vids) for acc, vids in account_groups_tt.items()]
+                await asyncio.gather(*tt_tasks, return_exceptions=True)
+
+            platform_tasks.append(_run_all_tt())
+
+        # ─── NỀN TẢNG 2: YOUTUBE ───
+        if do_yt and account_groups_yt:
+            async def _run_all_yt():
+                from uploader.youtube_uploader import YouTubeUploader
+                self._log(f"🎬 Bắt đầu upload YouTube cho {len(account_groups_yt)} tài khoản ({max_workers} luồng song song)...", "INFO")
                 
-                try:
-                    results = await fb_uploader.upload_pending_videos(
-                        limit=len(vids_to_upload), 
-                        video_ids=vids_to_upload,
-                        custom_captions=captions_to_pass,
-                        cancel_check=lambda: self.cancel_flag
-                    )
-                    total_uploaded += len(results)
-                    self._log(f"✅ Upload xong {len(results)} videos lên Facebook Reels ({account_file})!", "SUCCESS")
-                except Exception as e:
-                    self._log(f"Lỗi upload Facebook Reels {account_file}: {e}", "ERROR")
-                finally:
-                    await fb_uploader.close()
+                async def _upload_single_yt(account_file, vids, worker_idx):
+                    if self.cancel_flag:
+                        return
+                    async with semaphore_yt:
+                        if self.cancel_flag:
+                            return
+                        self._log(f"🚀 [YouTube - Luồng {worker_idx+1}] Bắt đầu upload {len(vids)} video ({account_file})...", "INFO")
+                        user_dir = self._get_user_cookies_dir()
+                        token_path = str(user_dir / account_file)
+                        yt_uploader = YouTubeUploader(db=db, token_file=token_path, username=current_user)
+                        
+                        captions_to_pass = {
+                            vid: custom_captions_dict[vid] 
+                            for vid in vids if vid in custom_captions_dict
+                        }
+                        
+                        def _yt_log_cb(msg, lvl="INFO"):
+                            self._log(f"[YouTube - Luồng {worker_idx+1}] {msg}", lvl)
+
+                        try:
+                            results = await yt_uploader.upload_pending_videos(
+                                limit=len(vids), 
+                                video_ids=vids,
+                                custom_captions=captions_to_pass,
+                                cancel_check=lambda: self.cancel_flag,
+                                log_callback=_yt_log_cb
+                            )
+                            if len(results) > 0:
+                                self._log(f"✅ [YouTube - Luồng {worker_idx+1}] Upload xong {len(results)}/{len(vids)} video ({account_file})!", "SUCCESS")
+                            else:
+                                self._log(f"⚠️ [YouTube - Luồng {worker_idx+1}] Không upload được video nào ({account_file})! Vui lòng kiểm tra lại file.", "WARNING")
+                        except Exception as e:
+                            self._log(f"❌ [YouTube - Luồng {worker_idx+1}] Lỗi upload YouTube {account_file}: {e}", "ERROR")
+                        finally:
+                            await yt_uploader.close()
+
+                yt_tasks = [_upload_single_yt(acc, vids, i % max_workers) for i, (acc, vids) in enumerate(account_groups_yt.items())]
+                await asyncio.gather(*yt_tasks, return_exceptions=True)
+
+            platform_tasks.append(_run_all_yt())
+
+        # ─── NỀN TẢNG 3: FACEBOOK REELS ───
+        if do_fb and account_groups_fb:
+            async def _run_all_fb():
+                from uploader.facebook_uploader import FacebookUploader
+                self._log(f"🎬 Bắt đầu upload Facebook Reels cho {len(account_groups_fb)} tài khoản ({max_workers} luồng song song)...", "INFO")
+                
+                async def _upload_single_fb(account_file, vids, worker_idx):
+                    if self.cancel_flag:
+                        return
+                    async with semaphore_fb:
+                        if self.cancel_flag:
+                            return
+                        self._log(f"🚀 [Facebook - Luồng {worker_idx+1}] Bắt đầu upload {len(vids)} video ({account_file})...", "INFO")
+                        user_dir = self._get_user_cookies_dir()
+                        token_path = str(user_dir / account_file)
+                        fb_uploader = FacebookUploader(db=db, token_file=token_path, username=current_user)
+                        
+                        captions_to_pass = {
+                            vid: custom_captions_dict[vid] 
+                            for vid in vids if vid in custom_captions_dict
+                        }
+                        
+                        def _fb_log_cb(msg, lvl="INFO"):
+                            self._log(f"[Facebook - Luồng {worker_idx+1}] {msg}", lvl)
+
+                        try:
+                            results = await fb_uploader.upload_pending_videos(
+                                limit=len(vids), 
+                                video_ids=vids,
+                                custom_captions=captions_to_pass,
+                                cancel_check=lambda: self.cancel_flag,
+                                log_callback=_fb_log_cb
+                            )
+                            if len(results) > 0:
+                                self._log(f"✅ [Facebook - Luồng {worker_idx+1}] Upload xong {len(results)}/{len(vids)} video ({account_file})!", "SUCCESS")
+                            else:
+                                self._log(f"⚠️ [Facebook - Luồng {worker_idx+1}] Không upload được video nào ({account_file})! Vui lòng kiểm tra lại file.", "WARNING")
+                        except Exception as e:
+                            self._log(f"❌ [Facebook - Luồng {worker_idx+1}] Lỗi upload Facebook Reels {account_file}: {e}", "ERROR")
+                        finally:
+                            await fb_uploader.close()
+
+                fb_tasks = [_upload_single_fb(acc, vids, i % max_workers) for i, (acc, vids) in enumerate(account_groups_fb.items())]
+                await asyncio.gather(*fb_tasks, return_exceptions=True)
+
+            platform_tasks.append(_run_all_fb())
+
+        # ⚡ Chạy ĐỒNG THỜI cả 3 nền tảng (TikTok, YouTube, Facebook Reels) song song
+        if platform_tasks:
+            await asyncio.gather(*platform_tasks, return_exceptions=True)
                 
         self.after(0, self._load_videos)
+
+    def _set_upload_threads(self, val):
+        if hasattr(self, "_entry_upload_threads"):
+            self._entry_upload_threads.delete(0, "end")
+            self._entry_upload_threads.insert(0, str(val))
 
 
     def _apply_account_to_all(self):
@@ -2998,7 +3213,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         msg = f"Kết quả phân bổ {vids_per_acc} video/tài khoản:\n\n" + "\n".join(results)
         messagebox.showinfo("Phân bổ tự động hoàn tất", msg)
 
-    def _do_upload(self, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, video_accounts_fb_dict, cleanup_upload, do_tt, do_yt, do_fb):
+    def _do_upload(self, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, video_accounts_fb_dict, cleanup_upload, do_tt, do_yt, do_fb, upload_threads=3):
         from config.settings import TIKTOK_CONFIG, YOUTUBE_CONFIG, FACEBOOK_CONFIG
         TIKTOK_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
         YOUTUBE_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
@@ -3037,7 +3252,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                 asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
             except Exception:
                 pass
-        asyncio.run(self._async_upload_groups(limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb))
+        asyncio.run(self._async_upload_groups(limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb, upload_threads))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -4072,7 +4287,7 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         
         row1 = ctk.CTkFrame(cfg, fg_color="transparent")
         row1.grid(row=0, column=0, sticky="ew", padx=20, pady=16)
-        row1.grid_columnconfigure(5, weight=1) # Đẩy nút Start sang phải
+        row1.grid_columnconfigure(6, weight=1) # Đẩy nút Start sang phải
 
         ctk.CTkLabel(row1, text="📜 Kịch bản Nuôi:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=0, column=0, padx=(0, 10))
         
@@ -4095,12 +4310,38 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         self._opt_threads.grid(row=0, column=4, padx=(0, 10))
         self._opt_threads.set("3")
 
+        # Bật/Tắt Hiện Trình Duyệt (Headless)
+        self._sw_show_browser = ctk.CTkSwitch(
+            row1, text="Hiện trình duyệt ❔", font=("Segoe UI", 11, "bold"),
+            text_color=TEXT_MAIN, cursor="hand2"
+        )
+        self._sw_show_browser.select() # Mặc định BẬT (Hiện trình duyệt)
+        self._sw_show_browser.grid(row=0, column=5, padx=(10, 15))
+        ToolTip(self._sw_show_browser, "BẬT (ON): Mở cửa sổ trình duyệt Chrome để xem trực tiếp các thao tác lướt, tim, xem video.\nTẮT (OFF): Chạy ẩn ngầm (Headless) tiết kiệm tối đa RAM & CPU, không mở cửa sổ làm phiền màn hình làm việc.")
+
+        # Nạp cấu hình lưu trước đó (nếu có)
+        try:
+            from config.settings import BASE_DIR
+            import json
+            cfg_path = BASE_DIR / "config" / "farm_ui.json"
+            if cfg_path.exists():
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    f_cfg = json.load(f)
+                    if "show_browser" in f_cfg:
+                        if f_cfg["show_browser"]:
+                            self._sw_show_browser.select()
+                        else:
+                            self._sw_show_browser.deselect()
+                    if "threads" in f_cfg and str(f_cfg["threads"]) in ["1", "2", "3", "5", "10", "15"]:
+                        self._opt_threads.set(str(f_cfg["threads"]))
+        except Exception:
+            pass
 
         self._btn_start = ctk.CTkButton(
             row1, text="▶  Bắt đầu Nuôi", height=36, font=("Segoe UI", 13, "bold"),
             fg_color=SUCCESS, hover_color="#27ae60", command=self._start_farm
         )
-        self._btn_start.grid(row=0, column=5, sticky="e")
+        self._btn_start.grid(row=0, column=6, sticky="e")
 
         # Layout cột: Trái (Danh sách Acc), Phải (Log)
         split = ctk.CTkFrame(self, fg_color="transparent")
@@ -4262,9 +4503,26 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
             threads = int(self._opt_threads.get())
         except:
             threads = 3
-        self._run_in_thread(self._do_farm, selected, selected_flow, proxies, max_concurrent=threads)
 
-    async def _do_farm(self, accounts, flow, proxies=None, max_concurrent=3):
+        show_browser = int(self._sw_show_browser.get()) == 1
+        headless = not show_browser
+
+        # Lưu cấu hình đã chọn
+        try:
+            from config.settings import BASE_DIR
+            import json
+            cfg_path = BASE_DIR / "config" / "farm_ui.json"
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "show_browser": show_browser,
+                    "threads": self._opt_threads.get()
+                }, f, indent=2)
+        except Exception:
+            pass
+
+        self._run_in_thread(self._do_farm, selected, selected_flow, proxies, max_concurrent=threads, headless=headless)
+
+    async def _do_farm(self, accounts, flow, proxies=None, max_concurrent=3, headless=False):
         import random
         import asyncio
         from uploader.tiktok_uploader import TikTokUploader
@@ -4290,16 +4548,17 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
                 # Lấy tên ngắn gọn để làm tiền tố Log (VD: tiktok_1)
                 short_name = acc.split('_')[1] if len(acc.split('_')) > 1 else acc[:8]
                 prefix = f"[Nick_{short_name}]"
+                mode_str = "Ẩn (Headless)" if headless else "Hiện trình duyệt"
                 
                 self._log(f"-------------------------------------", "INFO")
-                self._log(f"{prefix} 🌱 Bắt đầu Kịch bản: {flow.get('name')}", "INFO")
+                self._log(f"{prefix} 🌱 Bắt đầu Kịch bản: {flow.get('name')} | Chế độ: {mode_str}", "INFO")
                 if proxy_str:
                     display_proxy = proxy_str.split("@")[-1] if "@" in proxy_str else proxy_str
                     self._log(f"{prefix} 🌐 Proxy: {display_proxy}", "INFO")
                 else:
                     self._log(f"{prefix} ⚠️ Dùng mạng thật (Không Proxy)", "WARNING")
                 
-                uploader = TikTokUploader(cookies_file=cookie_path, proxy=proxy_str, window_idx=idx)
+                uploader = TikTokUploader(cookies_file=cookie_path, proxy=proxy_str, window_idx=idx, headless=headless)
                 try:
                     def update_cb(msg, lvl="INFO"):
                         if "Đang xem video" not in msg: 
