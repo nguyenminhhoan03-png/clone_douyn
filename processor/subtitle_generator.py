@@ -147,12 +147,12 @@ class SubtitleGenerator:
                 cmd = [
                     FFMPEG_BIN, "-y", "-i", str(video_path),
                     "-vn", "-ac", "1", "-ar", "16000",
-                    "-af", "highpass=f=100,lowpass=f=7500,volume=1.5",
+                    "-af", "highpass=f=80,dynaudnorm=f=125:g=15:p=0.95:m=10.0",
                     clean_audio_path
                 ]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 audio_input = clean_audio_path
-                logger.debug("  ✓ Đã trích xuất & lọc sạch tạp âm giọng nói cho Whisper")
+                logger.debug("  ✓ Đã trích xuất & khuếch đại giọng nói thì thầm/tự nói (DynAudNorm) cho Whisper")
             except Exception as e:
                 logger.debug(f"Audio extraction fallback: {e}")
                 audio_input = str(video_path)
@@ -167,14 +167,15 @@ class SubtitleGenerator:
                         language=src_lang,
                         temperature=[0.0, 0.2],
                         condition_on_previous_text=False,
-                        compression_ratio_threshold=2.6,
-                        no_speech_threshold=0.75,
+                        compression_ratio_threshold=2.4,
+                        no_speech_threshold=0.85,
+                        initial_prompt="这是一段普通话/东北话短剧对话，包含人物对话、旁白和内心独白。",
                         vad_filter=True,
                         vad_parameters=dict(
-                            threshold=0.35,
-                            min_speech_duration_ms=150,
-                            min_silence_duration_ms=350,
-                            speech_pad_ms=200
+                            threshold=0.20,
+                            min_speech_duration_ms=100,
+                            min_silence_duration_ms=500,
+                            speech_pad_ms=300
                         ),
                         word_timestamps=True
                     )
@@ -453,9 +454,6 @@ class SubtitleGenerator:
                         t_text = trans_dict.get(idx, data['original_text'])
                         t_text = t_text.strip().strip('|').strip()
                         
-                        # LOG: Hiển thị text gốc và text dịch để User kiểm tra chất lượng
-                        logger.info(f"[Dịch Sub {idx+1}] {data['original_text']} ➔ {t_text}")
-                        
                         # Bộ lọc làm sạch lặp từ bất thường (rút gọn lặp từ thay vì drop bỏ cả câu):
                         if len(t_text) > 40:
                             words = t_text.split()
@@ -480,6 +478,13 @@ class SubtitleGenerator:
                             t_text = f"[{tag_found}] {clean_text}"
                         else:
                             t_text = clean_text
+
+                        tag_str = f"Tag: {tag_found}" if tag_found else "Tag: Chuẩn"
+                        sub_log_msg = f"📝 [Sub #{segment_idx:02d}] [{data['start_time']} ➔ {data['end_time']}] 🇨🇳 Gốc: \"{data['original_text']}\" ➔ 🇻🇳 Sub: \"{clean_text}\" ({tag_str})"
+                        logger.info(sub_log_msg)
+                        if progress_cb:
+                            try: progress_cb(15, f"[DEBUG] {sub_log_msg}")
+                            except Exception: pass
                         
                         # Chống ngâm/treo phụ đề cũ trên màn hình khi nhân vật đã dứt lời:
                         start_sec = data.get("start", 0.0)

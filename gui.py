@@ -1,4 +1,3 @@
-from ui.tabs.livestream_tab import LivestreamTab
 """
 GUI Entry Point - Giao diện desktop cho Douyin Crawler & TikTok Auto-Uploader
 Yêu cầu: pip install customtkinter
@@ -34,490 +33,25 @@ from tkinter import filedialog, messagebox
 # ─── Project root vào sys.path ───────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
 
-# ─── Theme ───────────────────────────────────────────────────────────────────
+from utils.session_logger import SessionLogManager
+from auth_client import auth_client
+from ui.log_toolbar import LogToolbar
+from ui.tabs.livestream_tab import LivestreamTab
+from ui.theme import (
+    BG_DARK, BG_CARD, BG_SIDEBAR, ACCENT, ACCENT_HOVER,
+    SUCCESS, WARNING, DANGER, TEXT_MAIN, TEXT_DIM, BORDER
+)
+from ui.components import (
+    LogWidget, StatusBadge, ToolTip, ToastNotification, show_toast,
+    StatsCard, SystemInfoWidget, SidebarButton, TaskMixin, DonutChart
+)
+from ui.dialogs import (
+    get_user_cookies_dir, InputJSONWindow, RegisterWindow, LoginWindow
+)
+
+# ─── Cấu hình Theme ──────────────────────────────────────────────────────────
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
-
-# ─── Palette (Sleek Dark Theme) ─────────────────────────────────────────────
-BG_DARK      = "#0E1015" # Nền tối nhất
-BG_CARD      = "#1C1F2E" # Nền Card/Panel
-BG_SIDEBAR   = "#141620" # Nền Sidebar
-ACCENT       = "#8B5CF6" # Tím Violet (giống nút Upload & Enhance)
-ACCENT_HOVER = "#7C3AED" # Tím đậm khi hover
-SUCCESS      = "#10B981"
-WARNING      = "#F59E0B"
-DANGER       = "#EF4444"
-TEXT_MAIN    = "#F8FAFC"
-TEXT_DIM     = "#94A3B8"
-BORDER       = "#2D3142"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  LogWidget — hiện log real-time
-# ═══════════════════════════════════════════════════════════════════════════════
-class LogWidget(ctk.CTkTextbox):
-    """Textbox với màu log."""
-
-    COLORS = {
-        "INFO":    "#4f8ef7",
-        "SUCCESS": "#2ecc71",
-        "WARNING": "#f39c12",
-        "ERROR":   "#e74c3c",
-        "DEBUG":   "#6c7293",
-    }
-
-    def __init__(self, master, **kwargs):
-        super().__init__(
-            master,
-            font=("Consolas", 12),
-            text_color=TEXT_MAIN,
-            fg_color=BG_DARK,
-            border_color=BORDER,
-            wrap="word",
-            state="disabled",
-            **kwargs,
-        )
-        # Cấu hình tags màu
-        for tag, color in self.COLORS.items():
-            self._textbox.tag_configure(tag, foreground=color)
-
-    def append(self, message: str, level: str = "INFO"):
-        ts  = datetime.now().strftime("%H:%M:%S")
-        line = f"[{ts}] [{level:7s}] {message}\n"
-        self.configure(state="normal")
-        self._textbox.insert("end", line, level)
-        self.configure(state="disabled")
-        self._textbox.see("end")
-
-    def clear(self):
-        self.configure(state="normal")
-        self.delete("0.0", "end")
-        self.configure(state="disabled")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  StatusBadge
-# ═══════════════════════════════════════════════════════════════════════════════
-class StatusBadge(ctk.CTkLabel):
-    def __init__(self, master, text="Idle", color=TEXT_DIM, **kwargs):
-        super().__init__(
-            master,
-            text=f"  ●  {text}  ",
-            font=("Segoe UI", 11, "bold"),
-            text_color=color,
-            fg_color=BG_CARD,
-            corner_radius=10,
-            **kwargs,
-        )
-
-    def set(self, text, color):
-        self.configure(text=f"  ●  {text}  ", text_color=color)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ToolTip - Hiển thị popup khi hover
-# ═══════════════════════════════════════════════════════════════════════════════
-class ToolTip:
-    def __init__(self, widget, text, wraplength=250):
-        self.widget = widget
-        self.text = text
-        self.wraplength = wraplength
-        self.tooltip_window = None
-        self.widget.bind("<Enter>", self.enter)
-        self.widget.bind("<Leave>", self.leave)
-
-    def enter(self, event=None):
-        x = self.widget.winfo_rootx() + 20
-        y = self.widget.winfo_rooty() + 20
-        self.tooltip_window = tw = ctk.CTkFrame(self.widget, fg_color="#2d3436", corner_radius=6, border_width=1, border_color="#636e72")
-        
-        # We use a Toplevel to hover over other widgets
-        import tkinter as tk
-        self.tw = tk.Toplevel(self.widget)
-        self.tw.wm_overrideredirect(True)
-        self.tw.wm_geometry(f"+{x}+{y}")
-        self.tw.attributes("-topmost", True)
-        
-        label = tk.Label(self.tw, text=self.text, justify='left',
-                         background="#2d3436", foreground="#dfe6e9", 
-                         relief='solid', borderwidth=1, highlightbackground="#636e72",
-                         font=("Segoe UI", 10), padx=8, pady=6, wraplength=self.wraplength)
-        label.pack()
-
-    def leave(self, event=None):
-        if hasattr(self, 'tw') and self.tw:
-            self.tw.destroy()
-            self.tw = None
-
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ToastNotification - Popup thông báo kiểu Toast
-# ═══════════════════════════════════════════════════════════════════════════════
-class ToastNotification(ctk.CTkToplevel):
-    """
-    Toast popup góc dưới phải màn hình.
-    - Tự tắt sau `duration` giây nếu không đóng tay.
-    - Có nút X để đóng ngay.
-    - type_: 'info' | 'warning' | 'error' | 'update'
-    """
-    _COLORS = {
-        "info":    ("#2980b9", "#d6eaf8"),
-        "warning": ("#e67e22", "#fdebd0"),
-        "error":   ("#c0392b", "#fadbd8"),
-        "update":  ("#8e44ad", "#e8daef"),
-    }
-
-    def __init__(self, master, title: str, message: str, type_: str = "info", duration: int = 8):
-        super().__init__(master)
-        
-        # Lấy màu theo type
-        accent, bg_light = self._COLORS.get(type_, self._COLORS["info"])
-        
-        # Cấu hình cửa sổ - không có border, không có titlebar
-        self.overrideredirect(True)
-        self.wm_attributes("-topmost", True)
-        self.configure(fg_color=BG_CARD)
-        
-        self._duration = duration
-        self._remaining = duration
-        
-        # ── Layout chính ──────────────────────────────────────────────────────
-        self.configure(width=380)
-        
-        # Accent bar bên trái
-        bar = ctk.CTkFrame(self, fg_color=accent, width=6, corner_radius=0)
-        bar.pack(side="left", fill="y")
-        bar.pack_propagate(False)
-        
-        # Nội dung
-        content = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=0)
-        content.pack(side="left", fill="both", expand=True, padx=0)
-        
-        # Header row
-        header = ctk.CTkFrame(content, fg_color="transparent")
-        header.pack(fill="x", padx=14, pady=(12, 4))
-        
-        # Icon theo type
-        icons = {"info": "ℹ️", "warning": "📢", "error": "⚠️", "update": "🚀"}
-        icon_text = icons.get(type_, "ℹ️")
-        ctk.CTkLabel(header, text=f"{icon_text}  {title}",
-                     font=("Segoe UI", 13, "bold"),
-                     text_color=accent).pack(side="left")
-        
-        # Nút X và countdown
-        right = ctk.CTkFrame(header, fg_color="transparent")
-        right.pack(side="right")
-        
-        self._lbl_countdown = ctk.CTkLabel(right, text=f"{duration}s",
-                                            font=("Segoe UI", 10), text_color=TEXT_DIM)
-        self._lbl_countdown.pack(side="left", padx=(0, 6))
-        
-        ctk.CTkButton(right, text="✕", width=24, height=24,
-                      fg_color="transparent", hover_color=BORDER,
-                      font=("Segoe UI", 11, "bold"), text_color=TEXT_DIM,
-                      command=self.close_toast).pack(side="left")
-        
-        # Message
-        ctk.CTkLabel(content, text=message,
-                     font=("Segoe UI", 12), text_color=TEXT_MAIN,
-                     wraplength=310, justify="left", anchor="w"
-                     ).pack(fill="x", padx=14, pady=(0, 12), anchor="w")
-        
-        # Progress bar (tự thu nhỏ theo thời gian)
-        prog_bg = ctk.CTkFrame(content, fg_color=BORDER, height=3, corner_radius=0)
-        prog_bg.pack(fill="x", side="bottom")
-        self._prog = ctk.CTkFrame(prog_bg, fg_color=accent, height=3, corner_radius=0)
-        self._prog.pack(side="left", fill="y")
-        
-        # Border
-        self.configure(border_width=1, border_color=BORDER)
-        
-        # Đặt vị trí góc dưới phải
-        self.update_idletasks()
-        self._position_toast(master)
-        
-        # Bắt đầu đếm ngược
-        self.after(100, self._tick)
-    
-    def _position_toast(self, master):
-        """Đặt toast ở trên cùng, ở giữa cửa sổ chính."""
-        try:
-            master.update_idletasks()
-            self.update_idletasks()
-            mx = master.winfo_x()
-            my = master.winfo_y()
-            mw = master.winfo_width()
-            
-            tw = 420
-            th = 110
-            
-            x = mx + (mw // 2) - (tw // 2)
-            y = my + 24  # margin top 24px
-            self.geometry(f"{tw}x{th}+{x}+{y}")
-        except Exception:
-            self.geometry("420x110+300+60")
-    
-    def _tick(self):
-        """Cập nhật countdown mỗi giây."""
-        if not self.winfo_exists():
-            return
-        self._remaining -= 1
-        if self._remaining <= 0:
-            self.close_toast()
-            return
-        self._lbl_countdown.configure(text=f"{self._remaining}s")
-        # Thu nhỏ progress bar
-        ratio = self._remaining / self._duration
-        try:
-            total_w = self._prog.master.winfo_width()
-            self._prog.configure(width=int(total_w * ratio))
-        except Exception:
-            pass
-        self.after(1000, self._tick)
-    
-    def close_toast(self):
-        try:
-            self.destroy()
-        except Exception:
-            pass
-
-
-def show_toast(master, title: str, message: str, type_: str = "info", duration: int = 8):
-    """Helper function để bắn toast từ bất kỳ đâu."""
-    try:
-        toast = ToastNotification(master, title=title, message=message, type_=type_, duration=duration)
-        return toast
-    except Exception as e:
-        print(f"Toast error: {e}")
-        return None
-
-
-
-class StatsCard(ctk.CTkFrame):
-    def __init__(self, master, label: str, value: str = "0", color=ACCENT, icon: str = "", **kwargs):
-        super().__init__(master, fg_color=BG_CARD, corner_radius=10,
-                         border_width=1, border_color=BORDER, **kwargs)
-        
-        self.pack_propagate(False)
-        self.configure(height=90)
-        
-        # Đường viền màu bên trái đặc trưng của Web Dashboard
-        accent_line = ctk.CTkFrame(self, fg_color=color, width=5, corner_radius=0)
-        accent_line.pack(side="left", fill="y", pady=15)
-        
-        # Nội dung
-        content = ctk.CTkFrame(self, fg_color="transparent")
-        content.pack(side="left", fill="both", expand=True, padx=16, pady=12)
-        
-        header = ctk.CTkFrame(content, fg_color="transparent")
-        header.pack(fill="x")
-        
-        ctk.CTkLabel(
-            header, text=label.upper(),
-            font=("Segoe UI", 11, "bold"),
-            text_color=TEXT_DIM,
-        ).pack(side="left")
-        
-        if icon:
-            ctk.CTkLabel(
-                header, text=icon,
-                font=("Segoe UI", 16),
-                text_color=color,
-            ).pack(side="right")
-        
-        self._lbl_value = ctk.CTkLabel(
-            content, text=value,
-            font=("Segoe UI", 22, "bold"),
-            text_color=TEXT_MAIN,
-            anchor="w",
-            justify="left"
-        )
-        self._lbl_value.pack(side="left", fill="x", expand=True, pady=(2, 0))
-
-    def set_value(self, v):
-        self._lbl_value.configure(text=str(v))
-
-
-class SystemInfoWidget(ctk.CTkFrame):
-    def __init__(self, master, **kwargs):
-        kwargs.setdefault("fg_color", "transparent")
-        super().__init__(master, **kwargs)
-        
-        ctk.CTkLabel(self, text="💻  Tài nguyên Hệ thống", font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).pack(anchor="w", padx=20, pady=(16, 10))
-        
-        self.bars = {}
-        for name, color in [("CPU", "#e74c3c"), ("RAM", "#3498db"), ("Disk", "#2ecc71")]:
-            row = ctk.CTkFrame(self, fg_color="transparent")
-            row.pack(fill="x", padx=20, pady=8)
-            
-            header = ctk.CTkFrame(row, fg_color="transparent")
-            header.pack(fill="x", pady=(0, 4))
-            
-            ctk.CTkLabel(header, text=name, font=("Segoe UI", 11, "bold"), text_color=TEXT_DIM).pack(side="left")
-            lbl_val = ctk.CTkLabel(header, text="--%", font=("Segoe UI", 11, "bold"), text_color=color)
-            lbl_val.pack(side="right")
-            
-            pb = ctk.CTkProgressBar(row, height=8, progress_color=color, fg_color=BG_DARK, corner_radius=4)
-            pb.pack(fill="x")
-            pb.set(0)
-            
-            self.bars[name] = (pb, lbl_val)
-            
-    def update_stats(self):
-        try:
-            import psutil
-            cpu = psutil.cpu_percent()
-            ram = psutil.virtual_memory().percent
-            disk = psutil.disk_usage('/').percent
-            
-            self.bars["CPU"][0].set(cpu / 100)
-            self.bars["CPU"][1].configure(text=f"{cpu:.1f}%")
-            
-            self.bars["RAM"][0].set(ram / 100)
-            self.bars["RAM"][1].configure(text=f"{ram:.1f}%")
-            
-            self.bars["Disk"][0].set(disk / 100)
-            self.bars["Disk"][1].configure(text=f"{disk:.1f}%")
-        except ImportError:
-            for n in ["CPU", "RAM", "Disk"]:
-                self.bars[n][1].configure(text="N/A")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  SidebarButton
-# ═══════════════════════════════════════════════════════════════════════════════
-class SidebarButton(ctk.CTkButton):
-    def __init__(self, master, icon: str, text: str, command=None, **kwargs):
-        super().__init__(
-            master,
-            text=f"  {icon}  {text}",
-            command=command,
-            font=("Segoe UI", 14, "bold"),
-            fg_color="transparent",
-            text_color=TEXT_DIM,
-            hover_color=BG_CARD,
-            anchor="w",
-            height=48,
-            corner_radius=12,
-            **kwargs,
-        )
-
-    def set_active(self, active: bool):
-        if active:
-            self.configure(fg_color="#1E293B", text_color="#3B82F6")
-        else:
-            self.configure(fg_color="transparent", text_color=TEXT_DIM)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Mixin: chạy task trên thread nền, route log về queue
-# ═══════════════════════════════════════════════════════════════════════════════
-class TaskMixin:
-    """Mixin cho các Tab cần chạy lệnh Python nền."""
-
-    def __init__(self, *args, **kwargs):
-        # We don't always call super().__init__ in mixins, but let's just initialize the flag
-        self.cancel_flag = False
-
-    def _run_in_thread(self, func, *args, **kwargs):
-        """Chạy coroutine hoặc hàm sync trên thread riêng."""
-        self.cancel_flag = False
-        def _worker():
-            try:
-                if inspect.iscoroutinefunction(func):
-                    asyncio.run(func(*args, **kwargs))
-                else:
-                    func(*args, **kwargs)
-            except Exception as e:
-                self._log(f"Lỗi: {e}", "ERROR")
-            finally:
-                self._on_task_done()
-
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-
-    def _cancel_task(self):
-        """Yêu cầu dừng task."""
-        self.cancel_flag = True
-        self._log("Đang yêu cầu dừng tiến trình...", "WARNING")
-
-    def _log(self, msg: str, level: str = "INFO"):
-        """Ghi log (gọi được từ thread bất kỳ)."""
-        # Mỗi tab phải bind self._log_widget
-        self.after(0, lambda: self._log_widget.append(msg, level))
-
-    def _on_task_done(self):
-        """Gọi sau khi task xong."""
-        self.cancel_flag = False
-
-
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Tab: Dashboard
-# ═══════════════════════════════════════════════════════════════════════════════
-import math
-import tkinter as tk
-
-class DonutChart(ctk.CTkFrame):
-    def __init__(self, master, title="Biểu đồ", **kwargs):
-        # Mặc định nền trong suốt nếu không truyền fg_color
-        kwargs.setdefault("fg_color", "transparent")
-        super().__init__(master, **kwargs)
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=1)
-        
-        self.canvas_size = 150
-        self.thickness = 22
-        
-        # Tiêu đề
-        ctk.CTkLabel(self, text=title, font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(16, 0))
-        
-        # Canvas
-        self.canvas = tk.Canvas(self, width=self.canvas_size, height=self.canvas_size, bg=BG_CARD, highlightthickness=0)
-        self.canvas.grid(row=1, column=0, padx=(20, 10), pady=(10, 20), sticky="e")
-        
-        # Legend Frame
-        self.legend_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.legend_frame.grid(row=1, column=1, padx=(10, 20), pady=(10, 20), sticky="w")
-        
-    def update_data(self, data):
-        self.canvas.delete("all")
-        for widget in self.legend_frame.winfo_children():
-            widget.destroy()
-            
-        total = sum(v for _, v, _ in data)
-        if total == 0:
-            self.canvas.create_oval(15, 15, self.canvas_size-15, self.canvas_size-15, outline=BG_DARK, width=self.thickness)
-            self._draw_center_text(0)
-            return
-            
-        start_angle = 90
-        for label, val, color in data:
-            if val == 0: continue
-            extent = (val / total) * 360
-            self.canvas.create_arc(15, 15, self.canvas_size-15, self.canvas_size-15,
-                                   start=start_angle, extent=extent, style=tk.ARC, outline=color, width=self.thickness)
-            start_angle += extent
-            
-            # Draw Legend Item
-            row = ctk.CTkFrame(self.legend_frame, fg_color="transparent")
-            row.pack(fill="x", pady=6)
-            
-            dot = tk.Canvas(row, width=12, height=12, bg=BG_CARD, highlightthickness=0)
-            dot.create_oval(2, 2, 10, 10, fill=color, outline=color)
-            dot.pack(side="left", padx=(0, 8))
-            
-            percent = int((val/total)*100)
-            ctk.CTkLabel(row, text=label, font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).pack(side="left")
-            ctk.CTkLabel(row, text=f"  {val} ({percent}%)", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="right")
-            
-        self._draw_center_text(total)
-        
-    def _draw_center_text(self, total):
-        self.canvas.create_text(self.canvas_size/2, self.canvas_size/2 - 10, text="Tổng số", font=("Segoe UI", 11), fill=TEXT_DIM)
-        self.canvas.create_text(self.canvas_size/2, self.canvas_size/2 + 10, text=str(total), font=("Segoe UI", 20, "bold"), fill="white")
 
 
 class DashboardTab(ctk.CTkFrame):
@@ -580,12 +114,9 @@ class DashboardTab(ctk.CTkFrame):
         log_frame.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(4, weight=1)
 
-        ctk.CTkLabel(
-            log_frame, text="📋  Activity Log",
-            font=("Segoe UI", 13, "bold"), text_color=TEXT_MAIN,
-        ).grid(row=0, column=0, sticky="w", padx=16, pady=(12, 4))
-
         self._log_widget = LogWidget(log_frame)
+        self._log_toolbar = LogToolbar(log_frame, self._log_widget, module="all", title="📋  Activity Log (Nhật ký hệ thống):")
+        self._log_toolbar.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
         self._log_widget.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
         self._log_widget.append("Chào mừng! Hệ thống sẽ tự động cập nhật thống kê...", "INFO")
         
@@ -778,9 +309,12 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         self._status_badge = StatusBadge(btn_row, "Idle", TEXT_DIM)
         self._status_badge.pack(side="left")
 
-        # Log
+        # Log Toolbar & Log Widget
         self._log_widget = LogWidget(self)
-        self._log_widget.grid(row=3, column=0, sticky="nsew")
+        self._log_toolbar = LogToolbar(self, self._log_widget, module="crawl", title="📋  Nhật ký Crawl (Logs):")
+        self._log_toolbar.grid(row=3, column=0, sticky="ew", pady=(0, 4))
+        self._log_widget.grid(row=4, column=0, sticky="nsew")
+        self.grid_rowconfigure(4, weight=1)
 
         self._on_mode_change()
 
@@ -844,6 +378,7 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
 
         mode  = self._mode_var.get()
         count = int(self._spin_count.get() or 10)
+        self._start_logging_session("crawl", f"Crawl Douyin Video ({mode.upper()})", {"mode": mode, "count": count})
 
         if mode == "urls":
             raw_text = self._txt_urls.get("0.0", "end")
@@ -938,8 +473,9 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         auth_client.send_telemetry("CRAWL", f"Tải xong {total_crawled} video từ file .txt")
 
     def _on_task_done(self):
+        super()._on_task_done()
         self.after(0, lambda: self._btn_crawl.configure(state="normal"))
-        self.after(0, lambda: self._status_badge.set("Xong", SUCCESS))
+        self.after(0, lambda: self._status_badge.set("Xong", SUCCESS) if not getattr(self, "cancel_flag", False) else self._status_badge.set("Đã dừng", DANGER))
 
 
 def show_rename_author_dialog(parent, opt_widget, reload_callback):
@@ -1082,7 +618,9 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         self._video_list_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 12))
 
         self._log_widget = LogWidget(left_frame, height=120)
-        self._log_widget.grid(row=2, column=0, sticky="nsew")
+        self._log_toolbar = LogToolbar(left_frame, self._log_widget, module="process", title="📋  Nhật ký Xử lý Video (Logs):")
+        self._log_toolbar.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        self._log_widget.grid(row=3, column=0, sticky="nsew")
 
         # --- RIGHT PANE (SIDEBAR) ---
         right_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
@@ -1857,12 +1395,32 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             if threads > 10: threads = 10
         except Exception:
             threads = 2
+
+        self._start_logging_session(
+            "process",
+            f"Xử lý {limit} Video (Luồng: {threads})",
+            {"title": title, "limit": limit, "threads": threads}
+        )
         self._run_in_thread(self._do_process, title, limit, username, threads)
 
     def _do_process(self, title, limit, username, threads=2):
         from processor.video_processor import VideoProcessor
         from database.db_manager import DatabaseManager
         from config.settings import PROCESSOR_CONFIG
+        from loguru import logger
+        
+        # Bắt toàn bộ log Sub/Voice/TTS và in trực tiếp vào khung Log của GUI
+        def _gui_log_sink(message):
+            try:
+                record = message.record
+                text = record["message"].strip()
+                if any(k in text for k in ["Sub", "Voice", "TTS", "ĐỐI CHIẾU", "📝", "🎙️", "Dịch", "Whisper", "Model", "CUDA", "CPU"]):
+                    lvl = record["level"].name
+                    self._log(text, lvl if lvl in ["INFO", "WARNING", "ERROR", "DEBUG", "SUCCESS"] else "INFO")
+            except Exception:
+                pass
+        
+        sink_id = logger.add(_gui_log_sink, level="INFO")
         
         def progress_cb(vid, pct, status):
             # Hàm này được gọi từ thread, dùng after để update UI an toàn
@@ -1870,6 +1428,11 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
                 if "Lỗi" in status or "Error" in status:
                     self._log(f"[{vid[:10]}] {status}", "ERROR")
                 elif "DEBUG" in status:
+                    # Gỡ bỏ prefix [DEBUG] nếu có và in ra log
+                    clean_status = status.replace("[DEBUG]", "").strip()
+                    self._log(clean_status, "INFO")
+                    return
+                elif any(k in status for k in ["📝", "🎙️", "Sub", "Voice", "ĐỐI CHIẾU"]):
                     self._log(status, "INFO")
                     return
                     
@@ -2011,103 +1574,35 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             for vid in selected_ids:
                 titles[vid] = title
                 
-        results = processor.process_downloaded_videos(
-            titles=titles, 
-            limit=limit, 
-            video_ids=selected_ids, 
-            cancel_check=lambda: self.cancel_flag,
-            progress_callback=progress_cb,
-            max_workers=threads
-        )
-        if self.cancel_flag:
-            self._log("Đã ngắt quá trình xử lý (Stop).", "WARNING")
-        else:
-            self._log(f"✅ Đã xử lý {len(results)} videos!", "SUCCESS")
-            from auth_client import auth_client
-            auth_client.send_telemetry("PROCESS", f"Hoàn thành xử lý {len(results)} video (Blur: {PROCESSOR_CONFIG.get('blur_enabled')}, Sub: {PROCESSOR_CONFIG.get('subtitle_overlay')}, TTS: {PROCESSOR_CONFIG.get('tts_voice')})")
-        # Load lại danh sách sau khi xử lý xong
-        self.after(0, self._load_videos)
-        self._on_task_done()
+        try:
+            results = processor.process_downloaded_videos(
+                titles=titles, 
+                limit=limit, 
+                video_ids=selected_ids, 
+                cancel_check=lambda: self.cancel_flag,
+                progress_callback=progress_cb,
+                max_workers=threads
+            )
+            if self.cancel_flag:
+                self._log("Đã ngắt quá trình xử lý (Stop).", "WARNING")
+            else:
+                self._log(f"✅ Đã xử lý {len(results)} videos!", "SUCCESS")
+                from auth_client import auth_client
+                auth_client.send_telemetry("PROCESS", f"Hoàn thành xử lý {len(results)} video (Blur: {PROCESSOR_CONFIG.get('blur_enabled')}, Sub: {PROCESSOR_CONFIG.get('subtitle_overlay')}, TTS: {PROCESSOR_CONFIG.get('tts_voice')})")
+        finally:
+            try:
+                logger.remove(sink_id)
+            except Exception:
+                pass
+            # Load lại danh sách sau khi xử lý xong
+            self.after(0, self._load_videos)
+            self._on_task_done()
 
     def _on_task_done(self):
         super()._on_task_done()
         self.is_running = False
         self.after(0, lambda: self._btn_process.configure(state="normal", text="▶  Bắt đầu Xử lý", fg_color=ACCENT, hover_color=ACCENT_HOVER))
         self.after(0, lambda: self._status_badge.set("Xong", SUCCESS))
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  InputJSONWindow
-# ═══════════════════════════════════════════════════════════════════════════════
-class InputJSONWindow(ctk.CTkToplevel):
-    def __init__(self, master, on_close_callback=None, initial_name=None, initial_content=None):
-        super().__init__(master)
-        self.title("Sửa/Thêm Tài khoản (JSON)")
-        self.geometry("500x400")
-        self.on_close_callback = on_close_callback
-        
-        self.transient(master)
-        self.grab_set()
-
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
-
-        ctk.CTkLabel(self, text="Tên tài khoản (vd: tiktok_acc1):", font=("Segoe UI", 12)).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 4))
-        
-        self.name_entry = ctk.CTkEntry(self, font=("Segoe UI", 12))
-        self.name_entry.grid(row=1, column=0, sticky="ew", padx=16, pady=0)
-        self.name_entry.insert(0, initial_name if initial_name else "tiktok_")
-        
-        ctk.CTkLabel(self, text="Dán nội dung JSON (từ Cookie Editor):", font=("Segoe UI", 12)).grid(row=2, column=0, sticky="w", padx=16, pady=(10, 4))
-        
-        self.json_text = ctk.CTkTextbox(self, font=("Consolas", 11), wrap="word")
-        self.json_text.grid(row=3, column=0, sticky="nsew", padx=16, pady=0)
-        if initial_content:
-            self.json_text.insert("1.0", initial_content)
-
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=4, column=0, sticky="ew", padx=16, pady=16)
-        
-        ctk.CTkButton(btn_frame, text="Lưu", fg_color=SUCCESS, hover_color="#27ae60", command=self._save_json).pack(side="left")
-        ctk.CTkButton(btn_frame, text="Hủy", fg_color=BORDER, hover_color=BG_CARD, command=self._on_close).pack(side="right")
-
-    def _save_json(self):
-        import json
-        name = self.name_entry.get().strip()
-        content = self.json_text.get("1.0", "end").strip()
-        
-        if not name or not content:
-            messagebox.showwarning("Cảnh báo", "Vui lòng nhập tên tài khoản và nội dung JSON")
-            return
-            
-        if not name.endswith(".json"):
-            name += ".json"
-            
-        if not name.startswith("tiktok_"):
-            name = f"tiktok_{name}"
-            
-        try:
-            # Validate JSON format
-            json.loads(content)
-            
-            user_dir = UploadTab._get_user_cookies_dir()
-            with open(user_dir / name, "w", encoding="utf-8") as f:
-                f.write(content)
-                
-            messagebox.showinfo("Thành công", f"Đã lưu tài khoản: {name}")
-            if self.on_close_callback:
-                self.on_close_callback()
-            self.destroy()
-        except json.JSONDecodeError:
-            messagebox.showerror("Lỗi JSON", "Nội dung bạn dán không phải là JSON hợp lệ. Vui lòng kiểm tra lại.")
-        except Exception as e:
-            messagebox.showerror("Lỗi", f"Không thể lưu file: {e}")
-            
-    def _on_close(self):
-        self.destroy()
-
-
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2121,18 +1616,14 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._video_accounts = {}
         self._video_accounts_yt = {}
         self._video_accounts_fb = {}
+        self._saved_assigned_accounts = {}
+        self._current_session_id = None
         self._build()
         self.after(200, self._load_videos)
 
     @staticmethod
     def _get_user_cookies_dir():
-        from config.settings import COOKIES_DIR
-        from auth_client import auth_client
-        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
-        username = username.replace("@", "_").replace(".", "_")
-        user_dir = COOKIES_DIR / username
-        user_dir.mkdir(parents=True, exist_ok=True)
-        return user_dir
+        return get_user_cookies_dir()
 
     @staticmethod
     def _get_tiktok_accounts():
@@ -2188,10 +1679,12 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkButton(list_header, text="☑ Chọn", width=55, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._toggle_selection).pack(side="right", padx=(0, 6))
         
         self._video_list_frame = ctk.CTkScrollableFrame(left_frame, fg_color=BG_DARK, border_color=BORDER, border_width=1)
-        self._video_list_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 12))
+        self._video_list_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
 
-        self._log_widget = LogWidget(left_frame, height=120)
-        self._log_widget.grid(row=2, column=0, sticky="nsew")
+        self._log_widget = LogWidget(left_frame, height=125)
+        self._log_toolbar = LogToolbar(left_frame, self._log_widget, module="upload", title="📋  Nhật ký Upload (Logs):")
+        self._log_toolbar.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        self._log_widget.grid(row=3, column=0, sticky="nsew")
 
         # --- RIGHT PANE (SIDEBAR) ---
         right_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
@@ -2209,10 +1702,16 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         config_frame.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 14))
         
         # --- Cấu hình chung ---
-        ctk.CTkLabel(config_frame, text="Cấu hình chung", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
+        row_cfg_top = ctk.CTkFrame(config_frame, fg_color="transparent")
+        row_cfg_top.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(row_cfg_top, text="Cấu hình chung", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(side="left")
+        ctk.CTkButton(
+            row_cfg_top, text="💾 Lưu cấu hình", width=95, height=24, font=("Segoe UI", 11, "bold"),
+            fg_color="#2980b9", hover_color="#3498db", command=self._save_upload_config
+        ).pack(side="right")
         
         row1 = ctk.CTkFrame(config_frame, fg_color="transparent")
-        row1.pack(fill="x", pady=(0, 12))
+        row1.pack(fill="x", pady=(0, 8))
         
         ctk.CTkLabel(row1, text="Số video:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(0, 5))
         self._entry_limit = ctk.CTkEntry(row1, width=45, font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
@@ -2222,6 +1721,34 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._sw_cleanup_upload = ctk.CTkSwitch(row1, text="Dọn dẹp file sau đăng", font=("Segoe UI", 11), text_color=TEXT_MAIN)
         self._sw_cleanup_upload.select()
         self._sw_cleanup_upload.pack(side="left")
+
+        # Bật/Tắt Hiện Trình Duyệt khi Upload (Headless)
+        row_browser = ctk.CTkFrame(config_frame, fg_color="transparent")
+        row_browser.pack(fill="x", pady=(0, 12))
+
+        self._sw_show_browser = ctk.CTkSwitch(
+            row_browser, text="Hiện trình duyệt khi upload ❔", font=("Segoe UI", 11, "bold"),
+            text_color=TEXT_MAIN, cursor="hand2"
+        )
+        self._sw_show_browser.select() # Mặc định BẬT
+        self._sw_show_browser.pack(side="left")
+        ToolTip(self._sw_show_browser, "BẬT (ON): Mở cửa sổ trình duyệt Chrome để xem trực tiếp quá trình tải video lên TikTok.\nTẮT (OFF): Chạy ẩn ngầm (Headless) tiết kiệm tối đa RAM & CPU, không mở cửa sổ làm phiền màn hình làm việc.")
+
+        # Khôi phục cấu hình trước đó nếu có
+        try:
+            from config.settings import BASE_DIR
+            import json
+            cfg_path = BASE_DIR / "config" / "upload_ui.json"
+            if cfg_path.exists():
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    u_cfg = json.load(f)
+                    if "show_browser" in u_cfg:
+                        if u_cfg["show_browser"]:
+                            self._sw_show_browser.select()
+                        else:
+                            self._sw_show_browser.deselect()
+        except Exception:
+            pass
 
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
 
@@ -2393,16 +1920,27 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         btn_row = ctk.CTkFrame(right_frame, fg_color="transparent")
         btn_row.grid(row=1, column=0, sticky="ew", pady=(0, 12))
 
+        self._btn_save_config = ctk.CTkButton(
+            btn_row, text="💾  Lưu Cấu Hình Upload", height=36,
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#2980b9", hover_color="#3498db",
+            command=self._save_upload_config,
+        )
+        self._btn_save_config.pack(fill="x", pady=(0, 8))
+
         self._btn_upload = ctk.CTkButton(
             btn_row, text="▶  Bắt đầu Upload", height=42,
             font=("Segoe UI", 14, "bold"),
             fg_color="#e74c3c", hover_color="#c0392b",
             command=self._start_upload,
         )
-        self._btn_upload.pack(fill="x", pady=(0, 10))
+        self._btn_upload.pack(fill="x", pady=(0, 6))
 
         self._status_badge = StatusBadge(btn_row, "Idle", TEXT_DIM)
         self._status_badge.pack(anchor="center")
+
+        # Nạp cấu hình đã lưu trước đó
+        self._load_upload_config()
 
     def _load_videos(self):
         """Hiển thị danh sách video đã processed vào scrollable frame."""
@@ -2520,14 +2058,20 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             acc_bar = ctk.CTkFrame(card, fg_color=BG_DARK, corner_radius=6)
             acc_bar.pack(fill="x", padx=10, pady=(2, 6), ipady=2)
             
+            saved_acc = getattr(self, "_saved_assigned_accounts", {}).get(vid, {})
+
             # TikTok
             ctk.CTkLabel(acc_bar, text="🎵 TikTok:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN).pack(side="left", padx=(10, 4), pady=4)
             accounts = self._get_tiktok_accounts()
             opt_acc = ctk.CTkOptionMenu(acc_bar, values=accounts, font=("Segoe UI", 11), width=120, height=26, fg_color=BG_CARD, button_color=BORDER, button_hover_color=BG_DARK)
             opt_acc.pack(side="left", padx=(0, 14), pady=4)
-            global_acc = getattr(self, "_opt_account", None)
-            if global_acc and global_acc.get() in accounts:
-                opt_acc.set(global_acc.get())
+            saved_tt = saved_acc.get("tt")
+            if saved_tt and saved_tt in accounts:
+                opt_acc.set(saved_tt)
+            else:
+                global_acc = getattr(self, "_opt_account", None)
+                if global_acc and global_acc.get() in accounts:
+                    opt_acc.set(global_acc.get())
             self._video_accounts[vid] = opt_acc
 
             # YouTube
@@ -2535,9 +2079,13 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             yt_accounts = self._get_youtube_accounts()
             opt_acc_yt = ctk.CTkOptionMenu(acc_bar, values=yt_accounts, font=("Segoe UI", 11), width=120, height=26, fg_color=BG_CARD, button_color=BORDER, button_hover_color=BG_DARK)
             opt_acc_yt.pack(side="left", padx=(0, 14), pady=4)
-            global_acc_yt = getattr(self, "_opt_account_yt", None)
-            if global_acc_yt and global_acc_yt.get() in yt_accounts:
-                opt_acc_yt.set(global_acc_yt.get())
+            saved_yt = saved_acc.get("yt")
+            if saved_yt and saved_yt in yt_accounts:
+                opt_acc_yt.set(saved_yt)
+            else:
+                global_acc_yt = getattr(self, "_opt_account_yt", None)
+                if global_acc_yt and global_acc_yt.get() in yt_accounts:
+                    opt_acc_yt.set(global_acc_yt.get())
             self._video_accounts_yt[vid] = opt_acc_yt
 
             # Facebook
@@ -2545,9 +2093,13 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             fb_accounts = self._get_facebook_accounts()
             opt_acc_fb = ctk.CTkOptionMenu(acc_bar, values=fb_accounts, font=("Segoe UI", 11), width=120, height=26, fg_color=BG_CARD, button_color=BORDER, button_hover_color=BG_DARK)
             opt_acc_fb.pack(side="left", padx=(0, 10), pady=4)
-            global_acc_fb = getattr(self, "_opt_account_fb", None)
-            if global_acc_fb and global_acc_fb.get() in fb_accounts:
-                opt_acc_fb.set(global_acc_fb.get())
+            saved_fb = saved_acc.get("fb")
+            if saved_fb and saved_fb in fb_accounts:
+                opt_acc_fb.set(saved_fb)
+            else:
+                global_acc_fb = getattr(self, "_opt_account_fb", None)
+                if global_acc_fb and global_acc_fb.get() in fb_accounts:
+                    opt_acc_fb.set(global_acc_fb.get())
             self._video_accounts_fb[vid] = opt_acc_fb
 
             # --- ROW 2: Editable Caption Title ---
@@ -2798,10 +2350,38 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         except Exception:
             upload_threads = 3
 
+        # Bật/Tắt Trình duyệt (Headless)
+        show_browser = getattr(self, "_sw_show_browser", None)
+        headless = not (show_browser.get() == 1) if show_browser else False
+
+        # Tự động lưu toàn bộ cấu hình Upload
+        try:
+            self._save_upload_config(show_msg=False)
+        except Exception:
+            pass
+
+        # Xác định danh sách nền tảng
+        active_platforms = []
+        if do_tt: active_platforms.append("TikTok")
+        if do_yt: active_platforms.append("YouTube")
+        if do_fb: active_platforms.append("Facebook")
+
+        # Bắt đầu session ghi log độc lập
+        try:
+            self._current_session_id = UploadLogManager.start_session(
+                platforms=active_platforms,
+                total_videos=len(selected_vids),
+                headless=headless,
+                upload_threads=upload_threads,
+                username=username,
+            )
+        except Exception:
+            self._current_session_id = None
+
         self._run_in_thread(
             self._do_upload, limit, selected_vids, custom_captions_dict,
             video_accounts_tt_dict, video_accounts_yt_dict, video_accounts_fb_dict,
-            cleanup_upload, do_tt, do_yt, do_fb, upload_threads
+            cleanup_upload, do_tt, do_yt, do_fb, upload_threads, headless
         )
 
     def _on_task_done(self):
@@ -2810,7 +2390,183 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self.after(0, lambda: self._btn_upload.configure(text="▶  Bắt đầu Upload", state="normal", fg_color="#e74c3c", hover_color="#c0392b"))
         self.after(0, lambda: self._status_badge.set("Xong", SUCCESS) if not getattr(self, "cancel_flag", False) else self._status_badge.set("Đã dừng", DANGER))
 
-    async def _async_upload_groups(self, limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb, max_workers=3):
+    def _log(self, msg: str, level: str = "INFO"):
+        """Ghi log hiển thị UI và đồng thời lưu vào file log của phiên."""
+        super()._log(msg, level)
+        sid = getattr(self, "_current_session_id", None)
+        if sid:
+            UploadLogManager.append_log(sid, msg, level)
+
+    def _open_log_history_dialog(self):
+        """Mở cửa sổ tra cứu lịch sử logs."""
+        try:
+            UploadLogHistoryDialog(self)
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể mở lịch sử logs: {e}")
+
+    def _open_logs_folder(self):
+        """Mở thư mục lưu file logs trong Explorer."""
+        try:
+            logs_dir = UploadLogManager.get_logs_dir()
+            if os.name == "nt":
+                os.startfile(str(logs_dir))
+            else:
+                subprocess.Popen(["xdg-open", str(logs_dir)])
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể mở thư mục: {e}")
+
+    def _copy_current_log(self):
+        """Sao chép toàn bộ text đang có trong khung log hiện tại."""
+        try:
+            content = self._log_widget._textbox.get("1.0", "end-1c")
+            if not content.strip():
+                messagebox.showwarning("Thông báo", "Khung log hiện đang trống!")
+                return
+            self.clipboard_clear()
+            self.clipboard_append(content)
+            messagebox.showinfo("Thành công", "Đã sao chép nhật ký hiện tại vào Clipboard!")
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể sao chép: {e}")
+
+    def _save_upload_config(self, show_msg=True):
+        """Lưu toàn bộ cấu hình Upload vào config/upload_config.json."""
+        try:
+            from config.settings import BASE_DIR
+            import json
+            cfg_path = BASE_DIR / "config" / "upload_config.json"
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Thu thập tài khoản đã gán cho từng video
+            assigned_accounts = {}
+            if hasattr(self, "_video_accounts"):
+                for vid in self._video_accounts:
+                    assigned_accounts[vid] = {
+                        "tt": self._video_accounts[vid].get() if vid in self._video_accounts else "Không up",
+                        "yt": self._video_accounts_yt[vid].get() if hasattr(self, "_video_accounts_yt") and vid in self._video_accounts_yt else "Không up",
+                        "fb": self._video_accounts_fb[vid].get() if hasattr(self, "_video_accounts_fb") and vid in self._video_accounts_fb else "Không up",
+                    }
+            self._saved_assigned_accounts = assigned_accounts
+
+            data = {
+                "limit": self._entry_limit.get().strip() if hasattr(self, "_entry_limit") else "4",
+                "cleanup_upload": bool(self._sw_cleanup_upload.get() == 1) if hasattr(self, "_sw_cleanup_upload") else True,
+                "show_browser": bool(self._sw_show_browser.get() == 1) if hasattr(self, "_sw_show_browser") else True,
+                "platform_tt": bool(self._sw_platform_tt.get() == 1) if hasattr(self, "_sw_platform_tt") else True,
+                "platform_yt": bool(self._sw_platform_yt.get() == 1) if hasattr(self, "_sw_platform_yt") else True,
+                "platform_fb": bool(self._sw_platform_fb.get() == 1) if hasattr(self, "_sw_platform_fb") else True,
+                "vids_per_acc": self._entry_vids_per_acc.get().strip() if hasattr(self, "_entry_vids_per_acc") else "2",
+                "round_robin": bool(self._sw_round_robin.get() == 1) if hasattr(self, "_sw_round_robin") else False,
+                "upload_threads": self._entry_upload_threads.get().strip() if hasattr(self, "_entry_upload_threads") else "3",
+                "account_tt": self._opt_account.get() if hasattr(self, "_opt_account") else "",
+                "account_yt": self._opt_account_yt.get() if hasattr(self, "_opt_account_yt") else "",
+                "account_fb": self._opt_account_fb.get() if hasattr(self, "_opt_account_fb") else "",
+                "author_filter": self._opt_author_filter_up.get() if hasattr(self, "_opt_author_filter_up") else "Tất cả Kênh",
+                "assigned_accounts": assigned_accounts,
+            }
+
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            # Đồng thời cập nhật upload_ui.json để đồng bộ với các module khác
+            ui_path = BASE_DIR / "config" / "upload_ui.json"
+            with open(ui_path, "w", encoding="utf-8") as f:
+                json.dump({"show_browser": data["show_browser"]}, f, indent=2)
+
+            if show_msg:
+                active_plist = [p for p, act in [('TikTok', data['platform_tt']), ('YouTube', data['platform_yt']), ('Facebook', data['platform_fb'])] if act]
+                p_str = ", ".join(active_plist) if active_plist else "Không chọn"
+                mode_str = "Hiện trình duyệt" if data["show_browser"] else "Ẩn ngầm (Headless)"
+                msg = (
+                    "✅ Đã lưu cấu hình Upload thành công!\n\n"
+                    f"• Trình duyệt: {mode_str}\n"
+                    f"• Nền tảng: {p_str}\n"
+                    f"• Số luồng: {data['upload_threads']} luồng | Phân bổ: {data['vids_per_acc']} video/nick\n"
+                    f"• Tài khoản mặc định:\n"
+                    f"   - TikTok: {data['account_tt']}\n"
+                    f"   - YouTube: {data['account_yt']}\n"
+                    f"   - Facebook: {data['account_fb']}\n"
+                    f"• Đã lưu tài khoản đã gán cho {len(assigned_accounts)} video hiện có.\n\n"
+                    "Cấu hình này sẽ tự động được tải lại mỗi khi bạn mở ứng dụng."
+                )
+                messagebox.showinfo("Thành công", msg)
+        except Exception as e:
+            if show_msg:
+                messagebox.showerror("Lỗi", f"Không thể lưu cấu hình: {e}")
+
+    def _load_upload_config(self):
+        """Khôi phục toàn bộ cài đặt từ config/upload_config.json."""
+        try:
+            from config.settings import BASE_DIR
+            import json
+            cfg_path = BASE_DIR / "config" / "upload_config.json"
+            if not cfg_path.exists():
+                return
+
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+
+            if "limit" in cfg and hasattr(self, "_entry_limit"):
+                self._entry_limit.delete(0, "end")
+                self._entry_limit.insert(0, str(cfg["limit"]))
+
+            if "cleanup_upload" in cfg and hasattr(self, "_sw_cleanup_upload"):
+                if cfg["cleanup_upload"]: self._sw_cleanup_upload.select()
+                else: self._sw_cleanup_upload.deselect()
+
+            if "show_browser" in cfg and hasattr(self, "_sw_show_browser"):
+                if cfg["show_browser"]: self._sw_show_browser.select()
+                else: self._sw_show_browser.deselect()
+
+            if "platform_tt" in cfg and hasattr(self, "_sw_platform_tt"):
+                if cfg["platform_tt"]: self._sw_platform_tt.select()
+                else: self._sw_platform_tt.deselect()
+
+            if "platform_yt" in cfg and hasattr(self, "_sw_platform_yt"):
+                if cfg["platform_yt"]: self._sw_platform_yt.select()
+                else: self._sw_platform_yt.deselect()
+
+            if "platform_fb" in cfg and hasattr(self, "_sw_platform_fb"):
+                if cfg["platform_fb"]: self._sw_platform_fb.select()
+                else: self._sw_platform_fb.deselect()
+
+            if "vids_per_acc" in cfg and hasattr(self, "_entry_vids_per_acc"):
+                self._entry_vids_per_acc.delete(0, "end")
+                self._entry_vids_per_acc.insert(0, str(cfg["vids_per_acc"]))
+
+            if "round_robin" in cfg and hasattr(self, "_sw_round_robin"):
+                if cfg["round_robin"]: self._sw_round_robin.select()
+                else: self._sw_round_robin.deselect()
+
+            if "upload_threads" in cfg and hasattr(self, "_entry_upload_threads"):
+                self._entry_upload_threads.delete(0, "end")
+                self._entry_upload_threads.insert(0, str(cfg["upload_threads"]))
+
+            acc_tt = cfg.get("account_tt")
+            if acc_tt and hasattr(self, "_opt_account"):
+                vals = self._opt_account.cget("values") if hasattr(self._opt_account, "cget") else []
+                if acc_tt in vals: self._opt_account.set(acc_tt)
+
+            acc_yt = cfg.get("account_yt")
+            if acc_yt and hasattr(self, "_opt_account_yt"):
+                vals = self._opt_account_yt.cget("values") if hasattr(self._opt_account_yt, "cget") else []
+                if acc_yt in vals: self._opt_account_yt.set(acc_yt)
+
+            acc_fb = cfg.get("account_fb")
+            if acc_fb and hasattr(self, "_opt_account_fb"):
+                vals = self._opt_account_fb.cget("values") if hasattr(self._opt_account_fb, "cget") else []
+                if acc_fb in vals: self._opt_account_fb.set(acc_fb)
+
+            author_filter = cfg.get("author_filter")
+            if author_filter and hasattr(self, "_opt_author_filter_up"):
+                vals = self._opt_author_filter_up.cget("values") if hasattr(self._opt_author_filter_up, "cget") else []
+                if author_filter in vals: self._opt_author_filter_up.set(author_filter)
+
+            self._saved_assigned_accounts = cfg.get("assigned_accounts", {})
+
+        except Exception as e:
+            print(f"Error loading upload config: {e}")
+
+    async def _async_upload_groups(self, limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb, max_workers=3, headless=False):
         import asyncio
         from database.db_manager import DatabaseManager
         from config.settings import COOKIES_DIR
@@ -2821,6 +2577,16 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         
         max_workers = max(1, int(max_workers))
         self._log(f"⚙️ Chế độ Upload: Đa luồng ({max_workers} luồng đồng thời mỗi nền tảng)", "INFO")
+
+        # Thống kê kết quả cho toàn bộ phiên
+        total_success = 0
+        total_vids_count = 0
+        if do_tt and account_groups_tt:
+            for v_list in account_groups_tt.values(): total_vids_count += len(v_list)
+        if do_yt and account_groups_yt:
+            for v_list in account_groups_yt.values(): total_vids_count += len(v_list)
+        if do_fb and account_groups_fb:
+            for v_list in account_groups_fb.values(): total_vids_count += len(v_list)
 
         semaphore_tt = asyncio.Semaphore(max_workers)
         window_slots = asyncio.Queue()
@@ -2835,10 +2601,13 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         # ─── NỀN TẢNG 1: TIKTOK ───
         if do_tt and account_groups_tt:
             async def _run_all_tt():
+                nonlocal total_success
                 from uploader.tiktok_uploader import TikTokUploader
-                self._log(f"🎬 Bắt đầu upload TikTok cho {len(account_groups_tt)} tài khoản ({max_workers} luồng song song)...", "INFO")
+                mode_str = "Ẩn ngầm (Headless)" if headless else "Hiện trình duyệt"
+                self._log(f"🎬 Bắt đầu upload TikTok cho {len(account_groups_tt)} tài khoản ({max_workers} luồng song song, chế độ: {mode_str})...", "INFO")
                 
                 async def _upload_single_tt(account_file, vids):
+                    nonlocal total_success
                     if self.cancel_flag:
                         return
                     async with semaphore_tt:
@@ -2861,7 +2630,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                             except Exception:
                                 pass
                                 
-                            uploader = TikTokUploader(db=db, cookies_file=cookies_path, proxy=proxy_str, window_idx=slot, username=current_user)
+                            uploader = TikTokUploader(db=db, cookies_file=cookies_path, proxy=proxy_str, window_idx=slot, username=current_user, headless=headless)
                             
                             captions_to_pass = {
                                 vid: custom_captions_dict[vid] 
@@ -2880,6 +2649,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                                     log_callback=_tt_log_cb
                                 )
                                 if len(results) > 0:
+                                    total_success += len(results)
                                     self._log(f"✅ [TikTok - Luồng {slot+1}] Upload xong {len(results)}/{len(vids)} video ({account_file})!", "SUCCESS")
                                 else:
                                     self._log(f"⚠️ [TikTok - Luồng {slot+1}] Không upload được video nào ({account_file})! Vui lòng kiểm tra lại file.", "WARNING")
@@ -2898,10 +2668,12 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         # ─── NỀN TẢNG 2: YOUTUBE ───
         if do_yt and account_groups_yt:
             async def _run_all_yt():
+                nonlocal total_success
                 from uploader.youtube_uploader import YouTubeUploader
                 self._log(f"🎬 Bắt đầu upload YouTube cho {len(account_groups_yt)} tài khoản ({max_workers} luồng song song)...", "INFO")
                 
                 async def _upload_single_yt(account_file, vids, worker_idx):
+                    nonlocal total_success
                     if self.cancel_flag:
                         return
                     async with semaphore_yt:
@@ -2929,6 +2701,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                                 log_callback=_yt_log_cb
                             )
                             if len(results) > 0:
+                                total_success += len(results)
                                 self._log(f"✅ [YouTube - Luồng {worker_idx+1}] Upload xong {len(results)}/{len(vids)} video ({account_file})!", "SUCCESS")
                             else:
                                 self._log(f"⚠️ [YouTube - Luồng {worker_idx+1}] Không upload được video nào ({account_file})! Vui lòng kiểm tra lại file.", "WARNING")
@@ -2945,10 +2718,12 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         # ─── NỀN TẢNG 3: FACEBOOK REELS ───
         if do_fb and account_groups_fb:
             async def _run_all_fb():
+                nonlocal total_success
                 from uploader.facebook_uploader import FacebookUploader
                 self._log(f"🎬 Bắt đầu upload Facebook Reels cho {len(account_groups_fb)} tài khoản ({max_workers} luồng song song)...", "INFO")
                 
                 async def _upload_single_fb(account_file, vids, worker_idx):
+                    nonlocal total_success
                     if self.cancel_flag:
                         return
                     async with semaphore_fb:
@@ -2976,6 +2751,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                                 log_callback=_fb_log_cb
                             )
                             if len(results) > 0:
+                                total_success += len(results)
                                 self._log(f"✅ [Facebook - Luồng {worker_idx+1}] Upload xong {len(results)}/{len(vids)} video ({account_file})!", "SUCCESS")
                             else:
                                 self._log(f"⚠️ [Facebook - Luồng {worker_idx+1}] Không upload được video nào ({account_file})! Vui lòng kiểm tra lại file.", "WARNING")
@@ -2993,6 +2769,23 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         if platform_tasks:
             await asyncio.gather(*platform_tasks, return_exceptions=True)
                 
+        # Hoàn tất phiên upload và ghi tổng kết
+        fail_count = max(0, total_vids_count - total_success)
+        sid = getattr(self, "_current_session_id", None)
+        if sid:
+            UploadLogManager.finish_session(
+                session_id=sid,
+                success_count=total_success,
+                fail_count=fail_count,
+                cancelled=bool(getattr(self, "cancel_flag", False)),
+            )
+            self._log(f"💾 Đã lưu toàn bộ nhật ký phiên upload ({sid}).", "SUCCESS")
+            status_msg = f"📊 Kết quả: {total_success}/{total_vids_count} video tải lên thành công."
+            if fail_count > 0:
+                status_msg += f" Có {fail_count} video thất bại hoặc bị bỏ qua."
+            self._log(status_msg, "SUCCESS" if fail_count == 0 else "WARNING")
+            self._log("💡 Bạn có thể bấm nút '📜 Xem lịch sử Logs' ở trên để xem lại chi tiết bất cứ lúc nào.", "INFO")
+
         self.after(0, self._load_videos)
 
     def _set_upload_threads(self, val):
@@ -3213,7 +3006,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         msg = f"Kết quả phân bổ {vids_per_acc} video/tài khoản:\n\n" + "\n".join(results)
         messagebox.showinfo("Phân bổ tự động hoàn tất", msg)
 
-    def _do_upload(self, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, video_accounts_fb_dict, cleanup_upload, do_tt, do_yt, do_fb, upload_threads=3):
+    def _do_upload(self, limit, selected_vids, custom_captions_dict, video_accounts_tt_dict, video_accounts_yt_dict, video_accounts_fb_dict, cleanup_upload, do_tt, do_yt, do_fb, upload_threads=3, headless=False):
         from config.settings import TIKTOK_CONFIG, YOUTUBE_CONFIG, FACEBOOK_CONFIG
         TIKTOK_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
         YOUTUBE_CONFIG["auto_cleanup_after_upload"] = cleanup_upload
@@ -3252,7 +3045,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                 asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
             except Exception:
                 pass
-        asyncio.run(self._async_upload_groups(limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb, upload_threads))
+        asyncio.run(self._async_upload_groups(limit, account_groups_tt, account_groups_yt, account_groups_fb, custom_captions_dict, do_tt, do_yt, do_fb, upload_threads, headless))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3443,9 +3236,12 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         self._status_badge = StatusBadge(btn_row, "Idle", TEXT_DIM)
         self._status_badge.pack(side="left")
 
-        # Log
+        # Log Toolbar & Log Widget
         self._log_widget = LogWidget(self)
-        self._log_widget.grid(row=3, column=0, sticky="nsew")
+        self._log_toolbar = LogToolbar(self, self._log_widget, module="auto", title="📋  Nhật ký Auto Pipeline (Logs):")
+        self._log_toolbar.grid(row=3, column=0, sticky="ew", pady=(0, 4))
+        self._log_widget.grid(row=4, column=0, sticky="nsew")
+        self.grid_rowconfigure(4, weight=1)
 
 
 
@@ -3536,6 +3332,11 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         account_file_fb = getattr(self, "_opt_account_fb", None)
         account_file_fb = account_file_fb.get() if account_file_fb and do_fb else None
         
+        self._start_logging_session(
+            "auto",
+            f"Auto Pipeline ({'Chạy 1 lần' if once else 'Chạy theo lịch'})",
+            {"source_mode": source_mode, "once": once, "file": file_path, "do_tt": do_tt, "do_yt": do_yt, "do_fb": do_fb}
+        )
         self._run_in_thread(self._do_auto, file_path, once, account_file, account_file_yt, account_file_fb, source_mode)
 
     def _do_auto(self, file_path, once, account_file, account_file_yt, account_file_fb, source_mode):
@@ -3594,6 +3395,7 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         self._on_task_done()
 
     def _on_task_done(self):
+        super()._on_task_done()
         self.after(0, lambda: self._btn_start.configure(state="normal"))
         self.after(0, lambda: self._btn_stop.configure(state="disabled"))
         self.after(0, lambda: self._status_badge.set("Dừng", DANGER if not self._running else SUCCESS))
@@ -4367,11 +4169,13 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         # Log
         log_frame = ctk.CTkFrame(split, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
         log_frame.grid(row=0, column=1, sticky="nsew")
-        log_frame.grid_rowconfigure(0, weight=1)
+        log_frame.grid_rowconfigure(1, weight=1)
         log_frame.grid_columnconfigure(0, weight=1)
         
         self._log_widget = LogWidget(log_frame)
-        self._log_widget.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        self._log_toolbar = LogToolbar(log_frame, self._log_widget, module="farm", title="📋  Nhật ký Nuôi Nick (Logs):")
+        self._log_toolbar.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
+        self._log_widget.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
 
     def _toggle_all(self):
@@ -4520,6 +4324,16 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         except Exception:
             pass
 
+        self._start_logging_session(
+            "farm",
+            f"Nuôi {len(selected)} Nick (Kịch bản: {flow_name})",
+            {
+                "flow": flow_name,
+                "accounts_count": len(selected),
+                "threads": threads,
+                "headless": headless,
+            }
+        )
         self._run_in_thread(self._do_farm, selected, selected_flow, proxies, max_concurrent=threads, headless=headless)
 
     async def _do_farm(self, accounts, flow, proxies=None, max_concurrent=3, headless=False):
@@ -6054,140 +5868,7 @@ class SettingsTab(ctk.CTkFrame):
         # Khởi tạo mặc định
         self.after(500, lambda: __import__('threading').Thread(target=_load_logs, daemon=True).start() if self.tabview.get() == "Hoạt động" else None)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Login Window
-# ═══════════════════════════════════════════════════════════════════════════════
-from auth_client import auth_client
 
-class RegisterWindow(ctk.CTkToplevel):
-    def __init__(self, master):
-        super().__init__(master)
-        
-        self.title("Đăng ký Tài khoản")
-        self.geometry("400x350")
-        self.resizable(False, False)
-        self.configure(fg_color=BG_DARK)
-        
-        self.transient(master) # Nổi lên trên LoginWindow
-        self.grab_set()        # Khoá cửa sổ Login khi đang đăng ký
-        
-        ctk.CTkLabel(
-            self, text="Tạo Tài Khoản",
-            font=("Segoe UI", 28, "bold"), text_color=TEXT_MAIN
-        ).pack(pady=(30, 20))
-        
-        self.entry_user = ctk.CTkEntry(self, placeholder_text="Tên đăng nhập", width=250)
-        self.entry_user.pack(pady=10)
-        
-        self.entry_pass = ctk.CTkEntry(self, placeholder_text="Mật khẩu", show="*", width=250)
-        self.entry_pass.pack(pady=10)
-        
-        self.entry_pass_confirm = ctk.CTkEntry(self, placeholder_text="Xác nhận Mật khẩu", show="*", width=250)
-        self.entry_pass_confirm.pack(pady=10)
-        
-        self.btn_register = ctk.CTkButton(
-            self, text="Đăng ký", width=250, height=40,
-            command=self._do_register, font=("Segoe UI", 14, "bold"),
-            fg_color=SUCCESS, hover_color="#059669"
-        )
-        self.btn_register.pack(pady=20)
-        
-    def _do_register(self):
-        user = self.entry_user.get().strip()
-        pwd = self.entry_pass.get()
-        pwd2 = self.entry_pass_confirm.get()
-        
-        from tkinter import messagebox
-        if not user or not pwd:
-            messagebox.showwarning("Lỗi", "Vui lòng nhập đầy đủ Tên đăng nhập và Mật khẩu!")
-            return
-            
-        if pwd != pwd2:
-            messagebox.showwarning("Lỗi", "Mật khẩu xác nhận không khớp!")
-            return
-            
-        self.btn_register.configure(state="disabled", text="Đang xử lý...")
-        
-        def run():
-            success, msg = auth_client.register(user, pwd)
-            self.after(0, self._handle_result, success, msg)
-            
-        import threading
-        threading.Thread(target=run, daemon=True).start()
-        
-    def _handle_result(self, success, msg):
-        from tkinter import messagebox
-        if success:
-            messagebox.showinfo("Thành công", msg)
-            self.grab_release()
-            self.destroy()
-        else:
-            messagebox.showerror("Lỗi", msg)
-            self.btn_register.configure(state="normal", text="Đăng ký")
-
-class LoginWindow(ctk.CTkToplevel):
-    def __init__(self, master, on_success):
-        super().__init__(master)
-        self.on_success = on_success
-        
-        self.title("Đăng nhập Hệ thống")
-        self.geometry("400x380")
-        self.resizable(False, False)
-        self.configure(fg_color=BG_DARK)
-        
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-        
-        ctk.CTkLabel(
-            self, text="DouyinBot SaaS",
-            font=("Segoe UI", 28, "bold"), text_color=TEXT_MAIN
-        ).pack(pady=(30, 20))
-        
-        self.entry_user = ctk.CTkEntry(self, placeholder_text="Tên đăng nhập", width=250)
-        self.entry_user.pack(pady=10)
-        
-        self.entry_pass = ctk.CTkEntry(self, placeholder_text="Mật khẩu", show="*", width=250)
-        self.entry_pass.pack(pady=10)
-        
-        self.btn_login = ctk.CTkButton(
-            self, text="Đăng nhập", width=250, height=40,
-            command=self._do_login, font=("Segoe UI", 14, "bold")
-        )
-        self.btn_login.pack(pady=20)
-        
-        self.btn_register = ctk.CTkButton(
-            self, text="Chưa có tài khoản? Đăng ký ngay", width=250, height=30,
-            command=self._open_register, font=("Segoe UI", 12),
-            fg_color="transparent", text_color=ACCENT, hover_color=BG_CARD
-        )
-        self.btn_register.pack(pady=0)
-        
-    def _open_register(self):
-        RegisterWindow(self)
-        
-    def _do_login(self):
-        user = self.entry_user.get()
-        pwd = self.entry_pass.get()
-        self.btn_login.configure(state="disabled", text="Đang xử lý...")
-        
-        def run():
-            success, msg = auth_client.login(user, pwd)
-            self.after(0, self._handle_result, success, msg)
-            
-        import threading
-        threading.Thread(target=run, daemon=True).start()
-        
-    def _handle_result(self, success, msg):
-        if success:
-            self.grab_release()
-            self.destroy()
-            self.on_success()
-        else:
-            from tkinter import messagebox
-            messagebox.showerror("Lỗi", msg)
-            self.btn_login.configure(state="normal", text="Đăng nhập")
-
-    def _on_close(self):
-        self.master.destroy()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

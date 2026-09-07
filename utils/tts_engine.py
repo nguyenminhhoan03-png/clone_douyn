@@ -48,6 +48,7 @@ def generate_voiceover_from_srt(
     video_duration: float,
     voice: str = "vi-VN-HoaiMyNeural",
     rate: str = "+0%",
+    progress_cb: Optional[Callable] = None,
 ) -> Optional[str]:
     """
     Đọc file SRT tiếng Việt → tạo file audio thuyết minh khớp timeline video.
@@ -58,6 +59,7 @@ def generate_voiceover_from_srt(
         video_duration: Tổng thời lượng video (giây)
         voice: Giọng TTS (mặc định: vi-VN-HoaiMyNeural - giọng nữ)
         rate: Tốc độ đọc (vd: "+0%", "+10%", "-10%")
+        progress_cb: Callback tiến trình (nếu có)
 
     Returns:
         Đường dẫn file audio đã tạo, hoặc None nếu lỗi
@@ -74,14 +76,14 @@ def generate_voiceover_from_srt(
                 return pool.submit(
                     lambda: asyncio.run(
                         _async_generate_voiceover(
-                            srt_path, output_audio_path, video_duration, voice, rate
+                            srt_path, output_audio_path, video_duration, voice, rate, progress_cb
                         )
                     )
                 ).result()
         else:
             return asyncio.run(
                 _async_generate_voiceover(
-                    srt_path, output_audio_path, video_duration, voice, rate
+                    srt_path, output_audio_path, video_duration, voice, rate, progress_cb
                 )
             )
     except Exception as e:
@@ -328,6 +330,7 @@ async def _async_generate_voiceover(
     video_duration: float,
     voice: str,
     rate: str,
+    progress_cb: Optional[Callable] = None,
 ) -> Optional[str]:
     """Async implementation: đọc SRT → tạo audio segments → ghép thành 1 file."""
     try:
@@ -433,6 +436,9 @@ async def _async_generate_voiceover(
             "end_ms": end_ms,
             "segment_duration_ms": segment_duration_ms,
             "chunks": chunks,
+            "voice": current_voice,
+            "text": clean,
+            "raw_sub": sub.text.strip(),
         })
 
     if not sub_data:
@@ -452,6 +458,33 @@ async def _async_generate_voiceover(
     for entry in sub_data:
         for chunk in entry["chunks"]:
             chunk["success"] = next(result_iter)
+
+    # ─── BẢNG ĐỐI CHIẾU SUB & GIỌNG ĐỌC (TTS) RA LOG ──────────────────────
+    header_line = "═══════════════════ [BẢNG ĐỐI CHIẾU SUB VÀ GIỌNG ĐỌC (TTS)] ═══════════════════"
+    logger.info(header_line)
+    if progress_cb:
+        try: progress_cb(35, f"[DEBUG] {header_line}")
+        except Exception: pass
+    for entry in sub_data:
+        v_name = "Nam" if ("nam" in entry["voice"].lower() or "minhhoang" in entry["voice"].lower()) else "Nữ/Dẫn"
+        start_s = entry["start_ms"] / 1000.0
+        end_s = entry["end_ms"] / 1000.0
+        # Xóa tag trong raw_sub để hiển thị sub sạch
+        clean_sub_display = re.sub(r'\[\s*(?:M|F|N|Nam|Nữ|Nu)\s*\]|\(\s*(?:M|F|N|Nam|Nữ|Nu)\s*\)', '', entry["raw_sub"], flags=re.IGNORECASE)
+        clean_sub_display = clean_sub_display.replace('|', ' ').strip()
+        comp_msg = (
+            f"  [#{entry['index']:02d} | {start_s:05.2f}s➔{end_s:05.2f}s] [{v_name}] "
+            f"Sub: \"{clean_sub_display}\" ➔ Voice đọc: \"{entry['text']}\""
+        )
+        logger.info(comp_msg)
+        if progress_cb:
+            try: progress_cb(35, f"[DEBUG] {comp_msg}")
+            except Exception: pass
+    footer_line = "══════════════════════════════════════════════════════════════════════════════════"
+    logger.info(footer_line)
+    if progress_cb:
+        try: progress_cb(35, f"[DEBUG] {footer_line}")
+        except Exception: pass
 
     # ─── Bước 3: Ghép các chunk trong cùng một segment → file segment ───────
     # Dùng pydub để nối chunk (nếu segment bị split), lưu lại vào 1 file duy nhất

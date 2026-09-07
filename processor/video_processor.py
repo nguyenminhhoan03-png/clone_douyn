@@ -50,7 +50,7 @@ class VideoProcessor:
         self.processed_dir.mkdir(parents=True, exist_ok=True)
         MUSIC_DIR.mkdir(parents=True, exist_ok=True)
         
-        whisper_model = self.config.get("whisper_model", "base")
+        whisper_model = self.config.get("whisper_model", os.getenv("WHISPER_MODEL", "medium"))
         self.subtitle_generator = SubtitleGenerator(model_size=whisper_model) if self.config.get("auto_subtitle") else None
 
     @staticmethod
@@ -317,6 +317,7 @@ class VideoProcessor:
                 str(srt_path), str(voiceover_path),
                 video_duration=video_duration,
                 voice=tts_voice, rate=tts_rate,
+                progress_cb=progress_cb,
             )
             
             if vo_result:
