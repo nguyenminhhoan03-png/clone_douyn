@@ -50,7 +50,7 @@ class VideoProcessor:
         self.processed_dir.mkdir(parents=True, exist_ok=True)
         MUSIC_DIR.mkdir(parents=True, exist_ok=True)
         
-        whisper_model = self.config.get("whisper_model", os.getenv("WHISPER_MODEL", "medium"))
+        whisper_model = self.config.get("whisper_model", os.getenv("WHISPER_MODEL", "base"))
         self.subtitle_generator = SubtitleGenerator(model_size=whisper_model) if self.config.get("auto_subtitle") else None
 
     @staticmethod
@@ -105,7 +105,7 @@ class VideoProcessor:
         _, h = self._get_video_dimensions(input_path)
         return h
 
-    def _compute_blur_coordinates(self, input_path: str):
+    def _compute_blur_coordinates(self, input_path: str, dialogue_timestamps: list = None):
         """Tính toán tọa độ và độ cao dải mờ phụ đề độc lập (Smart Subtitle Blur)."""
         blur_enabled = bool(self.config.get("blur_enabled", True))
         if not blur_enabled:
@@ -117,7 +117,7 @@ class VideoProcessor:
         if any(k in blur_pos_cfg for k in ("auto", "tự động")):
             try:
                 from utils.subtitle_detector import detect_subtitle_y_range
-                y_start, h = detect_subtitle_y_range(str(input_path))
+                y_start, h = detect_subtitle_y_range(str(input_path), dialogue_timestamps=dialogue_timestamps)
                 if custom_h is not None and isinstance(custom_h, (int, float)) and custom_h > 0:
                     center_y = y_start + (h / 2.0)
                     h = min(0.12, float(custom_h))
@@ -128,7 +128,7 @@ class VideoProcessor:
                 try:
                     w, vid_h = self._get_video_dimensions(str(input_path))
                     if w > vid_h:
-                        return True, 0.86, 0.085
+                        return True, 0.82, 0.080
                 except:
                     pass
                 return True, 0.72, 0.075
@@ -191,11 +191,12 @@ class VideoProcessor:
             filters.append(f"crop=iw/{cz:.2f}:ih/{cz:.2f},scale=iw:ih")
             logger.debug(f"  ✓ YouTube Bypass: Crop & Zoom {cz:.2f}x")
 
-        # 3. Rotation siêu nhỏ & Vignette (Phá vỡ thuật toán Spatial pHash)
-        rot_angle = random.uniform(-0.02, 0.02) # radians
-        filters.append(f"rotate={rot_angle}:c=black:ow=iw:oh=ih")
-        filters.append("vignette=PI/4")
-        logger.debug(f"  ✓ Micro-Rotation ({rot_angle:.4f} rad) & Vignette")
+        # 3. Rotation siêu nhỏ & Vignette (Chỉ áp dụng khi YouTube Bypass để phá vỡ Spatial pHash, né trên TikTok để tăng tốc render x3 lần)
+        if platform_mode == "youtube" and yt_cfg.get("deep_bypass", False):
+            rot_angle = random.uniform(-0.02, 0.02) # radians
+            filters.append(f"rotate={rot_angle}:c=black:ow=iw:oh=ih")
+            filters.append("vignette=PI/4")
+            logger.debug(f"  ✓ YouTube Deep Bypass: Micro-Rotation ({rot_angle:.4f} rad) & Vignette")
 
         # 4. Color Grading chuyên sâu & Noise (YouTube Mode màu đậm hơn + Noise)
         brightness = self.config.get("brightness_adjust", 1.0)
@@ -237,6 +238,20 @@ class VideoProcessor:
                 
             if generated_srt:
                 clean_srt_path = str(srt_path).replace('.srt', '_clean.srt')
+                
+                # ─── 5.1.1. Tinh chỉnh vùng làm mờ thông minh theo MỐC CÂU THOẠI THẬT (Dialogue-Driven Blur) ───
+                if blur_enabled and any(k in str(self.config.get("blur_position", "auto")).lower() for k in ("auto", "tự động")):
+                    try:
+                        from utils.subtitle_detector import extract_srt_sample_timestamps
+                        target_srt_for_time = clean_srt_path if os.path.exists(clean_srt_path) else str(srt_path)
+                        d_times = extract_srt_sample_timestamps(target_srt_for_time, count=5)
+                        if d_times:
+                            _, ref_y, ref_h = self._compute_blur_coordinates(str(input_path), dialogue_timestamps=d_times)
+                            blur_y_start, blur_h = ref_y, ref_h
+                            self._current_blur_params = (blur_enabled, blur_y_start, blur_h)
+                            logger.info(f"  🎯 AI định vị phụ đề theo {len(d_times)} mốc câu thoại: Y={blur_y_start*100:.1f}%, H={blur_h*100:.1f}%")
+                    except Exception as b_err:
+                        logger.debug(f"Không thể tinh chỉnh blur theo dialogue timestamps: {b_err}")
                 
                 # Sử dụng đường dẫn tương đối để tránh lỗi dấu hai chấm (:) của ổ đĩa trên Windows trong FFmpeg filter
                 rel_srt_path = os.path.relpath(clean_srt_path, os.getcwd())

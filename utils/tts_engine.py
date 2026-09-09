@@ -269,10 +269,10 @@ async def _fetch_single_chunk(
                         except Exception as rescue_err:
                             logger.debug(f"Cứu hộ TTS {label} thất bại: {rescue_err}")
 
-                    if attempt >= 1:
-                        logger.warning(f"TTS {label} bỏ qua sau 2 lần lỗi 'No audio was received' ({text[:40]})")
+                    if attempt >= _MAX_RETRIES - 1:
+                        logger.warning(f"TTS {label} bỏ qua sau {_MAX_RETRIES} lần thử ({text[:40]})")
                         return False
-                    wait = 2.0
+                    wait = min(2.5 * (attempt + 1), 10.0)
                 else:
                     wait = min(2 ** attempt + random.uniform(0, 1), 10.0)
 
@@ -392,8 +392,9 @@ async def _async_generate_voiceover(
                         current_voice = "vi-VN-HoaiMyNeural"
             
         # Xóa triệt để mọi tag và ký tự | dù ở đầu, giữa hay cuối câu để TTS không đọc nhầm
-        raw_text = re.sub(r'\[\s*(?:M|F|N|Nam|Nữ|Nu)\s*\]|\(\s*(?:M|F|N|Nam|Nữ|Nu)\s*\)', '', raw_text, flags=re.IGNORECASE)
-        raw_text = re.sub(r'^(?:M|F|N|Nam|Nữ|Nu)[:\s]+', '', raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r'\[\s*(?:M|F|N|Nam|Nữ|Nu|Male|Female|Man|Woman)\s*\][:\s\-]*', '', raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r'\(\s*(?:M|F|N|Nam|Nữ|Nu|Male|Female|Man|Woman)\s*\)[:\s\-]*', '', raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r'^(?:M|F|N|Nam|Nữ|Nu|Male|Female|Man|Woman)[:\s\-]+', '', raw_text, flags=re.IGNORECASE)
         raw_text = raw_text.replace('|', ' ').strip()
         raw_text = re.sub(r'^[:|\-\s]+|[:|\-\s]+$', '', raw_text).strip()
 

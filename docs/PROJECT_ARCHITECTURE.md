@@ -90,11 +90,17 @@ tiktok-upload-video/
   - Khi tắt làm mờ: Phụ đề tự động hạ về vị trí chuẩn Douyin (cách đáy 18%), không bị nhảy bừa vào giữa màn hình.
 - **Trích xuất âm thanh & Nhận diện tiếng nói (Whisper)**:
   - Tự động phát hiện GPU CUDA, nếu không có sẽ dùng CPU đa luồng với model `medium` hoặc `base`.
+  - Bộ lọc âm chuẩn hóa động DynAudNorm (`highpass=f=80,dynaudnorm=f=125:g=15:p=0.95:m=10.0`) giúp khuếch đại lời thì thầm, tiếng nói nhỏ và tự sự.
+  - **Tắt `vad_filter=False` & Ngưỡng âm học `no_speech_threshold=0.6`**: Bắt trọn 100% tiếng nói, la hét, khóc mếu, giọng hoạt hình hài hước của nhân vật trên nền nhạc kịch tính mà không bị Silero VAD cắt bỏ âm thanh.
+  - **Phân bổ thời gian & Giới hạn thời lượng (`eff_end`)**: Tách câu theo độ dài ký tự thực tế và cắt bỏ đuôi im lặng dư thừa, ngăn phụ đề treo lâu trên màn hình.
+  - **Lọc trùng lặp liên tiếp (Anti-Hallucination)**: Tự động triệt tiêu các câu lặp lại do Whisper sinh ra khi gặp nhạc nền.
 - **Dịch Phụ Đề AI & Cơ Chế Cứu Hộ 2 Tầng (Auto-Rescue Subtitle)**:
   - **Cloud AI (Groq / Gemini)**: Quy trình 2-Pass (Pass 1 sửa lỗi Whisper tiếng Trung, Pass 2 dịch sang văn phong Việt hóa mượt mà). Tự động nhận diện API key (`gsk_` cho Groq, `AIza` cho Gemini) bất kể thứ tự cấu hình.
-  - **Local Offline AI (Ollama - Qwen2.5)**: Chế độ **1-Pass Siêu Tốc** (vừa sửa lỗi vừa dịch trong 1 lần gọi duy nhất với prompt tiếng Trung tinh gọn ~20 dòng, context 2048, giới hạn 25 câu/lô, cấm `<think>...</think>`, dùng tối đa 8 threads CPU). Giúp giảm 50% thời gian xử lý và triệt tiêu lỗi Timeout 180s trên CPU.
-  - **Cứu hộ Tầng 1 (Toàn lô)**: Nếu Ollama/Cloud AI lỗi hoặc timeout sau retry, hệ thống tự động kích hoạt Google Translate cứu hộ toàn bộ lô câu để quy trình không bao giờ bị dừng giữa chừng.
+  - **Local Offline AI (Ollama - Qwen2.5)**: Chế độ **1-Pass Siêu Tốc** (vừa sửa lỗi vừa dịch trong 1 lần gọi duy nhất với prompt tiếng Trung tinh gọn ~20 dòng, context 4096, predict 2048, giới hạn 25 câu/lô, cấm `<think>...</think>`, dùng tối đa 8 threads CPU, timeout 35s). Giúp giảm 50% thời gian xử lý và chống đóng băng ứng dụng khi CPU quá tải.
+  - **Cứu hộ Tầng 1 (Toàn lô)**: Nếu Ollama/Cloud AI lỗi hoặc timeout 35s sau retry, hệ thống tự động kích hoạt Google Translate cứu hộ toàn bộ lô câu để quy trình không bao giờ bị dừng giữa chừng.
   - **Cứu hộ Tầng 2 (Từng câu sót chữ Hán)**: Quét toàn bộ file SRT bằng regex chữ Hán `[\u4e00-\u9fff]`. Câu nào còn sót chữ Hán (do AI bỏ sót hoặc giữ nguyên) sẽ lập tức được dịch riêng qua Google Translate. Đảm bảo 100% video ra lò sạch bóng tiếng Trung.
+- **Đối Chiếu Sub và Voice Thời Gian Thực Lên GUI**:
+  - Tích hợp loguru sink `_gui_log_sink` đẩy trực tiếp bảng đối chiếu câu gốc - câu dịch - giọng đọc TTS lên màn hình hiển thị Log của GUI.
 - **Lồng Tiếng AI (AI Voiceover Dubbing) & Chống Câm Tiếng**:
   - **Microsoft Edge TTS**: Miễn phí 100%, không cần API key, giọng đọc tự nhiên đa dạng (`vi-VN-NamMinhNeural`, `vi-VN-HoaiMyNeural`), hỗ trợ chế độ Đa giọng thoại nam/nữ theo kịch bản.
   - **Vbee TTS**: Giọng đọc thương mại, yêu cầu cấu hình `VBEE_API_KEY`.

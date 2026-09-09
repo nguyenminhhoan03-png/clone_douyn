@@ -92,7 +92,7 @@ class SubtitleGenerator:
     _transcribe_lock = threading.Lock()
 
     def __init__(self, model_size: str = None):
-        default_model = "base" if os.name != "nt" else "medium"
+        default_model = "base"
         self.model_size = model_size or os.getenv("WHISPER_MODEL", default_model)
         self.model = None
 
@@ -109,8 +109,10 @@ class SubtitleGenerator:
                 self.model = WhisperModel(self.model_size, device="cuda", compute_type="float16")
                 logger.info("Whisper model loaded on CUDA (GPU) - Xử lý siêu tốc!")
             except Exception as e:
-                logger.warning("Không tìm thấy GPU CUDA, đang dùng CPU (Sẽ chậm hơn) ...")
-                self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8")
+                import os
+                threads = os.cpu_count() or 4
+                logger.info(f"Đang dùng CPU ({threads} threads) cho Whisper '{self.model_size}'...")
+                self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8", cpu_threads=threads)
                 logger.info("Whisper model loaded on CPU!")
 
     def generate_srt(self, video_path: str, output_srt_path: str, src_lang: str = "zh", target_lang: str = "vi", progress_cb: Optional[Callable] = None) -> Optional[str]:
@@ -162,21 +164,15 @@ class SubtitleGenerator:
                 with SubtitleGenerator._transcribe_lock:
                     segments_gen, info = self.model.transcribe(
                         audio_input, 
-                        beam_size=5,
-                        best_of=5,
+                        beam_size=1,
+                        best_of=1,
                         language=src_lang,
-                        temperature=[0.0, 0.2],
+                        temperature=0.0,
                         condition_on_previous_text=False,
                         compression_ratio_threshold=2.4,
-                        no_speech_threshold=0.85,
-                        initial_prompt="这是一段普通话/东北话短剧对话，包含人物对话、旁白和内心独白。",
-                        vad_filter=True,
-                        vad_parameters=dict(
-                            threshold=0.20,
-                            min_speech_duration_ms=100,
-                            min_silence_duration_ms=500,
-                            speech_pad_ms=300
-                        ),
+                        no_speech_threshold=0.8,
+                        initial_prompt=None,
+                        vad_filter=False,
                         word_timestamps=True
                     )
                     segments = list(segments_gen)
@@ -205,42 +201,42 @@ class SubtitleGenerator:
                 # TỰ ĐỘNG BẺ NHỎ CÂU (Chống dồn hàng chục câu vào một đoạn ngắn):
                 # Nếu Whisper gộp nhiều câu ngăn cách bởi dấu ngắt câu, tách từng câu ra thành segment riêng
                 raw_sentences = [s.strip() for s in re.split(split_chars, original_text) if s.strip()]
+                if not raw_sentences:
+                    continue
 
-                if len(raw_sentences) > 1 and hasattr(segment, 'words') and segment.words:
-                    curr_words = []
-                    for w in segment.words:
-                        curr_words.append(w)
-                        if any(p in w.word for p in ['。', '！', '？', '；', ';', '!', '?', '\n']):
-                            s_text = "".join([cw.word for cw in curr_words]).strip()
-                            s_text = re.sub(r'^[。！？；;\s]+|[。！？；;\s]+$', '', s_text)
-                            if s_text:
-                                segment_data.append({
-                                    "start": curr_words[0].start,
-                                    "end": curr_words[-1].end,
-                                    "start_time": self._format_time(curr_words[0].start),
-                                    "end_time": self._format_time(curr_words[-1].end),
-                                    "original_text": s_text,
-                                })
-                            curr_words = []
-                    if curr_words:
-                        s_text = "".join([cw.word for cw in curr_words]).strip()
-                        s_text = re.sub(r'^[。！？；;\s]+|[。！？；;\s]+$', '', s_text)
-                        if s_text:
-                            segment_data.append({
-                                "start": curr_words[0].start,
-                                "end": curr_words[-1].end,
-                                "start_time": self._format_time(curr_words[0].start),
-                                "end_time": self._format_time(curr_words[-1].end),
-                                "original_text": s_text,
-                            })
-                elif len(raw_sentences) > 1:
-                    # Fallback nếu không có word_timestamps: phân bổ thời gian tỉ lệ theo độ dài câu
+                if len(raw_sentences) == 1:
+                    s = raw_sentences[0]
+                    # Tránh kéo dài subtitle quá mức khi có đoạn nhạc nền / im lặng ở đuôi câu
+                    dur = segment.end - segment.start
+                    max_dur = max(2.5, len(s) * 0.4 + 1.0)
+                    eff_end = min(segment.end, segment.start + max_dur) if dur > max_dur + 2.0 else segment.end
+
+                    # Chống hallucination lặp lại liên tiếp cùng 1 câu
+                    if segment_data and segment_data[-1]["original_text"] == s and (segment.start - segment_data[-1]["end"]) < 2.0:
+                        continue
+
+                    segment_data.append({
+                        "start": segment.start,
+                        "end": eff_end,
+                        "start_time": self._format_time(segment.start),
+                        "end_time": self._format_time(eff_end),
+                        "original_text": s,
+                    })
+                else:
+                    # Nhiều câu: Phân bổ thời gian tỉ lệ theo độ dài ký tự chuẩn xác
                     total_len = sum(len(s) for s in raw_sentences)
-                    total_dur = segment.end - segment.start
+                    total_dur = max(0.6 * len(raw_sentences), segment.end - segment.start)
                     curr_start = segment.start
-                    for s in raw_sentences:
-                        dur = max(1.5, (len(s) / max(1, total_len)) * total_dur)
-                        curr_end = min(segment.end, curr_start + dur)
+                    for i, s in enumerate(raw_sentences):
+                        ratio = len(s) / max(1, total_len)
+                        dur = max(0.6, ratio * total_dur)
+                        curr_end = curr_start + dur
+
+                        # Chống hallucination lặp lại liên tiếp
+                        if segment_data and segment_data[-1]["original_text"] == s and abs(curr_start - segment_data[-1]["end"]) < 1.0:
+                            curr_start = curr_end
+                            continue
+
                         segment_data.append({
                             "start": curr_start,
                             "end": curr_end,
@@ -249,32 +245,50 @@ class SubtitleGenerator:
                             "original_text": s,
                         })
                         curr_start = curr_end
-                else:
-                    segment_data.append({
-                        "start": segment.start,
-                        "end": segment.end,
-                        "start_time": self._format_time(segment.start),
-                        "end_time": self._format_time(segment.end),
-                        "original_text": original_text,
-                    })
-                    
+
             if not segment_data:
                 logger.warning("Không nhận diện được giọng nói trong video.")
                 if progress_cb: progress_cb(10, "Cảnh báo: Video không có giọng nói hoặc AI không nghe rõ.")
                 return None
                 
-            ai_provider = PROCESSOR_CONFIG.get("ai_provider", "ollama")
-            ollama_url = PROCESSOR_CONFIG.get("ollama_url", "http://localhost:11434")
-            ollama_model = PROCESSOR_CONFIG.get("ollama_model", "qwen2.5")
+            ai_provider = PROCESSOR_CONFIG.get("ai_provider") or os.getenv("AI_PROVIDER", "ollama_first")
+            ollama_url = PROCESSOR_CONFIG.get("ollama_url") or os.getenv("OLLAMA_URL", "http://localhost:11434")
+            ollama_model = PROCESSOR_CONFIG.get("ollama_model") or os.getenv("OLLAMA_MODEL", "qwen2.5")
 
             gemini_keys = PROCESSOR_CONFIG.get("gemini_api_keys", [])
-            # Fallback tương thích ngược với file config cũ
+            if not gemini_keys:
+                raw_k = os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", "")).strip()
+                if raw_k:
+                    gemini_keys = [k.strip() for k in raw_k.split(",") if k.strip()]
+
+            # Fallback nếu vẫn rỗng: tìm trong settings.json của current user
+            if not gemini_keys:
+                try:
+                    from auth_client import auth_client
+                    from config.settings import COOKIES_DIR
+                    import json
+                    username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+                    user_clean = username.replace("@", "_").replace(".", "_")
+                    user_settings_path = COOKIES_DIR / user_clean / "settings.json"
+                    if user_settings_path.exists():
+                        with open(user_settings_path, "r", encoding="utf-8") as f:
+                            u_data = json.load(f)
+                            k_val = u_data.get("gemini_api_key", "").strip()
+                            if k_val:
+                                gemini_keys = [k.strip() for k in k_val.split(",") if k.strip()]
+                                PROCESSOR_CONFIG["gemini_api_keys"] = gemini_keys
+                            if u_data.get("custom_ai_model"):
+                                PROCESSOR_CONFIG["custom_ai_model"] = u_data.get("custom_ai_model")
+                except Exception:
+                    pass
+
             if not gemini_keys and PROCESSOR_CONFIG.get("gemini_api_key"):
                 gemini_keys = [PROCESSOR_CONFIG.get("gemini_api_key")]
                 
             # Nếu dùng Ollama hoặc không có key riêng thì vẫn chạy được
-            if ai_provider == "ollama":
-                gemini_keys = ["ollama"]
+            if ai_provider in ("ollama", "ollama_only"):
+                if not gemini_keys:
+                    gemini_keys = ["ollama"]
             elif not gemini_keys or len(gemini_keys) == 0:
                 gemini_keys = [None]
                 
@@ -315,16 +329,32 @@ class SubtitleGenerator:
                     else:
                         logger.warning("Lỗi khi viết kịch bản Review, chuyển về dịch nguyên bản...")
                         
-                # ─── Cách 1: Dịch ngữ cảnh bằng AI LLM (Ollama Local / Groq / Gemini) ───
-                if ai_provider == "ollama":
-                    ai_name = f"Ollama ({ollama_model})"
-                    logger.info(f"🦙 Đang sử dụng {ai_name} (Local Offline) để xử lý phụ đề...")
-                else:
-                    ai_name = "Groq" if gemini_keys and gemini_keys[0] and str(gemini_keys[0]).startswith("gsk_") else "Gemini"
-                    logger.info(f"Đã tìm thấy {len(gemini_keys)} {ai_name} API Keys. Đang gửi dữ liệu text cho AI dịch ngữ cảnh...")
+                # ─── Cách 1: Dịch ngữ cảnh bằng AI LLM (Hỗ trợ Thứ tự ưu tiên & Dự phòng 2 chiều) ───
+                cloud_keys = [k for k in gemini_keys if k and k != "ollama"]
+                custom_model = PROCESSOR_CONFIG.get("custom_ai_model") or os.getenv("CUSTOM_AI_MODEL", "gemini-3.6-flash-high")
                 
-                # Chunk size cho Ollama trên CPU tối ưu ở mức 25 câu để tránh nghẽn context và timeout
-                CHUNK_SIZE = 25 if ai_provider == "ollama" else 100
+                # Xác định nhãn Cloud
+                cloud_label = "Cloud API"
+                if cloud_keys:
+                    first_k = cloud_keys[0]
+                    if str(first_k).startswith("sk-"):
+                        cloud_label = f"Vilao.ai ({custom_model})"
+                    elif str(first_k).startswith("gsk_"):
+                        cloud_label = "Groq Cloud"
+                    else:
+                        cloud_label = "Gemini Cloud"
+
+                # Log chế độ hoạt động
+                if ai_provider in ("ollama_first", "ollama"):
+                    logger.info(f"🦙 Chế độ: Ưu tiên Ollama Local ({ollama_model}) ➔ Dự phòng Cloud API ({cloud_label})...")
+                elif ai_provider in ("cloud_first", "gemini", "groq", "vilao"):
+                    logger.info(f"⚡ Chế độ: Ưu tiên Cloud API ({cloud_label}) ➔ Dự phòng Ollama Local ({ollama_model})...")
+                elif ai_provider == "cloud_only":
+                    logger.info(f"☁️ Chế độ: Chỉ sử dụng Cloud API ({cloud_label})...")
+                else: # ollama_only
+                    logger.info(f"🦙 Chế độ: Chỉ sử dụng Ollama Local Offline ({ollama_model})...")
+
+                CHUNK_SIZE = 15 if ai_provider in ("ollama", "ollama_first", "ollama_only") else 25
                 payload_lines = []
                 for idx, data in enumerate(segment_data):
                     payload_lines.append(f"{idx}|{data['original_text']}")
@@ -332,86 +362,95 @@ class SubtitleGenerator:
                 translated_text = ""
                 total_chunks = (len(payload_lines) - 1) // CHUNK_SIZE + 1
                 gemini_success = True
-                
-                # Kiểm tra cấu hình xem có đang ở chế độ nhiều giọng không
                 multi_speaker_mode = PROCESSOR_CONFIG.get("tts_voice") in ("Multi", "vbee-multi")
-                
+
+                def _try_translate_with_ollama(chunk_str, ctx_str):
+                    try:
+                        return translate_srt_with_gemini(
+                            chunk_str,
+                            api_key="ollama",
+                            multi_speaker=multi_speaker_mode,
+                            provider="ollama",
+                            model=ollama_model,
+                            ollama_url=ollama_url,
+                            context=ctx_str
+                        )
+                    except Exception as err:
+                        logger.warning(f"Ollama Local gặp lỗi: {err}")
+                        return None
+
+                def _try_translate_with_cloud(chunk_str, ctx_str):
+                    if not cloud_keys:
+                        return None
+                    for c_key in cloud_keys:
+                        c_prov = "vilao" if str(c_key).startswith("sk-") else ("groq" if str(c_key).startswith("gsk_") else "gemini")
+                        try:
+                            res = translate_srt_with_gemini(
+                                chunk_str,
+                                api_key=c_key,
+                                multi_speaker=multi_speaker_mode,
+                                provider=c_prov,
+                                model=custom_model,
+                                context=ctx_str
+                            )
+                            if res and res.strip():
+                                return res.strip()
+                        except Exception as c_err:
+                            logger.warning(f"Key Cloud (...{str(c_key)[-6:]}) lỗi: {c_err}")
+                    return None
+
                 for i in range(0, len(payload_lines), CHUNK_SIZE):
                     chunk = payload_lines[i:i + CHUNK_SIZE]
                     chunk_text = "\n".join(chunk)
                     chunk_success = False
                     
-                    # Smart Round-Robin: thử tối đa len(keys) + 1 lần (bao gồm auto-wait)
-                    max_attempts = len(gemini_keys) + 1
-                    for attempt in range(max_attempts):
-                        gemini_key = _key_manager.get_next_key(gemini_keys)
-                        if not gemini_key:
-                            break
-                        
-                        key_label = "Ollama Local" if gemini_key == "ollama" else (f"...{gemini_key[-6:]}" if gemini_key else "Server")
-                        logger.info(f"Đang gửi lô {i//CHUNK_SIZE + 1}/{total_chunks} cho {ai_name} ({key_label})...")
-                        
-                        chunk_result = translate_srt_with_gemini(
-                            chunk_text, 
-                            gemini_key,
-                            multi_speaker=multi_speaker_mode,
-                            provider=ai_provider,
-                            model=ollama_model,
-                            ollama_url=ollama_url
-                        )
-                        
-                        if chunk_result:
-                            _key_manager.mark_success(gemini_key)
-                            translated_text += chunk_result + "\n"
-                            chunk_success = True
-                            break
-                        else:
-                            if gemini_key == "ollama":
-                                if attempt < max_attempts - 1:
-                                    logger.warning(f"⚠️ Ollama Local không phản hồi ở lần thử {attempt+1}/{max_attempts}. Đang thử lại sau 2s...")
-                                    time.sleep(2)
-                                else:
-                                    logger.warning(f"❌ Ollama Local đã thử {max_attempts} lần không thành công. Sẽ chuyển sang Google Translate cứu hộ.")
+                    pre_ctx_lines = []
+                    if i > 0:
+                        prev_slice = payload_lines[max(0, i - 2):i]
+                        pre_ctx_lines = [p.split("|", 1)[1] for p in prev_slice if "|" in p]
+                    pre_ctx_str = " | ".join(pre_ctx_lines)
+
+                    chunk_idx_str = f"Lô {i//CHUNK_SIZE + 1}/{total_chunks}"
+                    chunk_result = None
+
+                    if ai_provider in ("ollama_first", "ollama"):
+                        logger.info(f"Đang gửi {chunk_idx_str} cho Ollama Local ({ollama_model})...")
+                        chunk_result = _try_translate_with_ollama(chunk_text, pre_ctx_str)
+                        if not chunk_result and cloud_keys:
+                            logger.warning(f"⚠️ Ollama không phản hồi. Tự động chuyển sang Cloud API ({cloud_label}) cứu hộ...")
+                            chunk_result = _try_translate_with_cloud(chunk_text, pre_ctx_str)
+
+                    elif ai_provider in ("cloud_first", "gemini", "groq", "vilao"):
+                        logger.info(f"Đang gửi {chunk_idx_str} cho Cloud API ({cloud_label})...")
+                        chunk_result = _try_translate_with_cloud(chunk_text, pre_ctx_str)
+                        if not chunk_result:
+                            logger.warning(f"⚠️ Cloud API không phản hồi/hết lượt. Tự động chuyển về Ollama Local ({ollama_model}) cứu hộ...")
+                            chunk_result = _try_translate_with_ollama(chunk_text, pre_ctx_str)
+
+                    elif ai_provider == "cloud_only":
+                        logger.info(f"Đang gửi {chunk_idx_str} cho Cloud API ({cloud_label})...")
+                        chunk_result = _try_translate_with_cloud(chunk_text, pre_ctx_str)
+
+                    elif ai_provider == "ollama_only":
+                        logger.info(f"Đang gửi {chunk_idx_str} cho Ollama Local ({ollama_model})...")
+                        chunk_result = _try_translate_with_ollama(chunk_text, pre_ctx_str)
+
+                    if chunk_result and chunk_result.strip():
+                        translated_text += chunk_result.strip() + "\n"
+                        chunk_success = True
+                    else:
+                        logger.warning(f"{chunk_idx_str} chuyển sang Google Translate cứu hộ...")
+                        from utils.translator import translate_text
+                        chunk_rescue_lines = []
+                        for line in chunk:
+                            if "|" in line:
+                                idx_part, raw_zh = line.split("|", 1)
+                                vi_text = translate_text(raw_zh.strip(), src="zh-CN", dest="vi")
+                                chunk_rescue_lines.append(f"{idx_part.strip()}|{vi_text}")
                             else:
-                                # Đánh dấu key Cloud bị lỗi với cooldown
-                                _key_manager.mark_rate_limited(gemini_key)
-                                logger.warning(f"Key {key_label} bị lỗi! KeyManager tự động chọn key khác...")
-                            
-                    if not chunk_success:
-                        # Thử cứu hộ bằng Cloud AI (Groq/Gemini) nếu có key trước khi dùng Google Translate
-                        rescued_with_cloud = False
-                        cloud_keys = PROCESSOR_CONFIG.get("gemini_api_keys", [])
-                        if cloud_keys and cloud_keys[0] != "ollama":
-                            logger.info(f"Ollama không phản hồi, tự động dùng Cloud AI (Groq/Gemini) cứu hộ lô {i//CHUNK_SIZE + 1}...")
-                            for c_key in cloud_keys[:3]:
-                                try:
-                                    res = translate_srt_with_gemini(
-                                        chunk_text,
-                                        c_key,
-                                        multi_speaker=multi_speaker_mode,
-                                        provider="groq" if str(c_key).startswith("gsk_") else "gemini"
-                                    )
-                                    if res:
-                                        translated_text += res + "\n"
-                                        chunk_success = True
-                                        rescued_with_cloud = True
-                                        break
-                                except Exception:
-                                    pass
-                                    
-                        if not rescued_with_cloud:
-                            logger.warning(f"Lô {i//CHUNK_SIZE + 1}/{total_chunks} chuyển sang Google Translate cứu hộ...")
-                            from utils.translator import translate_text
-                            chunk_rescue_lines = []
-                            for line in chunk:
-                                if "|" in line:
-                                    idx_part, raw_zh = line.split("|", 1)
-                                    vi_text = translate_text(raw_zh.strip(), src="zh-CN", dest="vi")
-                                    chunk_rescue_lines.append(f"{idx_part.strip()}|{vi_text}")
-                                else:
-                                    chunk_rescue_lines.append(line)
-                            translated_text += "\n".join(chunk_rescue_lines) + "\n"
-                            chunk_success = True
+                                chunk_rescue_lines.append(line)
+                        translated_text += "\n".join(chunk_rescue_lines) + "\n"
+                        chunk_success = True
                         
                     # Nghỉ 1s giữa các chunk thành công
                     time.sleep(1)
@@ -468,10 +507,20 @@ class SubtitleGenerator:
                             tag_found = 'M' if ('M' in raw_tag or 'NAM' in raw_tag) else ('F' if ('F' in raw_tag or 'NỮ' in raw_tag or 'NU' in raw_tag) else 'N')
                         
                         # 2. Xóa sạch mọi tag và ký tự | khỏi clean_text (dùng in trực tiếp lên Video):
-                        clean_text = re.sub(r'\[\s*(?:M|F|N|Nam|Nữ|Nu)\s*\]|\(\s*(?:M|F|N|Nam|Nữ|Nu)\s*\)', '', t_text, flags=re.IGNORECASE)
-                        clean_text = re.sub(r'^(?:M|F|N|Nam|Nữ|Nu)[:\s]+', '', clean_text, flags=re.IGNORECASE)
+                        clean_text = re.sub(r'\[\s*(?:M|F|N|Nam|Nữ|Nu|Male|Female|Man|Woman)\s*\][:\s\-]*', '', t_text, flags=re.IGNORECASE)
+                        clean_text = re.sub(r'\(\s*(?:M|F|N|Nam|Nữ|Nu|Male|Female|Man|Woman)\s*\)[:\s\-]*', '', clean_text, flags=re.IGNORECASE)
+                        clean_text = re.sub(r'^(?:M|F|N|Nam|Nữ|Nu|Male|Female|Man|Woman)[:\s\-]+', '', clean_text, flags=re.IGNORECASE)
                         clean_text = clean_text.replace('|', ' ').strip()
                         clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+                        
+                        # 2b. BỘ LỌC CHUẨN HÓA XƯNG HÔ & PHIÊN ÂM (Staff Engineer Quality Gate):
+                        clean_text = re.sub(r'\b(?:Chào\s+)?anh\s+lãnh\s+đạo\b', 'Chào sếp ạ', clean_text, flags=re.IGNORECASE)
+                        clean_text = re.sub(r'\bngười\s+lãnh\s+đạo\b', 'sếp', clean_text, flags=re.IGNORECASE)
+                        clean_text = re.sub(r'\bHu\s+Hu\s+ngoan\b', 'Hoa Hoa ngoan', clean_text, flags=re.IGNORECASE)
+                        clean_text = re.sub(r'\bĐưa\s+(?:bạn|mày|con|cháu)\s+lớn\s+lên\b', 'Nuôi con khôn lớn', clean_text, flags=re.IGNORECASE)
+                        clean_text = re.sub(r'\b(Chú|Bác|Ông|Cô|Dì)\s+([^.\n,]+?)\s+đón\s+em\b', r'\1 \2 đón cháu', clean_text, flags=re.IGNORECASE)
+                        clean_text = re.sub(r'\b(Chú|Bác|Ông|Cô|Dì)\s+đón\s+em\b', r'\1 đón cháu', clean_text, flags=re.IGNORECASE)
+                        clean_text = re.sub(r'\bChú\s+Hoa\s+Hoa\b', 'Chú Chu', clean_text)
                         
                         # 3. Chuẩn hóa t_text cho file SRT cấp cho TTS Engine (luôn chuẩn [M] ở đầu câu):
                         if tag_found and multi_speaker_mode:
@@ -479,7 +528,7 @@ class SubtitleGenerator:
                         else:
                             t_text = clean_text
 
-                        tag_str = f"Tag: {tag_found}" if tag_found else "Tag: Chuẩn"
+                        tag_str = f"Tag: {tag_found} (Đa giọng TTS)" if tag_found else "Tag: Đơn giọng"
                         sub_log_msg = f"📝 [Sub #{segment_idx:02d}] [{data['start_time']} ➔ {data['end_time']}] 🇨🇳 Gốc: \"{data['original_text']}\" ➔ 🇻🇳 Sub: \"{clean_text}\" ({tag_str})"
                         logger.info(sub_log_msg)
                         if progress_cb:

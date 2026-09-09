@@ -11,7 +11,39 @@ from loguru import logger
 
 # Preset mặc định theo tỉ lệ khung hình
 DEFAULT_PORTRAIT_SUB_Y = (0.72, 0.075)  # Video dọc: cách đáy ~20% (ngang ngực nhân vật, dày 7.5%)
-DEFAULT_LANDSCAPE_SUB_Y = (0.86, 0.085)  # Video ngang: sát mép đáy (chuẩn phim/drama 16:9, dày 8.5%)
+DEFAULT_LANDSCAPE_SUB_Y = (0.82, 0.080)  # Video ngang: chuẩn phim/drama 16:9 (Y=82% -> 90%)
+
+
+def extract_srt_sample_timestamps(srt_path: str, count: int = 5) -> list:
+    """
+    Trích xuất danh sách các mốc thời gian (giây) giữa các câu thoại từ file SRT.
+    Lấy các câu thoại phân bổ đều theo thời lượng để đại diện chính xác cho toàn video.
+    """
+    if not srt_path or not os.path.exists(srt_path):
+        return []
+    try:
+        import re
+        import numpy as np
+        times = []
+        pattern = re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
+        with open(srt_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                match = pattern.search(line)
+                if match:
+                    h1, m1, s1, ms1, h2, m2, s2, ms2 = map(int, match.groups())
+                    start = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000.0
+                    end = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000.0
+                    if end - start >= 0.8:  # Chỉ chọn câu thoại đủ dài để sub hiện rõ
+                        times.append((start + end) / 2.0)
+        if not times:
+            return []
+        if len(times) <= count:
+            return times
+        indices = np.linspace(0, len(times) - 1, count, dtype=int)
+        return [float(times[i]) for i in indices]
+    except Exception as e:
+        logger.debug(f"Không thể đọc timestamps từ SRT: {e}")
+        return []
 
 
 def detect_subtitle_y_range(
@@ -19,19 +51,22 @@ def detect_subtitle_y_range(
     search_y_min: float = None,
     search_y_max: float = None,
     num_samples: int = 15,
-    blur_padding: float = 0.025
+    blur_padding: float = 0.025,
+    dialogue_timestamps: list = None
 ) -> Tuple[float, float]:
     """
     Tự động dò tìm tọa độ Y của dòng phụ đề hardsub tiếng Trung trong video.
-    Hỗ trợ cả phụ đề màu vàng (Douyin/Kuaishou) và chữ trắng có viền đen.
-    Tự động mở rộng dải mờ chạm mép đáy nếu phụ đề nằm sát đáy để không bị lòi chữ bên dưới.
+    Hỗ trợ thông minh cả Video Dọc và Video Ngang, ở mọi vị trí (đáy, giữa màn hình, ngực).
+    Nếu có dialogue_timestamps (từ Whisper), thuật toán sẽ chụp đúng các thời điểm có câu thoại,
+    kết hợp lọc nét chữ dọc (Sobel X) để triệt tiêu 100% thanh tiến trình và cảnh nền.
     
     Args:
         video_path: Đường dẫn tới file video (.mp4)
         search_y_min: Giới hạn trên của vùng quét (None = tự động theo tỉ lệ video)
         search_y_max: Giới hạn dưới của vùng quét (None = tự động theo tỉ lệ video)
-        num_samples: Số lượng khung hình mẫu cần trích xuất phân tích
+        num_samples: Số lượng khung hình mẫu cần trích xuất phân tích (khi không có dialogue_timestamps)
         blur_padding: Khoảng đệm an toàn mở rộng dải làm mờ
+        dialogue_timestamps: Danh sách các mốc thời gian (giây) đang có câu thoại
         
     Returns:
         tuple (y_start_ratio, height_ratio):
@@ -56,6 +91,7 @@ def detect_subtitle_y_range(
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
         if total_frames <= 0 or orig_h <= 0 or orig_w <= 0:
             return DEFAULT_PORTRAIT_SUB_Y
@@ -64,31 +100,38 @@ def detect_subtitle_y_range(
         default_preset = DEFAULT_LANDSCAPE_SUB_Y if is_landscape else DEFAULT_PORTRAIT_SUB_Y
 
         # Xác định vùng quét thích ứng theo tỉ lệ khung hình
+        has_dialogue_times = bool(dialogue_timestamps and len(dialogue_timestamps) > 0)
         if search_y_min is None:
-            # Quét toàn bộ nửa dưới màn hình để không bỏ sót phụ đề 2 dòng hoặc phụ đề cao
-            search_y_min = 0.50 if is_landscape else 0.45
+            # Nếu có mốc câu thoại: Cho phép quét rộng từ 0.20 (bao trọn cả phụ đề giữa màn hình/ngực)
+            # Nếu không có: Quét nửa dưới an toàn
+            search_y_min = 0.20 if has_dialogue_times else (0.45 if is_landscape else 0.40)
             
         if search_y_max is None:
-            search_y_max = 0.99
+            # Giới hạn dưới an toàn: Phụ đề không bao giờ nằm sát mép sàn sạt đáy (< 9% từ mép dưới).
+            # Chặn triệt để thanh tiến trình video (scrubber), thanh Home bar điện thoại và viền đáy.
+            search_y_max = 0.91 if is_landscape else 0.87
 
-        # Downscale frame về chiều rộng 360px để tăng tốc độ xử lý gấp 5-10 lần
+        # Downscale frame về chiều rộng 360px để tăng tốc độ xử lý gấp 5-10 lần (< 0.2s)
         target_w = 360
         scale = target_w / float(orig_w)
         target_h = int(orig_h * scale)
 
-        # Rải đều các frame mẫu từ 10% đến 90% thời lượng video
-        frame_indices = np.linspace(
-            int(total_frames * 0.1),
-            int(total_frames * 0.9),
-            num_samples
-        ).astype(int)
+        # Lựa chọn khung hình mẫu: Ưu tiên mốc thời gian có câu thoại thật
+        if has_dialogue_times:
+            frame_indices = [max(0, min(total_frames - 1, int(t * fps))) for t in dialogue_timestamps]
+        else:
+            frame_indices = np.linspace(
+                int(total_frames * 0.1),
+                int(total_frames * 0.9),
+                num_samples
+            ).astype(int)
 
         edge_accum = np.zeros(target_h, dtype=np.float32)
         valid_frames = 0
 
-        # Chỉ quét phần giữa theo chiều ngang (15% -> 85%) để loại bỏ watermark/icon ở mép
-        w_crop_start = int(target_w * 0.15)
-        w_crop_end = int(target_w * 0.85)
+        # Chỉ quét phần giữa theo chiều ngang để loại bỏ watermark/icon/sticker ở mép
+        w_crop_start = int(target_w * (0.20 if is_landscape else 0.15))
+        w_crop_end = int(target_w * (0.80 if is_landscape else 0.85))
 
         for f_idx in frame_indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
@@ -102,7 +145,7 @@ def detect_subtitle_y_range(
             hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
 
             # 1. Mặt nạ chữ sáng (chữ trắng, chữ vàng nhạt)
-            _, white_mask = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+            _, white_mask = cv2.threshold(gray, 160, 255, cv2.THRESH_BINARY)
 
             # 2. Mặt nạ màu vàng (đặc trưng phụ đề Douyin/TikTok vàng chanh/vàng kim)
             yellow_mask = cv2.inRange(hsv, np.array([15, 60, 100]), np.array([45, 255, 255]))
@@ -110,14 +153,13 @@ def detect_subtitle_y_range(
             # Kết hợp cả 2 mặt nạ để bắt trọn 100% các loại phụ đề
             text_mask = cv2.bitwise_or(white_mask, yellow_mask)
 
-            # Canny edge detector: Bắt cạnh chữ sắc nét
-            edges = cv2.Canny(gray, 60, 150)
+            # 3. Lọc nét chữ dọc (Sobel X): Chữ Hán/Latinh chứa mật độ nét sổ dọc dày đặc,
+            # trong khi các đường kẻ ngang (thanh tiến trình, mặt bàn, mép sàn) có Sobel X gần bằng 0.
+            sobel_x = cv2.convertScaleAbs(cv2.Sobel(gray, cv2.CV_16S, 1, 0, ksize=3))
+            text_edges = cv2.bitwise_and(sobel_x, sobel_x, mask=text_mask)
 
-            # Chỉ giữ lại cạnh thuộc về vùng chữ sáng hoặc vàng
-            text_edges = cv2.bitwise_and(edges, edges, mask=text_mask)
-
-            # Cộng dồn mật độ cạnh theo từng hàng Y ở dải ngang giữa
-            horiz_profile = np.sum(text_edges[:, w_crop_start:w_crop_end] > 0, axis=1)
+            # Cộng dồn mật độ nét chữ theo từng hàng Y ở dải ngang giữa
+            horiz_profile = np.sum(text_edges[:, w_crop_start:w_crop_end] > 25, axis=1)
             edge_accum += horiz_profile
             valid_frames += 1
 
@@ -181,21 +223,17 @@ def detect_subtitle_y_range(
         sub_bottom_px = y_min_px + bottom_rel
 
         # Đệm an toàn thanh thoát: vừa khít viền/bóng đổ của font chữ mà không ăn vào nhân vật
-        pad_top_px = int(target_h * 0.010)
+        pad_top_px = int(target_h * 0.012)
         pad_bottom_px = int(target_h * 0.015)
 
         y_start_px = max(0, sub_top_px - pad_top_px)
         y_end_px = min(target_h, sub_bottom_px + pad_bottom_px)
 
-        # Nếu mép dưới dải mờ ăn sát chạm đáy (>= 96%) thì mới kéo chạm mép đáy
-        if (y_end_px / float(target_h)) >= 0.96:
-            y_end_px = target_h
-
         y_start_ratio = y_start_px / float(target_h)
         height_ratio = (y_end_px - y_start_px) / float(target_h)
 
-        # Giới hạn an toàn vừa khít: video dọc từ 5.5% đến 8.5%, video ngang từ 6.0% đến 9.5%
-        min_h = 0.060 if is_landscape else 0.055
+        # Giới hạn an toàn vừa khít: video dọc từ 5.5% đến 8.5%, video ngang từ 6.5% đến 9.5%
+        min_h = 0.065 if is_landscape else 0.055
         max_h = 0.095 if is_landscape else 0.085
         height_ratio = max(min_h, min(max_h, height_ratio))
         y_start_ratio = max(0.0, min(1.0 - height_ratio, y_start_ratio))

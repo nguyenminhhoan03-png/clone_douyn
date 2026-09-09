@@ -174,7 +174,9 @@ class GoogleDriveUploader:
         
         try:
             request = self.service.files().get_media(fileId=file_id)
-            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            dir_name = os.path.dirname(dest_path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
             
             with open(dest_path, "wb") as f:
                 downloader = MediaIoBaseDownload(f, request)

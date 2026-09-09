@@ -11,13 +11,9 @@ import customtkinter as ctk
 
 from utils.session_logger import SessionLogManager, MODULE_CONFIG
 
-# Color Palette đồng bộ Sleek Dark Theme
-BG_CARD = "#1C1F2E"
-BORDER = "#2D3142"
-TEXT_MAIN = "#F8FAFC"
-TEXT_DIM = "#94A3B8"
-ACCENT = "#8B5CF6"
-ACCENT_HOVER = "#7C3AED"
+from ui.theme import (
+    BG_CARD, BORDER, TEXT_MAIN, TEXT_DIM, ACCENT, ACCENT_HOVER, BG_CARD_HOVER
+)
 
 
 class LogToolbar(ctk.CTkFrame):
@@ -50,7 +46,7 @@ class LogToolbar(ctk.CTkFrame):
         # Tiêu đề bên trái
         mod_info = MODULE_CONFIG.get(module, {})
         default_icon = mod_info.get("icon", "📋")
-        display_title = title if title else f"{default_icon} Nhật ký (Logs):"
+        display_title = title if title else f"{default_icon}  Nhật ký (Logs):"
 
         self._lbl_title = ctk.CTkLabel(
             self,
@@ -64,7 +60,8 @@ class LogToolbar(ctk.CTkFrame):
         self._btn_history = ctk.CTkButton(
             self,
             text="📜 Xem lịch sử Logs",
-            height=24,
+            height=26,
+            corner_radius=6,
             font=("Segoe UI", 11, "bold"),
             fg_color=ACCENT,
             hover_color=ACCENT_HOVER,
@@ -77,10 +74,13 @@ class LogToolbar(ctk.CTkFrame):
             self,
             text="📂 Thư mục Log",
             width=95,
-            height=24,
+            height=26,
+            corner_radius=6,
+            border_width=1,
+            border_color=BORDER,
             font=("Segoe UI", 11),
-            fg_color=BORDER,
-            hover_color=BG_CARD,
+            fg_color="#182033",
+            hover_color=BG_CARD_HOVER,
             command=self.open_logs_folder,
         )
         self._btn_folder.pack(side="right", padx=(6, 0))
@@ -89,11 +89,14 @@ class LogToolbar(ctk.CTkFrame):
         self._btn_copy = ctk.CTkButton(
             self,
             text="📋 Copy",
-            width=55,
-            height=24,
+            width=58,
+            height=26,
+            corner_radius=6,
+            border_width=1,
+            border_color=BORDER,
             font=("Segoe UI", 11),
-            fg_color=BORDER,
-            hover_color=BG_CARD,
+            fg_color="#182033",
+            hover_color=BG_CARD_HOVER,
             command=self.copy_current_log,
         )
         self._btn_copy.pack(side="right", padx=(6, 0))
@@ -102,11 +105,14 @@ class LogToolbar(ctk.CTkFrame):
         self._btn_clear = ctk.CTkButton(
             self,
             text="🧹 Xóa",
-            width=50,
-            height=24,
+            width=52,
+            height=26,
+            corner_radius=6,
+            border_width=1,
+            border_color=BORDER,
             font=("Segoe UI", 11),
-            fg_color=BORDER,
-            hover_color=BG_CARD,
+            fg_color="#182033",
+            hover_color=BG_CARD_HOVER,
             command=self.clear_log,
         )
         self._btn_clear.pack(side="right")

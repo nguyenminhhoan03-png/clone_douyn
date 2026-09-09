@@ -35,11 +35,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.session_logger import SessionLogManager
 from auth_client import auth_client
+from config.settings import PROCESSOR_CONFIG
 from ui.log_toolbar import LogToolbar
 from ui.tabs.livestream_tab import LivestreamTab
 from ui.theme import (
     BG_DARK, BG_CARD, BG_SIDEBAR, ACCENT, ACCENT_HOVER,
-    SUCCESS, WARNING, DANGER, TEXT_MAIN, TEXT_DIM, BORDER
+    SUCCESS, WARNING, DANGER, TEXT_MAIN, TEXT_DIM, TEXT_MUTED, BORDER
 )
 from ui.components import (
     LogWidget, StatusBadge, ToolTip, ToastNotification, show_toast,
@@ -64,58 +65,79 @@ class DashboardTab(ctk.CTkFrame):
     def _build(self):
         # Header
         hdr = ctk.CTkFrame(self, fg_color="transparent")
-        hdr.grid(row=0, column=0, columnspan=4, sticky="ew", padx=4, pady=(0, 20))
+        hdr.grid(row=0, column=0, columnspan=4, sticky="ew", padx=4, pady=(0, 16))
+        
+        # Tiêu đề + Sub-caption bên trái
+        title_box = ctk.CTkFrame(hdr, fg_color="transparent")
+        title_box.pack(side="left")
+        
         ctk.CTkLabel(
-            hdr, text="🎬  Dashboard",
+            title_box, text="🎬  Dashboard Điều Khiển",
             font=("Segoe UI", 22, "bold"), text_color=TEXT_MAIN,
-        ).pack(side="left")
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_box, text="Hệ thống Tự Động Hóa & Phân Tích Video Đa Nền Tảng AI",
+            font=("Segoe UI", 11), text_color=TEXT_MUTED,
+        ).pack(anchor="w", pady=(2, 0))
+
+        # Nút hành động + Status Badge bên phải
+        right_box = ctk.CTkFrame(hdr, fg_color="transparent")
+        right_box.pack(side="right")
+        
+        # System Online Chip
+        chip_online = ctk.CTkLabel(
+            right_box, text=" ● Hệ thống Hoạt động ",
+            font=("Segoe UI", 11, "bold"), text_color=SUCCESS,
+            fg_color="#064E3B", corner_radius=8
+        )
+        chip_online.pack(side="left", padx=(0, 10))
 
         btn_refresh = ctk.CTkButton(
-            hdr, text="⟳  Refresh", width=110, height=34,
-            font=("Segoe UI", 12), command=self.refresh_stats,
-            fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            right_box, text="⟳  Làm mới", width=110, height=36,
+            font=("Segoe UI", 12, "bold"), command=self.refresh_stats,
+            fg_color=ACCENT, hover_color=ACCENT_HOVER, corner_radius=8,
         )
-        btn_refresh.pack(side="right")
+        btn_refresh.pack(side="left")
 
         # Stats cards - Account
-        self._card_role = StatsCard(self, "Tài khoản", value="User", color="#3498db", icon="👤")
-        self._card_expire = StatsCard(self, "Ngày Hết Hạn", value="Chưa có", color="#e67e22", icon="⏳")
-        self._card_status = StatsCard(self, "Trạng Thái", value="Active", color="#2ecc71", icon="🟢")
-        self._card_features = StatsCard(self, "Chức năng", value="Mở khóa (Full)", color="#9b59b6", icon="💎")
+        self._card_role = StatsCard(self, "Tài khoản", value="USER", color="#06B6D4", icon="👤")
+        self._card_expire = StatsCard(self, "Hạn Sử Dụng", value="Chưa có", color="#F59E0B", icon="⏳")
+        self._card_status = StatsCard(self, "Trạng Thái", value="Hoạt động", color="#10B981", icon="🟢")
+        self._card_features = StatsCard(self, "Gói Bản Quyền", value="Mở khóa (Full)", color="#8B5CF6", icon="💎")
         
         for col, card in enumerate([self._card_role, self._card_expire, self._card_status, self._card_features]):
-            card.grid(row=2, column=col, padx=6, pady=4, sticky="ew")
+            card.grid(row=2, column=col, padx=5, pady=5, sticky="ew")
 
-        # Stats cards - Local
-        self._card_crawled   = StatsCard(self, "Đã Crawl",   color=ACCENT, icon="📥")
-        self._card_processed = StatsCard(self, "Đã Xử lý",   color=ACCENT, icon="⚙")
-        self._card_posted    = StatsCard(self, "Đã Upload",   color=SUCCESS, icon="📤")
-        self._card_pending   = StatsCard(self, "Chờ Upload",  color=WARNING, icon="⏳")
+        # Stats cards - Local Production
+        self._card_crawled   = StatsCard(self, "Đã Crawl",   color="#06B6D4", icon="📥")
+        self._card_processed = StatsCard(self, "Đã Xử Lý AI", color="#8B5CF6", icon="⚙")
+        self._card_posted    = StatsCard(self, "Đã Upload",   color="#10B981", icon="📤")
+        self._card_pending   = StatsCard(self, "Chờ Upload",  color="#F59E0B", icon="⏳")
 
         for col, card in enumerate([
             self._card_crawled, self._card_processed,
             self._card_posted, self._card_pending
         ]):
-            card.grid(row=3, column=col, padx=6, pady=4, sticky="ew")
+            card.grid(row=3, column=col, padx=5, pady=5, sticky="ew")
 
         # Performance Chart
         self._chart = DonutChart(self, title="📈  Tiến Độ Tổng Quan", fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
-        self._chart.grid(row=4, column=0, sticky="nsew", padx=(4, 2), pady=(20, 0))
+        self._chart.grid(row=4, column=0, sticky="nsew", padx=(4, 4), pady=(16, 0))
         
         # System Info
         self._sys_info = SystemInfoWidget(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
-        self._sys_info.grid(row=4, column=1, sticky="nsew", padx=(2, 2), pady=(20, 0))
+        self._sys_info.grid(row=4, column=1, sticky="nsew", padx=(4, 4), pady=(16, 0))
 
         # Recent activity log
         log_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12,
                                   border_width=1, border_color=BORDER)
-        log_frame.grid(row=4, column=2, columnspan=2, sticky="nsew", padx=(2, 4), pady=(20, 0))
+        log_frame.grid(row=4, column=2, columnspan=2, sticky="nsew", padx=(4, 4), pady=(16, 0))
         log_frame.grid_rowconfigure(1, weight=1)
         log_frame.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(4, weight=1)
 
         self._log_widget = LogWidget(log_frame)
-        self._log_toolbar = LogToolbar(log_frame, self._log_widget, module="all", title="📋  Activity Log (Nhật ký hệ thống):")
+        self._log_toolbar = LogToolbar(log_frame, self._log_widget, module="all", title="📋  Nhật ký Hệ thống (Logs):")
         self._log_toolbar.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
         self._log_widget.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
         self._log_widget.append("Chào mừng! Hệ thống sẽ tự động cập nhật thống kê...", "INFO")
@@ -3428,12 +3450,41 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkButton(hdr, text="💾 Lưu cấu hình Proxy", width=140, height=28, fg_color="#2980b9", hover_color="#3498db", command=self._save_all_proxies_manual).pack(side="right", padx=(0, 5))
         ctk.CTkButton(hdr, text="📁 Tải JSON", width=90, height=28, fg_color=ACCENT, hover_color=ACCENT_HOVER, command=self._upload_account).pack(side="right", padx=(0, 5))
         ctk.CTkButton(hdr, text="➕ Thêm nick mới", width=120, height=28, fg_color=SUCCESS, hover_color="#27ae60", command=self._add_new_account).pack(side="right", padx=(0, 5))
+        self._btn_help_tt = ctk.CTkButton(hdr, text="❓ Hướng dẫn", width=95, height=28, fg_color="#34495e", hover_color="#2c3e50", command=self._toggle_tiktok_help)
+        self._btn_help_tt.pack(side="right", padx=(0, 5))
+
+        # Khung hướng dẫn sử dụng chi tiết
+        self._help_frame = ctk.CTkFrame(self.tab_tiktok, fg_color="#182333", corner_radius=10, border_width=1, border_color="#2c3e50")
+        h_title = ctk.CTkFrame(self._help_frame, fg_color="transparent")
+        h_title.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(h_title, text="📖 HƯỚNG DẪN SỬ DỤNG TỪNG TÍNH NĂNG QUẢN LÝ TÀI KHOẢN TIKTOK", font=("Segoe UI", 12, "bold"), text_color="#3498db").pack(side="left")
+        
+        help_content = (
+            "• ➕ Thêm nick mới: Mở cửa sổ trình duyệt sạch để đăng nhập thủ công bằng tài khoản/mật khẩu hoặc quét mã QR. Sau khi vào nick thành công, hệ thống tự bắt và lưu Cookies phiên đăng nhập.\n"
+            "• 📁 Tải JSON: Nhập file cookie dạng .json (xuất từ tiện ích Cookie-Editor hoặc J2Team Cookies trên Chrome) để vào nick tức thì mà không cần mở trình duyệt.\n"
+            "• 🌐 Proxy (ip:port:user:pass): Gán IP riêng cho từng nick (hỗ trợ HTTP/SOCKS5) để tránh trùng dải IP khi nuôi dàn nick, chống bóp tương tác và shadowban. Nhập xong bấm '💾 Lưu cấu hình Proxy'.\n"
+            "• 🔑 Login: Mở trình duyệt thường với phiên đăng nhập của nick để kiểm tra trang cá nhân, xem video đã đăng.\n"
+            "• 🛡️ Cloak Login: Chế độ đăng nhập ẩn danh chuyên sâu (Fake vân tay trình duyệt Canvas, WebGL, Audio), che giấu dấu vết bot automation để vượt checkpoint/captcha an toàn khi TikTok kiểm tra gắt gao.\n"
+            "• ✏️ Sửa / 🗑️ Xóa: Đổi tên hiển thị dễ nhớ cho nick hoặc xóa nick và cookies tương ứng khỏi phần mềm."
+        )
+        ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=950).pack(anchor="w", padx=14, pady=(0, 10))
         
         self._list_frame = ctk.CTkScrollableFrame(self.tab_tiktok, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
         self._list_frame.pack(fill="both", expand=True)
         
         self._proxy_entries = {}
         self._load_accounts()
+
+    def _toggle_tiktok_help(self):
+        if hasattr(self, "_help_frame") and self._help_frame.winfo_viewable():
+            self._help_frame.pack_forget()
+            if hasattr(self, "_btn_help_tt"):
+                self._btn_help_tt.configure(fg_color="#34495e")
+        else:
+            if hasattr(self, "_help_frame"):
+                self._help_frame.pack(fill="x", pady=(0, 10), before=self._list_frame)
+                if hasattr(self, "_btn_help_tt"):
+                    self._btn_help_tt.configure(fg_color="#1abc9c")
 
     def _on_proxy_changed(self, acc_name=None):
         from config.settings import COOKIES_DIR
@@ -3457,8 +3508,19 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkLabel(self.tab_youtube, text="Danh sách tài khoản YouTube (Token):", font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).pack(anchor="w", pady=(0, 8))
         
         self._yt_list_frame = ctk.CTkScrollableFrame(self.tab_youtube, fg_color=BG_DARK, border_color=BORDER, border_width=1)
-        self._yt_list_frame.pack(fill="both", expand=True, pady=(0, 16))
+        self._yt_list_frame.pack(fill="both", expand=True, pady=(0, 10))
         
+        # Khung hướng dẫn YouTube OAuth
+        yt_help = ctk.CTkFrame(self.tab_youtube, fg_color="#182333", corner_radius=8, border_width=1, border_color="#2c3e50")
+        yt_help.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(yt_help, text="📖 HƯỚNG DẪN KẾT NỐI TÀI KHOẢN YOUTUBE (OAUTH 2.0)", font=("Segoe UI", 11, "bold"), text_color="#e74c3c").pack(anchor="w", padx=12, pady=(6, 2))
+        yt_text = (
+            "• Bước 1: Vào Google Cloud Console -> Tạo Project -> Bật 'YouTube Data API v3'.\n"
+            "• Bước 2: Tạo 'OAuth 2.0 Client ID' (loại Desktop App) -> Tải file client_secret.json về máy.\n"
+            "• Bước 3: Chọn file bên dưới HOẶC dán mã JSON -> Bấm 'Đăng nhập' để cấp quyền tải video lên kênh."
+        )
+        ctk.CTkLabel(yt_help, text=yt_text, font=("Segoe UI", 10), text_color=TEXT_DIM, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
+
         secret_frame = ctk.CTkFrame(self.tab_youtube, fg_color="transparent")
         secret_frame.pack(fill="x", pady=(0, 8))
         
@@ -3866,8 +3928,19 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkLabel(self.tab_facebook, text="Danh sách Fanpage Facebook (Reels Token):", font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).pack(anchor="w", pady=(0, 8))
         
         self._fb_list_frame = ctk.CTkScrollableFrame(self.tab_facebook, fg_color=BG_DARK, border_color=BORDER, border_width=1)
-        self._fb_list_frame.pack(fill="both", expand=True, pady=(0, 16))
+        self._fb_list_frame.pack(fill="both", expand=True, pady=(0, 10))
         
+        # Khung hướng dẫn Facebook Fanpage
+        fb_help = ctk.CTkFrame(self.tab_facebook, fg_color="#182333", corner_radius=8, border_width=1, border_color="#2c3e50")
+        fb_help.pack(fill="x", pady=(0, 8), padx=4)
+        ctk.CTkLabel(fb_help, text="📖 HƯỚNG DẪN KẾT NỐI FANPAGE FACEBOOK REELS", font=("Segoe UI", 11, "bold"), text_color="#3498db").pack(anchor="w", padx=12, pady=(6, 2))
+        fb_text = (
+            "• Page ID: ID của Fanpage bạn quản lý (Lấy trong Cài đặt Trang -> Thông tin Trang hoặc findmyfbid.in).\n"
+            "• Access Token: Nhập Page Access Token dài hạn (bắt đầu bằng EAA...) có quyền pages_manage_posts.\n"
+            "• Cookie (Tùy chọn): Bạn cũng có thể dán Cookie tài khoản Facebook cá nhân đang làm Quản trị viên của Trang."
+        )
+        ctk.CTkLabel(fb_help, text=fb_text, font=("Segoe UI", 10), text_color=TEXT_DIM, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
+
         self._editing_fb_filename = None
         form_frame = ctk.CTkFrame(self.tab_facebook, fg_color=BG_CARD, corner_radius=8, border_width=1, border_color=BORDER)
         form_frame.pack(fill="x", pady=(0, 8), padx=4, ipady=8)
@@ -4469,26 +4542,35 @@ class SettingsTab(ctk.CTkFrame):
         import os
         from dotenv import load_dotenv
         load_dotenv()
-        current_provider = os.getenv("AI_PROVIDER", "ollama").lower()
+        current_provider = (PROCESSOR_CONFIG.get("ai_provider") or os.getenv("AI_PROVIDER", "ollama_first")).lower()
         existing_key = os.getenv("GEMINI_API_KEY", "")
+        if not existing_key and PROCESSOR_CONFIG.get("gemini_api_keys"):
+            existing_key = ",".join(PROCESSOR_CONFIG["gemini_api_keys"])
         ollama_url_val = os.getenv("OLLAMA_URL", "http://localhost:11434")
         ollama_model_val = os.getenv("OLLAMA_MODEL", "qwen2.5")
 
         ctk.CTkLabel(ai_frame, text="Nhà cung cấp AI:", font=("Segoe UI", 13, "bold")).grid(row=0, column=0, padx=16, pady=(16, 8), sticky="w")
         
-        provider_options = ["Ollama (Local Offline)", "Gemini Cloud", "Groq Cloud"]
-        if current_provider == "ollama":
-            default_choice = "Ollama (Local Offline)"
-        elif current_provider == "groq":
-            default_choice = "Groq Cloud"
-        elif current_provider == "gemini":
-            default_choice = "Gemini Cloud"
-        elif existing_key and existing_key.startswith("gsk_"):
-            default_choice = "Groq Cloud"
-        elif existing_key:
-            default_choice = "Gemini Cloud"
+        provider_options = [
+            "Ollama trước ➔ Dự phòng Cloud API",
+            "Cloud API trước ➔ Dự phòng Ollama",
+            "Chỉ dùng Cloud API (Vilao / Gemini / Groq)",
+            "Chỉ dùng Ollama (Offline)"
+        ]
+        if current_provider == "ollama_first":
+            default_choice = "Ollama trước ➔ Dự phòng Cloud API"
+        elif current_provider == "cloud_first":
+            default_choice = "Cloud API trước ➔ Dự phòng Ollama"
+        elif current_provider == "cloud_only":
+            default_choice = "Chỉ dùng Cloud API (Vilao / Gemini / Groq)"
+        elif current_provider == "ollama_only":
+            default_choice = "Chỉ dùng Ollama (Offline)"
+        elif current_provider in ("gemini", "groq", "vilao"):
+            default_choice = "Cloud API trước ➔ Dự phòng Ollama"
+        elif current_provider == "ollama":
+            default_choice = "Ollama trước ➔ Dự phòng Cloud API" if existing_key else "Chỉ dùng Ollama (Offline)"
         else:
-            default_choice = "Ollama (Local Offline)"
+            default_choice = "Cloud API trước ➔ Dự phòng Ollama" if existing_key else "Ollama trước ➔ Dự phòng Cloud API"
 
         self._opt_provider_user = ctk.CTkOptionMenu(
             ai_frame, values=provider_options, font=("Segoe UI", 12),
@@ -4556,12 +4638,19 @@ class SettingsTab(ctk.CTkFrame):
         )
         btn_toggle_user_key.grid(row=0, column=1, padx=(6, 0))
 
+        # Model AI (cho Vilao.ai / Groq / Custom)
+        existing_model = os.getenv("CUSTOM_AI_MODEL", "gemini-3.6-flash-high")
+        ctk.CTkLabel(self._frame_cloud_user, text="Model AI:", font=("Segoe UI", 12), text_color=TEXT_DIM).grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
+        self._entry_user_model = ctk.CTkEntry(self._frame_cloud_user, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_user_model.insert(0, existing_model)
+        self._entry_user_model.grid(row=1, column=1, sticky="ew", pady=6)
+
         self._lbl_cloud_hint_user = ctk.CTkLabel(
             self._frame_cloud_user,
-            text="* Hỗ trợ nhiều key cách nhau bằng dấu phẩy để tự động xoay tua.",
+            text="* Hỗ trợ key Gemini / Groq (gsk_) / Vilao.ai (sk-...). Model mặc định: gemini-3.6-flash-high.",
             font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM
         )
-        self._lbl_cloud_hint_user.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        self._lbl_cloud_hint_user.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
         # Nút Lưu cấu hình
         btn_save_key = ctk.CTkButton(
@@ -4569,7 +4658,7 @@ class SettingsTab(ctk.CTkFrame):
             fg_color=SUCCESS, hover_color="#27ae60",
             command=self._save_user_gemini_key
         )
-        btn_save_key.grid(row=2, column=0, columnspan=2, padx=16, pady=(4, 16), sticky="w")
+        btn_save_key.grid(row=3, column=0, columnspan=2, padx=16, pady=(4, 16), sticky="w")
 
         self._on_provider_change_user(default_choice)
 
@@ -4651,19 +4740,24 @@ class SettingsTab(ctk.CTkFrame):
 
 
     def _on_provider_change_user(self, choice):
-        if "Ollama" in choice:
+        if "Chỉ dùng Ollama" in choice:
             self._frame_cloud_user.grid_forget()
             self._frame_ollama_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
-        elif "Groq" in choice:
+        elif "Chỉ dùng Cloud" in choice:
             self._frame_ollama_user.grid_forget()
             self._frame_cloud_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
-            self._lbl_key_title_user.configure(text="Groq API Key:")
-            self._lbl_cloud_hint_user.configure(text="* Key bắt đầu bằng gsk_ (Dùng Llama-3.3-70b siêu tốc, miễn phí).")
-        else: # Gemini
-            self._frame_ollama_user.grid_forget()
-            self._frame_cloud_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
-            self._lbl_key_title_user.configure(text="Gemini API Key:")
-            self._lbl_cloud_hint_user.configure(text="* Hỗ trợ nhiều key cách nhau bằng dấu phẩy để tự động xoay tua.")
+            self._lbl_key_title_user.configure(text="Cloud API Key:")
+            self._lbl_cloud_hint_user.configure(text="* Hỗ trợ key Gemini / Groq (gsk_) / Vilao.ai (sk-...).")
+        elif "Cloud API trước" in choice:
+            self._frame_cloud_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 6))
+            self._frame_ollama_user.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
+            self._lbl_key_title_user.configure(text="Cloud API Key:")
+            self._lbl_cloud_hint_user.configure(text="* [ƯU TIÊN #1: CLOUD API] Nếu Cloud API lỗi/hết quota ➔ Tự động chuyển qua Ollama Local dự phòng.")
+        else: # Ollama trước ➔ Dự phòng Cloud API
+            self._frame_ollama_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 6))
+            self._frame_cloud_user.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
+            self._lbl_key_title_user.configure(text="Cloud API Key:")
+            self._lbl_cloud_hint_user.configure(text="* [ƯU TIÊN #1: OLLAMA LOCAL] Nếu Ollama lỗi/chưa bật ➔ Tự động chuyển qua Cloud API dự phòng.")
 
     def _test_ollama_user(self):
         url = self._entry_ollama_url_user.get().strip() or "http://localhost:11434"
@@ -4701,9 +4795,20 @@ class SettingsTab(ctk.CTkFrame):
 
     def _save_user_gemini_key(self):
         choice = getattr(self, "_opt_provider_user", None)
-        provider_choice = choice.get() if choice else "Ollama (Local Offline)"
+        provider_choice = choice.get() if choice else "Ollama trước ➔ Dự phòng Cloud API"
         
-        provider = "ollama" if "Ollama" in provider_choice else ("groq" if "Groq" in provider_choice else "gemini")
+        if "Ollama trước" in provider_choice:
+            provider = "ollama_first"
+        elif "Cloud API trước" in provider_choice:
+            provider = "cloud_first"
+        elif "Chỉ dùng Cloud" in provider_choice:
+            provider = "cloud_only"
+        elif "Chỉ dùng Ollama" in provider_choice:
+            provider = "ollama_only"
+        elif "Ollama" in provider_choice:
+            provider = "ollama_first"
+        else:
+            provider = "cloud_first"
         ollama_url = getattr(self, "_entry_ollama_url_user", ctk.CTkEntry(self)).get().strip() or "http://localhost:11434"
         ollama_model = getattr(self, "_combo_ollama_model_user", ctk.CTkComboBox(self)).get().strip() or "qwen2.5"
         gemini_key = self._entry_user_gemini.get().strip() if hasattr(self, "_entry_user_gemini") else ""
@@ -4729,6 +4834,12 @@ class SettingsTab(ctk.CTkFrame):
             os.environ["GEMINI_API_KEY"] = gemini_key
             PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in gemini_key.split(",") if k.strip()]
 
+        custom_model = self._entry_user_model.get().strip() if hasattr(self, "_entry_user_model") else "gemini-3.6-flash-high"
+        if custom_model:
+            set_key(env_path, "CUSTOM_AI_MODEL", custom_model)
+            os.environ["CUSTOM_AI_MODEL"] = custom_model
+            PROCESSOR_CONFIG["custom_ai_model"] = custom_model
+
         # Lưu cả vào settings.json của user
         try:
             from auth_client import auth_client
@@ -4752,6 +4863,8 @@ class SettingsTab(ctk.CTkFrame):
             user_data["ollama_model"] = ollama_model
             if gemini_key:
                 user_data["gemini_api_key"] = gemini_key
+            if custom_model:
+                user_data["custom_ai_model"] = custom_model
                 
             with open(user_settings_path, "w", encoding="utf-8") as f:
                 json.dump(user_data, f, ensure_ascii=False, indent=2)
@@ -4967,8 +5080,10 @@ class SettingsTab(ctk.CTkFrame):
         import os
         from dotenv import load_dotenv
         load_dotenv()
-        current_provider = os.getenv("AI_PROVIDER", "ollama").lower()
+        current_provider = (PROCESSOR_CONFIG.get("ai_provider") or os.getenv("AI_PROVIDER", "ollama_first")).lower()
         existing_key = os.getenv("GEMINI_API_KEY", "")
+        if not existing_key and PROCESSOR_CONFIG.get("gemini_api_keys"):
+            existing_key = ",".join(PROCESSOR_CONFIG["gemini_api_keys"])
         ollama_url_val = os.getenv("OLLAMA_URL", "http://localhost:11434")
         ollama_model_val = os.getenv("OLLAMA_MODEL", "qwen2.5")
 
@@ -4976,19 +5091,26 @@ class SettingsTab(ctk.CTkFrame):
         ctk.CTkLabel(ai, text="Nhà cung cấp AI:", font=("Segoe UI", 12, "bold"),
                      text_color=TEXT_MAIN).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 8))
         
-        provider_options = ["Ollama (Local Offline)", "Gemini Cloud", "Groq Cloud"]
-        if current_provider == "ollama":
-            default_choice = "Ollama (Local Offline)"
-        elif current_provider == "groq":
-            default_choice = "Groq Cloud"
-        elif current_provider == "gemini":
-            default_choice = "Gemini Cloud"
-        elif existing_key and existing_key.startswith("gsk_"):
-            default_choice = "Groq Cloud"
-        elif existing_key:
-            default_choice = "Gemini Cloud"
+        provider_options = [
+            "Ollama trước ➔ Dự phòng Cloud API",
+            "Cloud API trước ➔ Dự phòng Ollama",
+            "Chỉ dùng Cloud API (Vilao / Gemini / Groq)",
+            "Chỉ dùng Ollama (Offline)"
+        ]
+        if current_provider == "ollama_first":
+            default_choice = "Ollama trước ➔ Dự phòng Cloud API"
+        elif current_provider == "cloud_first":
+            default_choice = "Cloud API trước ➔ Dự phòng Ollama"
+        elif current_provider == "cloud_only":
+            default_choice = "Chỉ dùng Cloud API (Vilao / Gemini / Groq)"
+        elif current_provider == "ollama_only":
+            default_choice = "Chỉ dùng Ollama (Offline)"
+        elif current_provider in ("gemini", "groq", "vilao"):
+            default_choice = "Cloud API trước ➔ Dự phòng Ollama"
+        elif current_provider == "ollama":
+            default_choice = "Ollama trước ➔ Dự phòng Cloud API" if existing_key else "Chỉ dùng Ollama (Offline)"
         else:
-            default_choice = "Ollama (Local Offline)"
+            default_choice = "Cloud API trước ➔ Dự phòng Ollama" if existing_key else "Ollama trước ➔ Dự phòng Cloud API"
 
         self._opt_provider_admin = ctk.CTkOptionMenu(
             ai, values=provider_options, font=("Segoe UI", 12),
@@ -5066,12 +5188,19 @@ class SettingsTab(ctk.CTkFrame):
         )
         btn_toggle_key.grid(row=0, column=1, padx=(6, 0))
 
+        # Model AI (cho Vilao.ai / Groq / Custom)
+        existing_model = os.getenv("CUSTOM_AI_MODEL", "gemini-3.6-flash-high")
+        ctk.CTkLabel(self._frame_cloud_admin, text="Model AI:", font=("Segoe UI", 12), text_color=TEXT_DIM).grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
+        self._entry_admin_model = ctk.CTkEntry(self._frame_cloud_admin, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_admin_model.insert(0, existing_model)
+        self._entry_admin_model.grid(row=1, column=1, sticky="ew", pady=6)
+
         self._lbl_cloud_hint_admin = ctk.CTkLabel(
             self._frame_cloud_admin,
-            text="* Hỗ trợ nhiều key cách nhau bằng dấu phẩy để tự động xoay tua.",
+            text="* Hỗ trợ key Gemini / Groq (gsk_) / Vilao.ai (sk-...). Model mặc định: gemini-3.6-flash-high.",
             font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM
         )
-        self._lbl_cloud_hint_admin.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        self._lbl_cloud_hint_admin.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
         # Nút Lưu Cấu Hình AI nhanh ngay trong mục AI (không cần cuộn chuột)
         btn_quick_save_ai = ctk.CTkButton(
@@ -5080,7 +5209,7 @@ class SettingsTab(ctk.CTkFrame):
             fg_color=SUCCESS, hover_color="#27ae60",
             command=self._save
         )
-        btn_quick_save_ai.grid(row=2, column=0, columnspan=2, padx=16, pady=(4, 14), sticky="w")
+        btn_quick_save_ai.grid(row=3, column=0, columnspan=2, padx=16, pady=(4, 14), sticky="w")
 
         # Khởi tạo frame tương ứng
         self._on_provider_change_admin(default_choice)
@@ -5193,19 +5322,24 @@ class SettingsTab(ctk.CTkFrame):
             entry.insert(0, path)
 
     def _on_provider_change_admin(self, choice):
-        if "Ollama" in choice:
+        if "Chỉ dùng Ollama" in choice:
             self._frame_cloud_admin.grid_forget()
             self._frame_ollama_admin.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
-        elif "Groq" in choice:
+        elif "Chỉ dùng Cloud" in choice:
             self._frame_ollama_admin.grid_forget()
             self._frame_cloud_admin.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
-            self._lbl_key_title_admin.configure(text="Groq API Key:")
-            self._lbl_cloud_hint_admin.configure(text="* Key bắt đầu bằng gsk_ (Dùng Llama-3.3-70b siêu tốc, miễn phí).")
-        else: # Gemini
-            self._frame_ollama_admin.grid_forget()
-            self._frame_cloud_admin.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
-            self._lbl_key_title_admin.configure(text="Gemini API Key:")
-            self._lbl_cloud_hint_admin.configure(text="* Hỗ trợ nhiều key cách nhau bằng dấu phẩy để tự động xoay tua.")
+            self._lbl_key_title_admin.configure(text="Cloud API Key:")
+            self._lbl_cloud_hint_admin.configure(text="* Hỗ trợ key Gemini / Groq (gsk_) / Vilao.ai (sk-...).")
+        elif "Cloud API trước" in choice:
+            self._frame_cloud_admin.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 6))
+            self._frame_ollama_admin.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
+            self._lbl_key_title_admin.configure(text="Cloud API Key:")
+            self._lbl_cloud_hint_admin.configure(text="* [ƯU TIÊN #1: CLOUD API] Nếu Cloud API lỗi/hết quota ➔ Tự động chuyển qua Ollama Local dự phòng.")
+        else: # Ollama trước ➔ Dự phòng Cloud API
+            self._frame_ollama_admin.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 6))
+            self._frame_cloud_admin.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
+            self._lbl_key_title_admin.configure(text="Cloud API Key:")
+            self._lbl_cloud_hint_admin.configure(text="* [ƯU TIÊN #1: OLLAMA LOCAL] Nếu Ollama lỗi/chưa bật ➔ Tự động chuyển qua Cloud API dự phòng.")
 
     def _test_ollama_admin(self):
         url = self._entry_ollama_url_admin.get().strip() or "http://localhost:11434"
@@ -5243,9 +5377,20 @@ class SettingsTab(ctk.CTkFrame):
 
     def _save(self):
         choice = getattr(self, "_opt_provider_admin", None)
-        provider_choice = choice.get() if choice else "Ollama (Local Offline)"
+        provider_choice = choice.get() if choice else "Ollama trước ➔ Dự phòng Cloud API"
         
-        provider = "ollama" if "Ollama" in provider_choice else ("groq" if "Groq" in provider_choice else "gemini")
+        if "Ollama trước" in provider_choice:
+            provider = "ollama_first"
+        elif "Cloud API trước" in provider_choice:
+            provider = "cloud_first"
+        elif "Chỉ dùng Cloud" in provider_choice:
+            provider = "cloud_only"
+        elif "Chỉ dùng Ollama" in provider_choice:
+            provider = "ollama_only"
+        elif "Ollama" in provider_choice:
+            provider = "ollama_first"
+        else:
+            provider = "cloud_first"
         ollama_url = getattr(self, "_entry_ollama_url_admin", ctk.CTkEntry(self)).get().strip() or "http://localhost:11434"
         ollama_model = getattr(self, "_combo_ollama_model_admin", ctk.CTkComboBox(self)).get().strip() or "qwen2.5"
         gemini_key = self._entry_gemini.get().strip() if hasattr(self, "_entry_gemini") else ""
@@ -5274,6 +5419,12 @@ class SettingsTab(ctk.CTkFrame):
         if vbee_key:
             set_key(env_path, "VBEE_API_KEY", vbee_key)
 
+        custom_model = self._entry_admin_model.get().strip() if hasattr(self, "_entry_admin_model") else "gemini-3.6-flash-high"
+        if custom_model:
+            set_key(env_path, "CUSTOM_AI_MODEL", custom_model)
+            os.environ["CUSTOM_AI_MODEL"] = custom_model
+            PROCESSOR_CONFIG["custom_ai_model"] = custom_model
+
         # Lưu cả vào settings.json của current user
         try:
             from auth_client import auth_client
@@ -5297,6 +5448,8 @@ class SettingsTab(ctk.CTkFrame):
             user_data["ollama_model"] = ollama_model
             if gemini_key:
                 user_data["gemini_api_key"] = gemini_key
+            if custom_model:
+                user_data["custom_ai_model"] = custom_model
                 
             with open(user_settings_path, "w", encoding="utf-8") as f:
                 json.dump(user_data, f, ensure_ascii=False, indent=2)
@@ -5970,10 +6123,10 @@ class App(ctk.CTk):
                             has_custom_key = True
                             PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in key.split(",") if k.strip()]
                         else:
-                            PROCESSOR_CONFIG["gemini_api_keys"] = []
+                            raw_env = os.getenv("GEMINI_API_KEY", "")
+                            PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in raw_env.split(",") if k.strip()]
                         
                         # Load Ollama / AI Provider
-                        import os
                         if data.get("ai_provider"):
                             PROCESSOR_CONFIG["ai_provider"] = data.get("ai_provider")
                             os.environ["AI_PROVIDER"] = data.get("ai_provider")
@@ -5983,10 +6136,14 @@ class App(ctk.CTk):
                         if data.get("ollama_model"):
                             PROCESSOR_CONFIG["ollama_model"] = data.get("ollama_model")
                             os.environ["OLLAMA_MODEL"] = data.get("ollama_model")
+                        if data.get("custom_ai_model"):
+                            PROCESSOR_CONFIG["custom_ai_model"] = data.get("custom_ai_model")
+                            os.environ["CUSTOM_AI_MODEL"] = data.get("custom_ai_model")
                 except:
                     pass
             else:
-                PROCESSOR_CONFIG["gemini_api_keys"] = []
+                raw_env = os.getenv("GEMINI_API_KEY", "")
+                PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in raw_env.split(",") if k.strip()]
             # Cập nhật quyền hạn ở tab Process
             if hasattr(self, "_tab_frames") and len(self._tab_frames) > 2:
                 process_tab = self._tab_frames[2]
@@ -6084,26 +6241,28 @@ class App(ctk.CTk):
 
     # ── Sidebar ──────────────────────────────────────────────────────────────
     def _build_sidebar(self):
-        sidebar = ctk.CTkFrame(self, width=220, fg_color=BG_SIDEBAR, corner_radius=0)
+        sidebar = ctk.CTkFrame(self, width=224, fg_color=BG_SIDEBAR, corner_radius=0)
         sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.grid_rowconfigure(2, weight=1)  # Nav scroll chiếm hết không gian còn lại
         sidebar.grid_columnconfigure(0, weight=1)
 
-        # Logo
+        # Logo Brand Header
         logo = ctk.CTkFrame(sidebar, fg_color="transparent")
-        logo.grid(row=0, column=0, sticky="ew", padx=16, pady=(24, 12))
-        ctk.CTkLabel(
-            logo, text="✨",
-            font=("Segoe UI", 32), text_color=ACCENT
-        ).pack(side="left", padx=(0, 5))
-        ctk.CTkLabel(
-            logo, text="DouyinBot",
-            font=("Segoe UI", 20, "bold"), text_color=TEXT_MAIN,
-        ).pack(side="left")
+        logo.grid(row=0, column=0, sticky="ew", padx=16, pady=(20, 10))
+        
+        icon_box = ctk.CTkFrame(logo, width=38, height=38, corner_radius=10, fg_color="#1E1B4B", border_width=1, border_color="#6366F1")
+        icon_box.pack(side="left", padx=(0, 10))
+        icon_box.pack_propagate(False)
+        ctk.CTkLabel(icon_box, text="⚡", font=("Segoe UI", 18), text_color="#A78BFA").place(relx=0.5, rely=0.5, anchor="center")
+        
+        name_box = ctk.CTkFrame(logo, fg_color="transparent")
+        name_box.pack(side="left")
+        ctk.CTkLabel(name_box, text="DouyinBot", font=("Segoe UI", 17, "bold"), text_color=TEXT_MAIN).pack(anchor="w")
+        ctk.CTkLabel(name_box, text="AUTOMATION SUITE", font=("Segoe UI", 8, "bold"), text_color="#06B6D4").pack(anchor="w")
 
         # Separator
-        ctk.CTkFrame(sidebar, height=1, fg_color="#1E293B").grid(
-            row=1, column=0, sticky="ew", padx=16, pady=(0, 8)
+        ctk.CTkFrame(sidebar, height=1, fg_color=BORDER).grid(
+            row=1, column=0, sticky="ew", padx=16, pady=(0, 6)
         )
 
         # ── Scrollable Nav Area ────────────────────────────────────────────────
@@ -6120,7 +6279,7 @@ class App(ctk.CTk):
         for i, (icon, label, _) in enumerate(self.TABS):
             btn = SidebarButton(nav_scroll, icon=icon, text=label,
                                 command=lambda idx=i: self._nav(idx))
-            btn.grid(row=i, column=0, sticky="ew", padx=12, pady=3)
+            btn.grid(row=i, column=0, sticky="ew", padx=10, pady=2)
             self._nav_buttons.append(btn)
         
         self._nav_scroll = nav_scroll
@@ -6131,28 +6290,29 @@ class App(ctk.CTk):
         bottom.grid_columnconfigure(0, weight=1)
 
         # Premium User Profile Card
-        self.user_card = ctk.CTkFrame(bottom, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color="#334155")
+        self.user_card = ctk.CTkFrame(bottom, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
         self.user_card.grid(row=0, column=0, pady=(8, 6), padx=12, sticky="ew")
         
         self.lbl_user_info = ctk.CTkLabel(
             self.user_card, text="👤  Chưa đăng nhập",
-            font=("Segoe UI", 12), text_color=TEXT_MAIN, justify="left"
+            font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN, justify="left"
         )
-        self.lbl_user_info.pack(padx=12, pady=12, anchor="w")
+        self.lbl_user_info.pack(padx=12, pady=10, anchor="w")
         
         self.btn_upgrade_sidebar = ctk.CTkButton(
             self.user_card, text="💎 Nâng Cấp VIP", height=32,
             font=("Segoe UI", 12, "bold"),
-            fg_color=ACCENT, hover_color=ACCENT_HOVER, corner_radius=6,
+            fg_color=ACCENT, hover_color=ACCENT_HOVER, corner_radius=8,
             command=self._handle_sidebar_upgrade
         )
-        self.btn_upgrade_sidebar.pack(padx=12, pady=(0, 12), fill="x")
+        self.btn_upgrade_sidebar.pack(padx=12, pady=(0, 10), fill="x")
 
         # Logout button
         btn_logout = ctk.CTkButton(
-            bottom, text="🚪 Đăng xuất", height=40,
-            font=("Segoe UI", 13, "bold"),
-            fg_color="#EF4444", hover_color="#B91C1C", corner_radius=8,
+            bottom, text="🚪 Đăng xuất", height=34,
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#3B1D28", hover_color="#7F1D1D", text_color="#FCA5A5",
+            border_width=1, border_color="#EF4444", corner_radius=8,
             command=self._do_logout
         )
         btn_logout.grid(row=1, column=0, pady=(0, 6), padx=12, sticky="ew")
@@ -6162,26 +6322,28 @@ class App(ctk.CTk):
         support_frame = ctk.CTkFrame(bottom, fg_color="transparent")
         support_frame.grid(row=2, column=0, sticky="ew")
         
-        ctk.CTkLabel(support_frame, text="📞 Hotline hỗ trợ:", font=("Segoe UI", 11, "bold"), text_color=TEXT_DIM).pack(anchor="w", padx=16, pady=(2, 4))
+        ctk.CTkLabel(support_frame, text="📞 Hotline hỗ trợ:", font=("Segoe UI", 10, "bold"), text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(2, 3))
         
         self.btn_zalo = ctk.CTkButton(
             support_frame, text="💬 Zalo: 0866655803", font=("Segoe UI", 11, "bold"),
-            fg_color="#0068FF", hover_color="#0055D4", height=28,
+            fg_color="#0A1E40", hover_color="#0068FF", height=28, corner_radius=6,
+            border_width=1, border_color="#0055D4",
             command=lambda: webbrowser.open("https://zalo.me/0866655803")
         )
         self.btn_zalo.pack(anchor="w", padx=16, pady=2, fill="x")
         
         self.btn_tele = ctk.CTkButton(
             support_frame, text="✈️ Telegram: @hoannm", font=("Segoe UI", 11, "bold"),
-            fg_color="#24A1DE", hover_color="#1D84B5", height=28,
+            fg_color="#0B273A", hover_color="#24A1DE", height=28, corner_radius=6,
+            border_width=1, border_color="#1D84B5",
             command=lambda: webbrowser.open("https://t.me/hoannm")
         )
         self.btn_tele.pack(anchor="w", padx=16, pady=2, fill="x")
 
         # Bottom: version
         ctk.CTkLabel(
-            bottom, text="v1.0.0 (Premium)",
-            font=("Segoe UI", 10), text_color=TEXT_DIM,
+            bottom, text="⚡ v2.0.0 PRO (Obsidian Edition)",
+            font=("Segoe UI", 9, "bold"), text_color=TEXT_MUTED,
         ).grid(row=3, column=0, pady=(4, 10))
 
     # ── Content area ─────────────────────────────────────────────────────────

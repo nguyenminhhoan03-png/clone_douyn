@@ -35,6 +35,16 @@ _REPLACEMENTS = {
     "bạn gái cũ": "người yêu cũ",
     "bạn trai": "người yêu",
     "bạn gái": "người yêu",
+    "đưa bạn lớn lên": "nuôi con khôn lớn",
+    "Đưa bạn lớn lên": "Nuôi con khôn lớn",
+    "đưa cháu lớn lên": "nuôi cháu khôn lớn",
+    "Đưa cháu lớn lên": "Nuôi cháu khôn lớn",
+    "chào anh lãnh đạo": "chào sếp",
+    "Chào anh lãnh đạo": "Chào sếp",
+    "Hu Hu ngoan": "Hoa Hoa ngoan",
+    "hu hu ngoan": "hoa hoa ngoan",
+    "chú Hoa Hoa": "chú Chu",
+    "Chú Hoa Hoa": "Chú Chu",
 }
 
 def _apply_replacements(translated: str) -> str:
@@ -216,7 +226,7 @@ def build_vietnamese_caption(title: str, tags: str,
     caption = f"✨ {translated_title}\n\n{tags_str}"
     return caption
 
-def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bool = False, provider: str = None, model: str = None, ollama_url: str = None) -> str:
+def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bool = False, provider: str = None, model: str = None, ollama_url: str = None, context: str = "") -> str:
     """
     Pipeline 2 bước (Senior++):
       Bước 1: AI sửa lỗi Whisper (dùng model riêng → tránh rate limit)
@@ -229,16 +239,21 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
     
     try:
         is_groq = bool(api_key and str(api_key).startswith("gsk_"))
+        is_vilao = bool(api_key and str(api_key).startswith("sk-"))
         is_gemini = bool(api_key and str(api_key).startswith("AIza"))
-        is_ollama = (not is_groq) and (not is_gemini) and ((provider == "ollama") or (api_key == "ollama") or (os.getenv("AI_PROVIDER") == "ollama"))
+        is_ollama = (not is_groq) and (not is_vilao) and (not is_gemini) and ((provider == "ollama") or (api_key == "ollama") or (os.getenv("AI_PROVIDER") == "ollama"))
         
         target_ollama_model = model or os.getenv("OLLAMA_MODEL", "qwen2.5")
-        ai_name = "Groq (Qwen-27B)" if is_groq else ("Gemini" if is_gemini else f"Ollama ({target_ollama_model})")
+        custom_model = model or os.getenv("CUSTOM_AI_MODEL") or os.getenv("OPENAI_MODEL") or "gemini-3.6-flash-high"
+        ai_name = "Groq (Qwen-27B)" if is_groq else (f"Vilao.ai ({custom_model})" if is_vilao else ("Gemini" if is_gemini else f"Ollama ({target_ollama_model})"))
         
         # Model cho từng Pass
         if is_ollama:
             PASS1_MODEL = target_ollama_model
             PASS2_MODEL = target_ollama_model
+        elif is_vilao:
+            PASS1_MODEL = custom_model
+            PASS2_MODEL = custom_model
         else:
             PASS1_MODEL = "qwen/qwen3.8-27b" if is_groq else None       # Dùng model Groq Qwen-27B siêu tốc
             PASS2_MODEL = "qwen/qwen3.8-27b" if is_groq else None  # Groq Qwen-27B dịch thuật mượt mà đỉnh cao
@@ -250,35 +265,51 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
         if is_ollama:
             if multi_speaker:
                 instruction = (
-                    "NHẬN DIỆN NHÂN VẬT (BẮT BUỘC): Thêm chính xác nhãn có ngoặc vuông [M], [F], hoặc [N] vào ngay sau dấu |. BẮT BUỘC phải có ngoặc vuông [ ], tuyệt đối không viết chữ trần M hay F.\n"
-                    "- [M]: Giọng Nam\n"
-                    "- [F]: Giọng Nữ\n"
-                    "- [N]: Người kể chuyện / Không rõ\n"
-                    "Ví dụ: 1|[F] Ối dồi ôi, tai của mày bị gió thổi bay mất tiêu rồi kìa!\n"
-                    "Ví dụ: 2|[M] Mày xem lại chữ Phúc kia đi!\n"
+                    "PHÂN VAI LỒNG TIẾNG [BẮT BUỘC]: Thêm nhãn giới tính [M], [F], hoặc [N] vào ngay sau dấu |. BẮT BUỘC phải có ngoặc vuông [ ].\n"
+                    "- [M]: Giọng Nam (Chú, Bác, Anh, Ông, Sếp nam, bạn trai...)\n"
+                    "- [F]: Giọng Nữ (Cô, Dì, Chị, Bà, Mẹ, bạn gái...)\n"
+                    "- [N]: Dẫn chuyện / Tiếng trẻ em / Giọng chung\n"
+                    "Ví dụ: 1|[M] Mau ra đón sếp đi!\n"
+                    "Ví dụ: 2|[M] Chào sếp ạ!\n"
+                    "Ví dụ: 3|[F] Hoa Hoa ngoan nhé!\n"
+                    "Ví dụ: 4|[M] Chú Chu xong việc sẽ đến đón cháu.\n"
                 )
             else:
                 instruction = (
                     "Câu văn phải tự nhiên, thuần Việt, nhịp điệu nhanh lôi cuốn phù hợp lồng tiếng video ngắn.\n"
                 )
 
+            context_block = ""
+            if context and context.strip():
+                context_block = f"【NGỮ CẢNH CÂU VỪA NÓI XONG (Chỉ dùng để hiểu đại từ xưng hô, KHÔNG dịch lại đoạn này)】:\n{context.strip()}\n\n"
+
             translation_prompt = (
-                "你是一名精通中越双语的影视短剧与短视频金牌字幕翻译大师。\n"
-                "请将以下由Whisper语音识别自动提取的中文台词，逐行翻译为【极其自然地道、生动传神、100% thuần Việt】的越南语（Vietnamese）。\n\n"
-                "【核心翻译法则 - CHUẨN ĐIỆN ẢNH & VIRAL SHORT VIDEO】:\n"
-                "1. 🎭 Xưng hô linh hoạt, tự nhiên như đời thực:\n"
-                "   - Thú cưng / bạn bè thân thiết / hài hước troll: Dùng 'mày - tao', 'cậu - tớ', 'ông - tôi', 'đại ca' (Tuyệt đối KHÔNG dùng 'bạn - tôi', 'ngươi - ta' cứng nhắc).\n"
-                "   - Nam nữ tình cảm: 'anh - em'.\n"
-                "   - Gia đình / tiền bối: 'bố - con', 'chú - cháu', 'anh/chị - em'.\n"
-                "2. 🔥 Văn phong biểu cảm, cuốn hút:\n"
-                "   - Dịch thoát nghĩa, thêm từ cảm thán tự nhiên ở cuối câu ('nè', 'á', 'đấy', 'kìa', 'mất tiêu rồi', 'trời đất ơi', 'nhìn kìa', 'thôi nào'...). Tuyệt đối loại bỏ lối dịch máy thô cứng.\n"
-                "3. 🈲 100% TIẾNG VIỆT - KHÔNG SÓT CHỮ HÁN:\n"
-                "   - Phiên âm tất cả tên riêng nhân vật, thú cưng, địa danh sang âm Hán-Việt hoặc thuần Việt (Ví dụ: 望仔 → Vọng Vĩ / Vọng Tử; 小美 → Tiểu Mỹ; 强哥 → anh Cường). Tuyệt đối KHÔNG để lại bất kỳ chữ Hán nào!\n"
-                "4. 🛠️ Tự động sửa lỗi Whisper: Nếu có từ đồng âm vô nghĩa trong ngữ cảnh, hãy tự sửa đúng ngữ cảnh trước khi dịch.\n\n"
+                "你是一名精通中越双语的影视短剧金牌字幕翻译大师。\n"
+                "请将以下由Whisper提取的中文台词逐行翻译为【极其自然地道、生动传神、100% thuần Việt】的越南语（Vietnamese）。\n\n"
+                f"{context_block}"
+                "【QUY TẮC DỊCH THUẬT SỐNG CÒN - ĐẲNG CẤP ĐIỆN ẢNH】:\n"
+                "1. 🎭 XƯNG HÔ THEO TÔN TI & BỐI CẢNH (CỰC KỲ QUAN TRỌNG):\n"
+                "   - Người lớn (Chú / Bác / Bố / Mẹ / Ông / Bà) nói với trẻ nhỏ (như Hoa Hoa, đứa bé, cháu):\n"
+                "     👉 BẮT BUỘC xưng 'Chú/Bác/Bố/Mẹ/Ông/Bà - Cháu/Con' (Ví dụ: '周叔忙完了就来接你' → 'Chú Chu xong việc sẽ đến đón cháu').\n"
+                "     🚫 TUYỆT ĐỐI CẤM xưng 'em' với trẻ nhỏ! Không bao giờ dịch 'đón em' khi người nói là Chú/Bác/Ông.\n"
+                "   - Trẻ nhỏ nói với người lớn: xưng 'Cháu/Con - Chú/Bác/Cô/Ông/Bà' (Ví dụ: '张叔叔' → 'Chú Trương ạ').\n"
+                "   - Cấp dưới nói với cấp trên: '领导' → 'Sếp' hoặc 'Lãnh đạo' (Ví dụ: '快出来迎接领导' → 'Ra đây đón sếp đi'; '领导好' → 'Chào sếp ạ' hoặc 'Chào lãnh đạo ạ'. 🚫 CẤM dịch 'anh lãnh đạo').\n"
+                "   - Vợ chồng / Người yêu: Bắt buộc 'anh - em'.\n"
+                "   - Bạn bè thân thiết / troll hài hước: 'mày - tao' hoặc 'cậu - tớ'. 🚫 CẤM dùng 'tôi - bạn', 'ngươi - ta'.\n"
+                "   - Cấu trúc '把...带大/养大': Phải dịch là 'Nuôi ... khôn lớn / Nuôi lớn từng này'. 🚫 CẤM dịch 'Đưa bạn lớn lên'.\n\n"
+                "2. 🈲 PHIÊN ÂM HÁN-VIỆT CHUẨN XÁC & CẤM ẢO GIÁC LẪN LỘN TÊN (ANTI-HALLUCINATION):\n"
+                "   - Phiên âm đúng tên người sang âm Hán-Việt, KHÔNG tự bịa tên:\n"
+                "     * 张 (Zhang) = Trương (Ví dụ: 张叔叔 = Chú Trương; 🚫 KHÔNG dịch thành Chú Thành)\n"
+                "     * 周 (Zhou) = Chu hoặc Châu (Ví dụ: 周叔 = Chú Chu; 🚫 KHÔNG dịch thành Chú Hoa Hoa)\n"
+                "     * 华华 (Huáhua) = Hoa Hoa (🚫 CẤM dịch thành 'Hu Hu')\n"
+                "     * 李 = Lý, 王 = Vương, 陈 = Trần, 刘 = Lưu, 杨 = Dương, 赵 = Triệu, 强 = Cường, 小美 = Tiểu Mỹ...\n"
+                "   - 🚫 CẤM 'RÂU ÔNG NỌ CẰM CẰM BÀ KIA': Tên của nhân vật ở câu trước TUYỆT ĐỐI KHÔNG được gán ghép nhầm sang nhân vật ở câu sau! ('华华' là cháu bé, '周叔' là Chú Chu, KHÔNG ĐƯỢC gộp thành Chú Hoa Hoa).\n\n"
+                "3. 🔥 VĂN PHONG BIỂU CẢM, THOÁT NGHĨA:\n"
+                "   - Thêm từ cảm thán tự nhiên ('nè', 'nha', 'đấy', 'kìa', 'ạ', 'trời đất ơi'...). Dịch thoát nghĩa, nhịp câu ngắn gọn, dứt khoát.\n\n"
                 f"{instruction}\n"
                 "【BẮT BUỘC ĐỊNH DẠNG ĐẦU RA】:\n"
-                "- Mỗi dòng đúng cấu trúc: ID|câu dịch tiếng Việt hoàn chỉnh\n"
-                "- Tuyệt đối KHÔNG lặp lại tiếng Trung gốc, KHÔNG dùng dấu '-' hay '→', KHÔNG giải thích, KHÔNG thêm ký tự lạ.\n\n"
+                "- Mỗi dòng đúng cấu trúc: ID|câu dịch tiếng Việt hoàn chỉnh (kèm tag [M]/[F]/[N] nếu có)\n"
+                "- Tuyệt đối KHÔNG lặp lại tiếng Trung gốc, KHÔNG giải thích, KHÔNG thêm ký tự lạ ngoài định dạng.\n\n"
                 f"待翻译数据：\n{payload_text}"
             )
 
@@ -935,7 +966,7 @@ def translate_srt_with_gemini(payload_text: str, api_key: str, multi_speaker: bo
     "==================================================\n"
 
     f"{instruction}\n\n"
-
+    f"{('【NGỮ CẢNH CÂU VỪA NÓI XONG】: ' + context.strip() + chr(10) + chr(10)) if context and context.strip() else ''}"
     "==================================================\n"
     "XXVI. QUY TẮC OUTPUT CỨNG\n"
     "==================================================\n"

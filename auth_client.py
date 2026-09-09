@@ -183,20 +183,20 @@ class AuthClient:
 
     def generate_ai(self, prompt, api_key=None, model=None, provider=None, ollama_url=None, temperature=None):
         import os
+        import re
         import requests as http_requests
+
+        def _clean_think(txt: str) -> str:
+            if not txt:
+                return ""
+            # Lọc bỏ toàn bộ đoạn suy nghĩ nội tâm <think>...</think>
+            cleaned = re.sub(r"<think>.*?</think>", "", txt, flags=re.DOTALL)
+            return cleaned.strip()
 
         # 1. Xử lý qua Ollama Local nếu được chỉ định
         if provider == "ollama" or (not api_key and os.getenv("AI_PROVIDER") == "ollama"):
             target_url = (ollama_url or os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
             target_model = model or os.getenv("OLLAMA_MODEL", "qwen2.5")
-            
-            def _clean_think(txt: str) -> str:
-                if not txt:
-                    return ""
-                import re
-                # Lọc bỏ toàn bộ đoạn suy nghĩ nội tâm <think>...</think>
-                cleaned = re.sub(r"<think>.*?</think>", "", txt, flags=re.DOTALL)
-                return cleaned.strip()
 
             eff_temp = float(temperature) if temperature is not None else 0.35
             cpu_threads = os.cpu_count() or 8
@@ -215,6 +215,8 @@ class AuthClient:
                 "Directly output the required ID|text format."
             )
 
+            ollama_timeout = int(os.getenv("OLLAMA_TIMEOUT", "120"))
+
             # 1. Gọi trực tiếp native endpoint /api/generate của Ollama (hỗ trợ đầy đủ options tăng tốc)
             try:
                 resp = http_requests.post(
@@ -227,14 +229,16 @@ class AuthClient:
                         "options": ollama_options
                     },
                     headers={"Content-Type": "application/json"},
-                    timeout=180
+                    timeout=ollama_timeout
                 )
                 if resp.status_code == 200:
                     return _clean_think(resp.json().get("response", ""))
+            except http_requests.exceptions.Timeout:
+                raise Exception(f"Ollama xử lý quá thời gian ({ollama_timeout}s) trên CPU")
             except Exception as e:
                 pass
 
-            # 2. Fallback sang OpenAI-compatible endpoint /v1/chat/completions
+            # 2. Fallback sang OpenAI-compatible endpoint /v1/chat/completions (nếu /api/generate lỗi endpoint)
             try:
                 resp = http_requests.post(
                     f"{target_url}/v1/chat/completions",
@@ -245,10 +249,10 @@ class AuthClient:
                             {"role": "user", "content": prompt}
                         ],
                         "temperature": eff_temp,
-                        "max_tokens": 2048,
+                        "max_tokens": 1024,
                     },
                     headers={"Content-Type": "application/json"},
-                    timeout=180
+                    timeout=ollama_timeout
                 )
                 if resp.status_code == 200:
                     choices = resp.json().get("choices", [])
@@ -288,8 +292,33 @@ class AuthClient:
                 )
                 if resp.status_code == 200:
                     return resp.json()["choices"][0]["message"]["content"]
+            elif api_key.startswith("sk-"):
+                # OpenAI / vilao.ai / OpenAI-compatible Proxy
+                base_url = (os.getenv("OPENAI_BASE_URL") or os.getenv("CUSTOM_AI_URL") or "https://api.vilao.ai/v1").rstrip("/")
+                chosen_model = model or os.getenv("CUSTOM_AI_MODEL") or os.getenv("OPENAI_MODEL") or "gemini-3.6-flash-high"
+                
+                resp = http_requests.post(
+                    f"{base_url}/chat/completions",
+                    json={
+                        "model": chosen_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.3,
+                        "max_tokens": 4000
+                    },
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    timeout=45
+                )
+                if resp.status_code == 200:
+                    choices = resp.json().get("choices", [])
+                    if choices:
+                        raw_content = choices[0].get("message", {}).get("content", "")
+                        return _clean_think(raw_content)
+                    return ""
                 else:
-                    raise Exception(f"Lỗi Groq API ({groq_model}): {resp.text}")
+                    raise Exception(f"Lỗi vilao.ai / OpenAI Proxy ({chosen_model}): {resp.text}")
             else:
                 # Gemini API (Thử qua SDK trước, nếu lỗi hoặc chưa cài SDK thì gọi thẳng REST API)
                 error_msgs = []
