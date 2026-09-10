@@ -93,11 +93,48 @@ class DashboardTab(ctk.CTkFrame):
         chip_online.pack(side="left", padx=(0, 10))
 
         btn_refresh = ctk.CTkButton(
-            right_box, text="⟳  Làm mới", width=110, height=36,
+            right_box, text="⟳  Làm mới", width=100, height=36,
             font=("Segoe UI", 12, "bold"), command=self.refresh_stats,
             fg_color=ACCENT, hover_color=ACCENT_HOVER, corner_radius=8,
         )
         btn_refresh.pack(side="left")
+
+        self._btn_help_dash = ctk.CTkButton(
+            right_box, text="❓ Hướng dẫn A-Z", width=125, height=36,
+            font=("Segoe UI", 11, "bold"), fg_color="transparent", border_width=1, border_color=BORDER,
+            hover_color=BG_CARD, corner_radius=8, command=self._toggle_dash_help
+        )
+        self._btn_help_dash.pack(side="left", padx=(8, 0))
+
+        # Guide frame cho người mới (mặc định ẩn hoàn toàn, không chiếm diện tích)
+        self._help_frame = ctk.CTkFrame(self, fg_color="#0E1726", corner_radius=10, border_width=1, border_color="#1E3A8A")
+        h_title = ctk.CTkFrame(self._help_frame, fg_color="transparent")
+        h_title.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(h_title, text="🗺️ LỘ TRÌNH 4 BƯỚC VẬN HÀNH DÀNH CHO NGƯỜI MỚI BẮT ĐẦU (MÙ CÔNG NGHỆ CŨNG LÀM ĐƯỢC)", font=("Segoe UI", 12, "bold"), text_color="#38BDF8").pack(side="left")
+        
+        help_content = (
+            "• Bước 1 - CÀO VIDEO SẠCH (Tab Crawl):\n"
+            "  Sao chép link video Douyin (TikTok Trung Quốc) dán vào tool -> Bấm 'Bắt đầu Crawl'. Video được tải về máy chuẩn Full HD, không dính logo watermark.\n"
+            "• Bước 2 - XỬ LÝ & LÁCH BẢN QUYỀN AI (Tab Process):\n"
+            "  Chọn video vừa tải -> Bật tính năng 'Làm mờ viền 9:16', 'Lồng tiếng Việt AI' hoặc 'Hiệu ứng lách âm thanh' -> Bấm 'Bắt đầu Xử lý'. AI tự động dịch chữ tiếng Trung và đọc lồng tiếng Việt chuẩn hay.\n"
+            "• Bước 3 - QUẢN LÝ DÀN NICK & PROXY (Tab Accounts):\n"
+            "  Thêm tài khoản TikTok / YouTube Shorts / Facebook Reels. Gán Proxy riêng biệt cho từng nick để chống quét trùng IP, chống khoá tài khoản hoặc bóp tương tác.\n"
+            "• Bước 4 - ĐĂNG BÀI HOẶC CẮM MÁY AUTO 100% (Tab Upload / Tab Auto):\n"
+            "  - Tab Upload: Chọn video -> Bấm '✨ AI Caption' để AI tự viết tiêu đề bắt trend -> Bấm Đăng ngay hoặc Hẹn giờ đăng.\n"
+            "  - Tab Auto: Chỉ cần nạp sẵn danh sách link vào file urls.txt -> Tool tự cào -> Tự edit -> Tự đăng theo lịch 24/7 không cần can thiệp tay."
+        )
+        ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=980).pack(anchor="w", padx=14, pady=(0, 8))
+        
+        # Thanh nút điều hướng nhanh các bước
+        nav_box = ctk.CTkFrame(self._help_frame, fg_color="transparent")
+        nav_box.pack(fill="x", padx=14, pady=(0, 10))
+        ctk.CTkLabel(nav_box, text="Truy cập nhanh:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(nav_box, text="1. Sang Tab Crawl ➔", width=120, height=28, font=("Segoe UI", 11), fg_color="#1E293B", hover_color="#334155", command=lambda: self.app._nav(1)).pack(side="left", padx=3)
+        ctk.CTkButton(nav_box, text="2. Sang Tab Process ➔", width=130, height=28, font=("Segoe UI", 11), fg_color="#1E293B", hover_color="#334155", command=lambda: self.app._nav(2)).pack(side="left", padx=3)
+        ctk.CTkButton(nav_box, text="3. Sang Tab Accounts ➔", width=135, height=28, font=("Segoe UI", 11), fg_color="#1E293B", hover_color="#334155", command=lambda: self.app._nav(5)).pack(side="left", padx=3)
+        ctk.CTkButton(nav_box, text="4. Sang Tab Upload ➔", width=125, height=28, font=("Segoe UI", 11), fg_color="#1E293B", hover_color="#334155", command=lambda: self.app._nav(3)).pack(side="left", padx=3)
+        ctk.CTkButton(nav_box, text="🤖 Sang Tab Auto ➔", width=125, height=28, font=("Segoe UI", 11, "bold"), fg_color="#065F46", hover_color="#047857", text_color="#34D399", command=lambda: self.app._nav(4)).pack(side="left", padx=3)
+        # Không grid lúc khởi tạo để không chiếm bất kỳ khoảng trống nào
 
         # Stats cards - Account
         self._card_role = StatsCard(self, "Tài khoản", value="USER", color="#06B6D4", icon="👤")
@@ -230,6 +267,17 @@ class DashboardTab(ctk.CTkFrame):
             if not silent:
                 self._log_widget.append(f"Không thể tải stats: {e}", "WARNING")
 
+    def _toggle_dash_help(self):
+        if hasattr(self, "_help_frame") and self._help_frame.winfo_ismapped():
+            self._help_frame.grid_remove()
+            if hasattr(self, "_btn_help_dash"):
+                self._btn_help_dash.configure(fg_color="transparent", border_width=1, border_color=BORDER)
+        else:
+            if hasattr(self, "_help_frame"):
+                self._help_frame.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(0, 12))
+                if hasattr(self, "_btn_help_dash"):
+                    self._btn_help_dash.configure(fg_color="#1E3A8A", border_width=1, border_color="#38BDF8")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Tab: Crawl
@@ -244,16 +292,54 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
 
     def _build(self):
         # Header
+        hdr_frame = ctk.CTkFrame(self, fg_color="transparent")
+        hdr_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        hdr_frame.grid_columnconfigure(0, weight=1)
+        
+        t_box = ctk.CTkFrame(hdr_frame, fg_color="transparent")
+        t_box.pack(side="left")
         ctk.CTkLabel(
-            self, text="🔍  Crawl Video từ Douyin",
+            t_box, text="🔍  Crawl Video từ Douyin",
             font=("Segoe UI", 22, "bold"), text_color=TEXT_MAIN,
-        ).grid(row=0, column=0, sticky="w", pady=(0, 20))
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            t_box, text="Tải video sạch không logo/watermark từ Douyin (TikTok Trung Quốc) theo link hoặc cả kênh",
+            font=("Segoe UI", 11), text_color=TEXT_MUTED,
+        ).pack(anchor="w", pady=(1, 0))
+        
+        self._btn_help_crawl = ctk.CTkButton(
+            hdr_frame, text="❓ Hướng dẫn", width=105, height=32, font=("Segoe UI", 11, "bold"),
+            fg_color="transparent", border_width=1, border_color=BORDER, hover_color=BG_CARD,
+            command=self._toggle_crawl_help
+        )
+        self._btn_help_crawl.pack(side="right")
+        
+        # Guide frame (mặc định ẩn hoàn toàn, không chiếm diện tích)
+        self._help_frame = ctk.CTkFrame(self, fg_color="#0E1726", corner_radius=10, border_width=1, border_color="#1E3A8A")
+        h_title = ctk.CTkFrame(self._help_frame, fg_color="transparent")
+        h_title.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(h_title, text="📖 HƯỚNG DẪN CÀO VIDEO DOUYIN DÀNH CHO NGƯỜI MỚI", font=("Segoe UI", 12, "bold"), text_color="#38BDF8").pack(side="left")
+        
+        help_content = (
+            "• 🔗 1. Cào Video đơn lẻ / Danh sách link (Khuyên dùng - Nhanh & Ổn định nhất):\n"
+            "  - Mở app Douyin/TikTok -> Bấm nút 'Chia sẻ' -> 'Sao chép liên kết'.\n"
+            "  - Dán thẳng vào ô text (chấp nhận cả đoạn văn bản tiếng Trung, Tool tự động trích xuất link dạng https://v.douyin.com/...).\n"
+            "  - Có thể dán nhiều link cùng lúc, mỗi dòng 1 link -> Bấm '▶ Bắt đầu Crawl'.\n"
+            "• 👤 2. Cào Cả Kênh / Profile tác giả:\n"
+            "  - Dán đường link web trang cá nhân (VD: https://www.douyin.com/user/MS4wLjABAAAA...).\n"
+            "  - ⚠️ Tuyệt đối KHÔNG nhập ID chữ số ngắn (như 1862039527lm) vì Douyin không nhận diện được.\n"
+            "  - Lưu ý: Cào cả kênh yêu cầu phải có Cookie Douyin để tránh bị thuật toán Douyin chặn.\n"
+            "• 📄 3. Cào từ file .txt:\n"
+            "  - Tạo file .txt chứa sẵn danh sách link video -> Bấm '📁 Chọn' file và nhấn 'Bắt đầu Crawl'."
+        )
+        ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=960).pack(anchor="w", padx=14, pady=(0, 10))
+        # Không grid lúc khởi tạo
 
         # Input card
         self._input_card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
-        self._input_card.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        self._input_card.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         self._input_card.grid_columnconfigure(1, weight=1)
-        self._input_card.grid_columnconfigure(0, minsize=120) # Cố định chiều rộng cột nhãn
+        self._input_card.grid_columnconfigure(0, minsize=120)
 
         # Mode chọn
         ctk.CTkLabel(self._input_card, text="Chế độ:", font=("Segoe UI", 12, "bold"),
@@ -262,7 +348,7 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         self._mode_var = ctk.StringVar(value="urls")
         mode_frame = ctk.CTkFrame(self._input_card, fg_color="transparent")
         mode_frame.grid(row=0, column=1, sticky="w", padx=0, pady=(16, 10))
-        for val, lbl in [("urls", "URL cụ thể"), ("profile", "Profile user"), ("file", "File URLs")]:
+        for val, lbl in [("urls", "🔗 Link Video (Khuyên dùng)"), ("profile", "👤 Cả Kênh / Profile"), ("file", "📄 Đọc từ File .txt")]:
             ctk.CTkRadioButton(
                 mode_frame, text=lbl, variable=self._mode_var, value=val,
                 command=self._on_mode_change,
@@ -286,7 +372,7 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         self._txt_urls = ctk.CTkTextbox(url_inner, height=120, font=("Consolas", 12), fg_color=BG_DARK, border_color=BORDER)
         self._txt_urls.grid(row=0, column=0, sticky="ew")
         self._txt_urls.insert("0.0", "# Paste URL hoặc cả đoạn text từ app Douyin đều được\n# VD: 5.33 07/15 ... https://v.douyin.com/K_UlIwJrDJY/\n# Tool sẽ tự trích xuất URL ra\n")
-        ctk.CTkLabel(url_inner, text="💡 Mỗi dòng 1 URL — Hỗ trợ: v.douyin.com | www.douyin.com/video/", font=("Segoe UI", 10, "italic"), text_color=TEXT_DIM, anchor="w").grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        ctk.CTkLabel(url_inner, text="💡 Hỗ trợ: Dán 1 hoặc nhiều link (v.douyin.com hoặc douyin.com/video/...) mỗi dòng 1 link.", font=("Segoe UI", 10, "italic"), text_color=TEXT_DIM, anchor="w").grid(row=1, column=0, sticky="ew", pady=(4, 0))
 
         # --- ROW 3: Profile ---
         self._frame_profile = ctk.CTkFrame(self._input_card, fg_color="transparent")
@@ -294,13 +380,14 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         self._frame_profile.grid_columnconfigure(0, minsize=120)
 
         ctk.CTkLabel(self._frame_profile, text="Profile URL:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=0, column=0, sticky="w", padx=16, pady=4)
-        self._entry_profile = ctk.CTkEntry(self._frame_profile, placeholder_text="https://www.douyin.com/user/...", font=("Segoe UI", 12), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_profile = ctk.CTkEntry(self._frame_profile, placeholder_text="https://www.douyin.com/user/MS4wLjABAAAA...", font=("Segoe UI", 12), fg_color=BG_DARK, border_color=BORDER)
         self._entry_profile.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=4)
+        ctk.CTkLabel(self._frame_profile, text="⚠️ Lưu ý: Chỉ dán link web dạng https://www.douyin.com/user/... (Không nhập mã số hay Douyin ID ngắn)", font=("Segoe UI", 10, "italic"), text_color=WARNING, anchor="w").grid(row=1, column=1, sticky="w", padx=(0, 16), pady=(2, 4))
 
-        ctk.CTkLabel(self._frame_profile, text="Số lượng:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=1, column=0, sticky="w", padx=16, pady=4)
+        ctk.CTkLabel(self._frame_profile, text="Số lượng:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=2, column=0, sticky="w", padx=16, pady=4)
         self._spin_count = ctk.CTkEntry(self._frame_profile, width=80, font=("Segoe UI", 12), fg_color=BG_DARK, border_color=BORDER)
         self._spin_count.insert(0, "1000")
-        self._spin_count.grid(row=1, column=1, sticky="w", padx=(0, 16), pady=4)
+        self._spin_count.grid(row=2, column=1, sticky="w", padx=(0, 16), pady=4)
         
         # --- ROW 4: File ---
         self._frame_file = ctk.CTkFrame(self._input_card, fg_color="transparent")
@@ -323,7 +410,7 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
 
         # --- Buttons ---
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
-        btn_row.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        btn_row.grid(row=3, column=0, sticky="ew", pady=(0, 12))
 
         self._btn_crawl = ctk.CTkButton(btn_row, text="▶  Bắt đầu Crawl", height=42, width=150, font=("Segoe UI", 14, "bold"), fg_color=ACCENT, hover_color=ACCENT_HOVER, command=self._start_crawl)
         self._btn_crawl.pack(side="left", padx=(0, 15))
@@ -334,11 +421,22 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         # Log Toolbar & Log Widget
         self._log_widget = LogWidget(self)
         self._log_toolbar = LogToolbar(self, self._log_widget, module="crawl", title="📋  Nhật ký Crawl (Logs):")
-        self._log_toolbar.grid(row=3, column=0, sticky="ew", pady=(0, 4))
-        self._log_widget.grid(row=4, column=0, sticky="nsew")
-        self.grid_rowconfigure(4, weight=1)
+        self._log_toolbar.grid(row=4, column=0, sticky="ew", pady=(0, 4))
+        self._log_widget.grid(row=5, column=0, sticky="nsew")
+        self.grid_rowconfigure(5, weight=1)
 
         self._on_mode_change()
+
+    def _toggle_crawl_help(self):
+        if hasattr(self, "_help_frame") and self._help_frame.winfo_ismapped():
+            self._help_frame.grid_remove()
+            if hasattr(self, "_btn_help_crawl"):
+                self._btn_help_crawl.configure(fg_color="transparent", border_width=1, border_color=BORDER)
+        else:
+            if hasattr(self, "_help_frame"):
+                self._help_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+                if hasattr(self, "_btn_help_crawl"):
+                    self._btn_help_crawl.configure(fg_color="#1E3A8A", border_width=1, border_color="#38BDF8")
 
     def _on_mode_change(self):
         mode = self._mode_var.get()
@@ -604,19 +702,60 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         self.after(300, self._load_process_config)
 
     def _build(self):
+        # Header
+        hdr_frame = ctk.CTkFrame(self, fg_color="transparent")
+        hdr_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        hdr_frame.grid_columnconfigure(0, weight=1)
+        
+        t_box = ctk.CTkFrame(hdr_frame, fg_color="transparent")
+        t_box.pack(side="left")
         ctk.CTkLabel(
-            self, text="🎞️  Xử lý Video",
+            t_box, text="🎞️  Xử Lý & Edit Video AI",
             font=("Segoe UI", 22, "bold"), text_color=TEXT_MAIN,
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            t_box, text="Tự động lách bản quyền, căn chỉnh khung hình 9:16, bóc phụ đề tiếng Trung và lồng tiếng Việt",
+            font=("Segoe UI", 11), text_color=TEXT_MUTED,
+        ).pack(anchor="w", pady=(1, 0))
+        
+        self._btn_help_proc = ctk.CTkButton(
+            hdr_frame, text="❓ Hướng dẫn", width=105, height=32, font=("Segoe UI", 11, "bold"),
+            fg_color="transparent", border_width=1, border_color=BORDER, hover_color=BG_CARD,
+            command=self._toggle_proc_help
+        )
+        self._btn_help_proc.pack(side="right")
+        
+        # Guide frame (mặc định ẩn hoàn toàn, không chiếm diện tích)
+        self._help_frame = ctk.CTkFrame(self, fg_color="#0E1726", corner_radius=10, border_width=1, border_color="#1E3A8A")
+        h_title = ctk.CTkFrame(self._help_frame, fg_color="transparent")
+        h_title.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(h_title, text="📖 QUY TRÌNH 3 BƯỚC XỬ LÝ & LÁCH BẢN QUYỀN DÀNH CHO NGƯỜI MỚI", font=("Segoe UI", 12, "bold"), text_color="#38BDF8").pack(side="left")
+        
+        help_content = (
+            "• Bước 1 - Chọn Video Cần Làm:\n"
+            "  - Xem danh sách video ở bảng bên trái (được tải về từ tab Crawl).\n"
+            "  - Tích chọn (☑) vào các video muốn làm (hoặc bấm nút '☑ Chọn' để chọn nhanh tất cả).\n"
+            "  - 💡 Nếu chưa có video nào, hãy sang tab 'Crawl' tải về trước, hoặc bấm nút '📥 Import Video' để nạp video có sẵn trong máy.\n"
+            "• Bước 2 - Chọn Cấu Hình Lách Bản Quyền (Cột Bên Phải):\n"
+            "  - 'Title overlay': Để trống để AI tự động nhận diện và dịch tiêu đề gốc sang tiếng Việt hấp dẫn.\n"
+            "  - 'Làm mờ viền (Blur)': Tự động căn chỉnh video về chuẩn khung dọc 9:16 của TikTok/Reels/Shorts.\n"
+            "  - 'Lồng tiếng AI & Phụ đề': Tự động đọc chữ tiếng Trung trên màn hình -> Dịch sang tiếng Việt -> Lồng giọng đọc AI cực hay.\n"
+            "  - 'Hiệu ứng lách âm thanh / hình ảnh': Lật video, đổi MD5, đổi tone màu để chống thuật toán quét trùng lặp.\n"
+            "• Bước 3 - Bắt Đầu Render:\n"
+            "  - Bấm nút '▶ Bắt đầu Xử lý' ở góc dưới cột phải. Chờ thanh tiến trình đạt 100%.\n"
+            "  - Video render xong sẽ tự động chuyển sang tab 'Upload' để sẵn sàng đăng lên các kênh!"
+        )
+        ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=960).pack(anchor="w", padx=14, pady=(0, 10))
+        # Không grid lúc khởi tạo
 
         # Khởi tạo 2 cột (Trái: Danh sách, Phải: Sidebar công cụ)
-        self.grid_columnconfigure(0, weight=5) # 5 phần cho danh sách
-        self.grid_columnconfigure(1, weight=4) # 4 phần cho sidebar (rộng hơn một chút để chứa đủ text)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=5)
+        self.grid_columnconfigure(1, weight=4)
+        self.grid_rowconfigure(2, weight=1)
 
         # --- LEFT PANE ---
         left_frame = ctk.CTkFrame(self, fg_color="transparent")
-        left_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 15))
+        left_frame.grid(row=2, column=0, sticky="nsew", padx=(0, 15))
         left_frame.grid_columnconfigure(0, weight=1)
         left_frame.grid_rowconfigure(1, weight=1)
 
@@ -646,7 +785,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
 
         # --- RIGHT PANE (SIDEBAR) ---
         right_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        right_frame.grid(row=1, column=1, sticky="nsew")
+        right_frame.grid(row=2, column=1, sticky="nsew")
         right_frame.grid_columnconfigure(0, weight=1)
 
         # Options card
@@ -971,6 +1110,17 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
 
         self._status_badge = StatusBadge(btn_row, "Idle", TEXT_DIM)
         self._status_badge.pack(anchor="center")
+
+    def _toggle_proc_help(self):
+        if hasattr(self, "_help_frame") and self._help_frame.winfo_ismapped():
+            self._help_frame.grid_remove()
+            if hasattr(self, "_btn_help_proc"):
+                self._btn_help_proc.configure(fg_color="transparent", border_width=1, border_color=BORDER)
+        else:
+            if hasattr(self, "_help_frame"):
+                self._help_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+                if hasattr(self, "_btn_help_proc"):
+                    self._btn_help_proc.configure(fg_color="#1E3A8A", border_width=1, border_color="#38BDF8")
 
     def _load_videos(self):
         """Hiển thị danh sách video đã tải vào scrollable frame."""
@@ -1721,19 +1871,60 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         return ["Không up"] + accounts if accounts else ["Không up"]
 
     def _build(self):
+        # Header
+        hdr_frame = ctk.CTkFrame(self, fg_color="transparent")
+        hdr_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        hdr_frame.grid_columnconfigure(0, weight=1)
+        
+        t_box = ctk.CTkFrame(hdr_frame, fg_color="transparent")
+        t_box.pack(side="left")
         ctk.CTkLabel(
-            self, text="📤  Upload Video",
+            t_box, text="📤  Upload & Lên Lịch Đăng Đa Nền Tảng",
             font=("Segoe UI", 22, "bold"), text_color=TEXT_MAIN,
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            t_box, text="Tự động phân phối video lên TikTok, YouTube Shorts & Facebook Reels với AI Caption bắt trend",
+            font=("Segoe UI", 11), text_color=TEXT_MUTED,
+        ).pack(anchor="w", pady=(1, 0))
+        
+        self._btn_help_upload = ctk.CTkButton(
+            hdr_frame, text="❓ Hướng dẫn", width=105, height=32, font=("Segoe UI", 11, "bold"),
+            fg_color="transparent", border_width=1, border_color=BORDER, hover_color=BG_CARD,
+            command=self._toggle_upload_help
+        )
+        self._btn_help_upload.pack(side="right")
+        
+        # Guide frame (mặc định ẩn hoàn toàn, không chiếm diện tích)
+        self._help_frame = ctk.CTkFrame(self, fg_color="#0E1726", corner_radius=10, border_width=1, border_color="#1E3A8A")
+        h_title = ctk.CTkFrame(self._help_frame, fg_color="transparent")
+        h_title.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(h_title, text="📖 QUY TRÌNH 3 BƯỚC ĐĂNG BÀI & HẸN GIỜ DÀNH CHO NGƯỜI MỚI", font=("Segoe UI", 12, "bold"), text_color="#38BDF8").pack(side="left")
+        
+        help_content = (
+            "• Bước 1 - Chọn Video & Gán Nick Đăng:\n"
+            "  - Danh sách video bên trái là những video đã qua bước 'Process' (sẵn sàng đăng).\n"
+            "  - Tích chọn (☑) vào các video muốn đăng.\n"
+            "  - Chọn tài khoản TikTok / YouTube / Facebook tương ứng ở từng video (hoặc gán nhanh ở sidebar bên phải).\n"
+            "  - 💡 Nếu chưa thấy nick của bạn trong menu, hãy qua tab 'Accounts' để thêm nick & cấu hình Proxy trước!\n"
+            "• Bước 2 - Sáng Tạo Tiêu Đề & Hashtags (Viral AI):\n"
+            "  - Bấm nút '✨ AI Caption' ở thanh công cụ để AI (Gemini / Groq) tự động phân tích video và viết tiêu đề giật tít + bộ hashtags triệu view theo ngách.\n"
+            "  - Bạn cũng có thể click trực tiếp vào ô tiêu đề trên từng card video để tự chỉnh sửa theo ý thích.\n"
+            "• Bước 3 - Lên Lịch & Bắt Đầu Upload:\n"
+            "  - 'Đăng ngay': Tool sẽ mở trình duyệt tự động và đăng bài lần lượt.\n"
+            "  - 'Hẹn giờ đăng': Chọn các khung giờ vàng (11h trưa, 19h tối, 21h tối) để hệ thống tự động đăng rải đều, tránh đăng dồn dập bị bóp tương tác.\n"
+            "  - Bấm nút '🚀 Bắt đầu Upload' để hệ thống tự động hoàn thành!"
+        )
+        ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=960).pack(anchor="w", padx=14, pady=(0, 10))
+        # Không grid lúc khởi tạo
 
         # Khởi tạo 2 cột (Trái: Danh sách, Phải: Sidebar công cụ)
         self.grid_columnconfigure(0, weight=5)
         self.grid_columnconfigure(1, weight=4)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
         # --- LEFT PANE ---
         left_frame = ctk.CTkFrame(self, fg_color="transparent")
-        left_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 15))
+        left_frame.grid(row=2, column=0, sticky="nsew", padx=(0, 15))
         left_frame.grid_columnconfigure(0, weight=1)
         left_frame.grid_rowconfigure(1, weight=1)
 
@@ -1766,7 +1957,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
 
         # --- RIGHT PANE (SIDEBAR) ---
         right_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        right_frame.grid(row=1, column=1, sticky="nsew")
+        right_frame.grid(row=2, column=1, sticky="nsew")
         right_frame.grid_columnconfigure(0, weight=1)
 
         # Options card
@@ -2019,6 +2210,17 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
 
         # Nạp cấu hình đã lưu trước đó
         self._load_upload_config()
+
+    def _toggle_upload_help(self):
+        if hasattr(self, "_help_frame") and self._help_frame.winfo_ismapped():
+            self._help_frame.grid_remove()
+            if hasattr(self, "_btn_help_upload"):
+                self._btn_help_upload.configure(fg_color="transparent", border_width=1, border_color=BORDER)
+        else:
+            if hasattr(self, "_help_frame"):
+                self._help_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+                if hasattr(self, "_btn_help_upload"):
+                    self._btn_help_upload.configure(fg_color="#1E3A8A", border_width=1, border_color="#38BDF8")
 
     def _load_videos(self):
         """Hiển thị danh sách video đã processed vào scrollable frame."""
@@ -3214,19 +3416,57 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         self.app = app
         self._running = False
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        self.grid_rowconfigure(5, weight=1)
         self._build()
 
     def _build(self):
+        # Header
+        hdr_frame = ctk.CTkFrame(self, fg_color="transparent")
+        hdr_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        hdr_frame.grid_columnconfigure(0, weight=1)
+        
+        t_box = ctk.CTkFrame(hdr_frame, fg_color="transparent")
+        t_box.pack(side="left")
         ctk.CTkLabel(
-            self, text="🤖  Auto Pipeline",
+            t_box, text="🤖  Auto Pipeline (Tự Động Hóa 100%)",
             font=("Segoe UI", 22, "bold"), text_color=TEXT_MAIN,
-        ).grid(row=0, column=0, sticky="w", pady=(0, 20))
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            t_box, text="Chu trình khép kín: Tự cào video -> Tự edit lách bản quyền -> Tự đăng đa nền tảng theo lịch",
+            font=("Segoe UI", 11), text_color=TEXT_MUTED,
+        ).pack(anchor="w", pady=(1, 0))
+        
+        self._btn_help_auto = ctk.CTkButton(
+            hdr_frame, text="❓ Hướng dẫn", width=105, height=32, font=("Segoe UI", 11, "bold"),
+            fg_color="transparent", border_width=1, border_color=BORDER, hover_color=BG_CARD,
+            command=self._toggle_auto_help
+        )
+        self._btn_help_auto.pack(side="right")
+        
+        # Guide frame (mặc định ẩn hoàn toàn, không chiếm diện tích)
+        self._help_frame = ctk.CTkFrame(self, fg_color="#0E1726", corner_radius=10, border_width=1, border_color="#1E3A8A")
+        h_title = ctk.CTkFrame(self._help_frame, fg_color="transparent")
+        h_title.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(h_title, text="📖 HƯỚNG DẪN CHẠY TỰ ĐỘNG HÓA TỪ A - Z (AUTO PIPELINE)", font=("Segoe UI", 12, "bold"), text_color="#38BDF8").pack(side="left")
+        
+        help_content = (
+            "• 1. Auto Pipeline là gì?\n"
+            "  - Đây là chế độ 'Cắm máy tự chạy': Tool tự động đọc danh sách link -> Tải video sạch -> Lách bản quyền & Lồng tiếng AI -> Đăng thẳng lên TikTok/Shorts/Reels.\n"
+            "  - Thích hợp khi bạn muốn cắm máy qua đêm hoặc treo 24/7 trên VPS mà không cần thao tác từng bước bằng tay.\n"
+            "• 2. Chọn Nguồn Video:\n"
+            "  - 'Từ File URLs (Crawl mới)': Tải video mới từ danh sách link trong file urls.txt rồi mới edit và đăng.\n"
+            "  - 'Chỉ Upload (Video đã xử lý)': Bỏ qua bước cào/edit, chỉ tự động lấy các video đã render sẵn trong máy để đăng lên dàn nick.\n"
+            "• 3. Chế độ vận hành:\n"
+            "  - 'Chạy 1 lần': Làm xong toàn bộ hàng đợi video rồi tự nghỉ.\n"
+            "  - 'Chạy liên tục theo lịch': Cứ cách mỗi X giờ/phút hệ thống sẽ tự động thức dậy chạy 1 đợt mới."
+        )
+        ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=960).pack(anchor="w", padx=14, pady=(0, 10))
+        # Không grid lúc khởi tạo
 
         # Config card
         cfg = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12,
                             border_width=1, border_color=BORDER)
-        cfg.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        cfg.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         cfg.grid_columnconfigure(1, weight=1)
 
         # Source / Nguồn Video
@@ -3371,7 +3611,7 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
 
         # Buttons
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
-        btn_row.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        btn_row.grid(row=3, column=0, sticky="ew", pady=(0, 12))
 
         self._btn_start = ctk.CTkButton(
             btn_row, text="▶  Start Auto", height=42,
@@ -3396,11 +3636,20 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         # Log Toolbar & Log Widget
         self._log_widget = LogWidget(self)
         self._log_toolbar = LogToolbar(self, self._log_widget, module="auto", title="📋  Nhật ký Auto Pipeline (Logs):")
-        self._log_toolbar.grid(row=3, column=0, sticky="ew", pady=(0, 4))
-        self._log_widget.grid(row=4, column=0, sticky="nsew")
-        self.grid_rowconfigure(4, weight=1)
+        self._log_toolbar.grid(row=4, column=0, sticky="ew", pady=(0, 4))
+        self._log_widget.grid(row=5, column=0, sticky="nsew")
+        self.grid_rowconfigure(5, weight=1)
 
-
+    def _toggle_auto_help(self):
+        if hasattr(self, "_help_frame") and self._help_frame.winfo_ismapped():
+            self._help_frame.grid_remove()
+            if hasattr(self, "_btn_help_auto"):
+                self._btn_help_auto.configure(fg_color="transparent", border_width=1, border_color=BORDER)
+        else:
+            if hasattr(self, "_help_frame"):
+                self._help_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+                if hasattr(self, "_btn_help_auto"):
+                    self._btn_help_auto.configure(fg_color="#1E3A8A", border_width=1, border_color="#38BDF8")
 
     def _refresh_accounts(self):
         accounts = UploadTab._get_tiktok_accounts()
@@ -3673,12 +3922,8 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
             hover_color=BG_CARD, command=self._load_accounts
         ).pack(side="left", padx=(3, 0))
 
-        # Khung chứa hướng dẫn (đặt trước _list_frame)
-        self._help_container = ctk.CTkFrame(self.tab_tiktok, fg_color="transparent")
-        self._help_container.pack(fill="x")
-
-        # Khung hướng dẫn sử dụng chi tiết
-        self._help_frame = ctk.CTkFrame(self._help_container, fg_color="#0E1726", corner_radius=10, border_width=1, border_color="#1E3A8A")
+        # Khung hướng dẫn sử dụng chi tiết (mặc định ẩn hoàn toàn)
+        self._help_frame = ctk.CTkFrame(self.tab_tiktok, fg_color="#0E1726", corner_radius=10, border_width=1, border_color="#1E3A8A")
         h_title = ctk.CTkFrame(self._help_frame, fg_color="transparent")
         h_title.pack(fill="x", padx=14, pady=(10, 4))
         ctk.CTkLabel(h_title, text="📖 HƯỚNG DẪN QUẢN LÝ DÀN NICK TIKTOK & PROXY CHỐNG CHECKPOINT", font=("Segoe UI", 12, "bold"), text_color="#38BDF8").pack(side="left")
@@ -3691,15 +3936,16 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
             "• 🛡️ Ẩn Danh (Cloak): Chế độ chạy qua CloakBrowser giả lập vân tay Canvas, WebGL, Audio và GeoIP tầng C++, vượt checkpoint bảo mật tối đa."
         )
         ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=960).pack(anchor="w", padx=14, pady=(0, 10))
+        # Không pack lúc khởi tạo
         
         # ── TABLE COLUMN HEADER BAR ──────────────────────────────────────────
-        col_hdr = ctk.CTkFrame(self.tab_tiktok, fg_color="#0D111C", height=32, corner_radius=6, border_width=1, border_color=BORDER)
-        col_hdr.pack(fill="x", pady=(0, 4), padx=2)
-        col_hdr.grid_columnconfigure(1, weight=1)
+        self._col_hdr = ctk.CTkFrame(self.tab_tiktok, fg_color="#0D111C", height=32, corner_radius=6, border_width=1, border_color=BORDER)
+        self._col_hdr.pack(fill="x", pady=(0, 4), padx=2)
+        self._col_hdr.grid_columnconfigure(1, weight=1)
         
-        ctk.CTkLabel(col_hdr, text="HỒ SƠ TÀI KHOẢN (TIKTOK)", font=("Segoe UI", 10, "bold"), text_color=TEXT_MUTED, width=210, anchor="w").grid(row=0, column=0, padx=(14, 10), pady=6, sticky="w")
-        ctk.CTkLabel(col_hdr, text="CẤU HÌNH PROXY (IP:PORT:USER:PASS)", font=("Segoe UI", 10, "bold"), text_color=TEXT_MUTED, anchor="w").grid(row=0, column=1, padx=10, pady=6, sticky="w")
-        ctk.CTkLabel(col_hdr, text="THAO TÁC / DUYỆT BROWSER", font=("Segoe UI", 10, "bold"), text_color=TEXT_MUTED, width=275, anchor="e").grid(row=0, column=2, padx=(10, 14), pady=6, sticky="e")
+        ctk.CTkLabel(self._col_hdr, text="HỒ SƠ TÀI KHOẢN (TIKTOK)", font=("Segoe UI", 10, "bold"), text_color=TEXT_MUTED, width=210, anchor="w").grid(row=0, column=0, padx=(14, 10), pady=6, sticky="w")
+        ctk.CTkLabel(self._col_hdr, text="CẤU HÌNH PROXY (IP:PORT:USER:PASS)", font=("Segoe UI", 10, "bold"), text_color=TEXT_MUTED, anchor="w").grid(row=0, column=1, padx=10, pady=6, sticky="w")
+        ctk.CTkLabel(self._col_hdr, text="THAO TÁC / DUYỆT BROWSER", font=("Segoe UI", 10, "bold"), text_color=TEXT_MUTED, width=275, anchor="e").grid(row=0, column=2, padx=(10, 14), pady=6, sticky="e")
 
         self._list_frame = ctk.CTkScrollableFrame(self.tab_tiktok, fg_color=BG_DARK, corner_radius=10, border_width=1, border_color=BORDER)
         self._list_frame.pack(fill="both", expand=True, padx=2, pady=2)
@@ -3714,7 +3960,10 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
                 self._btn_help_tt.configure(fg_color="transparent", border_width=1, border_color=BORDER)
         else:
             if hasattr(self, "_help_frame"):
-                self._help_frame.pack(fill="x", pady=(0, 10))
+                if hasattr(self, "_col_hdr"):
+                    self._help_frame.pack(fill="x", pady=(0, 8), padx=2, before=self._col_hdr)
+                else:
+                    self._help_frame.pack(fill="x", pady=(0, 8), padx=2)
                 if hasattr(self, "_btn_help_tt"):
                     self._btn_help_tt.configure(fg_color="#1E3A8A", border_width=1, border_color="#38BDF8")
 
@@ -4511,20 +4760,58 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         self.app = app
         self._checkboxes = {}
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(3, weight=1)
         self._build()
         self.after(200, self._load_accounts)
 
     def _build(self):
-        # Tiêu đề
+        # Header
+        hdr_frame = ctk.CTkFrame(self, fg_color="transparent")
+        hdr_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        hdr_frame.grid_columnconfigure(0, weight=1)
+        
+        t_box = ctk.CTkFrame(hdr_frame, fg_color="transparent")
+        t_box.pack(side="left")
         ctk.CTkLabel(
-            self, text="🌱  Nuôi Nick (Farm)",
+            t_box, text="🌱  Nuôi Nick Tự Động (Farm Account)",
             font=("Segoe UI", 22, "bold"), text_color=TEXT_MAIN,
-        ).grid(row=0, column=0, sticky="w", pady=(0, 20))
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            t_box, text="Giả lập hành vi người dùng thật: Lướt dạo, xem video, thả tim để tăng uy tín tài khoản, chống bóp tương tác",
+            font=("Segoe UI", 11), text_color=TEXT_MUTED,
+        ).pack(anchor="w", pady=(1, 0))
+        
+        self._btn_help_farm = ctk.CTkButton(
+            hdr_frame, text="❓ Hướng dẫn", width=105, height=32, font=("Segoe UI", 11, "bold"),
+            fg_color="transparent", border_width=1, border_color=BORDER, hover_color=BG_CARD,
+            command=self._toggle_farm_help
+        )
+        self._btn_help_farm.pack(side="right")
+        
+        # Guide frame (mặc định ẩn hoàn toàn, không chiếm diện tích)
+        self._help_frame = ctk.CTkFrame(self, fg_color="#0E1726", corner_radius=10, border_width=1, border_color="#1E3A8A")
+        h_title = ctk.CTkFrame(self._help_frame, fg_color="transparent")
+        h_title.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(h_title, text="📖 HƯỚNG DẪN NUÔI NICK TĂNG TƯƠNG TÁC (CHỐNG FLOP & KHÓA NICK)", font=("Segoe UI", 12, "bold"), text_color="#38BDF8").pack(side="left")
+        
+        help_content = (
+            "• 1. Tại sao cần Nuôi nick (Farm) trước khi đăng bài?\n"
+            "  - Nick mới hoặc lâu ngày không hoạt động nếu vừa mở lên đã đăng video ngay sẽ bị thuật toán TikTok đánh dấu spam/bot -> Rất dễ bị 0 view hoặc checkpoint.\n"
+            "  - Nuôi nick giúp nick có 'lịch sử người dùng thật': Có lượt xem, thời gian dừng trên video (watch time), thả tim, lướt đọc comment tự nhiên.\n"
+            "• 2. Chọn Kịch bản nuôi:\n"
+            "  - Chọn kịch bản có sẵn ở menu (hoặc bấm '⚙ Quản lý Kịch bản' để tùy chỉnh thời gian lướt, tỉ lệ thả tim ngẫu nhiên 20-30%).\n"
+            "• 3. Cấu hình số luồng & Hiện trình duyệt:\n"
+            "  - Số luồng: Khuyên dùng 2-3 luồng cho máy cá nhân để máy chạy mượt, 5-10 luồng nếu chạy máy trâu hoặc VPS.\n"
+            "  - 'Hiện trình duyệt': BẬT để mở cửa sổ Chrome theo dõi thao tác thực tế; TẮT để chạy ngầm tiết kiệm tối đa RAM & CPU.\n"
+            "• 4. Bắt đầu nuôi:\n"
+            "  - Tích chọn các nick TikTok ở cột bên trái -> Bấm nút '▶ Bắt đầu Nuôi'. Xem nhật ký hoạt động trực tiếp ở khung Log bên phải."
+        )
+        ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=960).pack(anchor="w", padx=14, pady=(0, 10))
+        # Không grid lúc khởi tạo
 
         # Cấu hình
         cfg = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
-        cfg.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        cfg.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         cfg.grid_columnconfigure(0, weight=1)
         
         row1 = ctk.CTkFrame(cfg, fg_color="transparent")
@@ -4587,7 +4874,7 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
 
         # Layout cột: Trái (Danh sách Acc), Phải (Log)
         split = ctk.CTkFrame(self, fg_color="transparent")
-        split.grid(row=2, column=0, sticky="nsew")
+        split.grid(row=3, column=0, sticky="nsew")
         split.grid_columnconfigure(0, weight=1)
         split.grid_columnconfigure(1, weight=2)
         split.grid_rowconfigure(0, weight=1)
@@ -4617,6 +4904,16 @@ class FarmTab(ctk.CTkFrame, TaskMixin):
         self._log_toolbar.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
         self._log_widget.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
+    def _toggle_farm_help(self):
+        if hasattr(self, "_help_frame") and self._help_frame.winfo_ismapped():
+            self._help_frame.grid_remove()
+            if hasattr(self, "_btn_help_farm"):
+                self._btn_help_farm.configure(fg_color="transparent", border_width=1, border_color=BORDER)
+        else:
+            if hasattr(self, "_help_frame"):
+                self._help_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+                if hasattr(self, "_btn_help_farm"):
+                    self._btn_help_farm.configure(fg_color="#1E3A8A", border_width=1, border_color="#38BDF8")
 
     def _toggle_all(self):
         if not hasattr(self, "_select_all_state"):
@@ -4868,10 +5165,47 @@ class SettingsTab(ctk.CTkFrame):
             self._build_user()
 
     def _build_user(self):
+        # Header
+        hdr_frame = ctk.CTkFrame(self, fg_color="transparent")
+        hdr_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        hdr_frame.grid_columnconfigure(0, weight=1)
+        
+        t_box = ctk.CTkFrame(hdr_frame, fg_color="transparent")
+        t_box.pack(side="left")
         ctk.CTkLabel(
-            self, text="💎  Bản Quyền & Gia Hạn",
-            font=("Segoe UI", 24, "bold"), text_color=TEXT_MAIN,
-        ).grid(row=0, column=0, sticky="w", pady=(0, 20))
+            t_box, text="⚙️  Cài Đặt & Bản Quyền Hệ Thống",
+            font=("Segoe UI", 22, "bold"), text_color=TEXT_MAIN,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            t_box, text="Quản lý thời hạn bản quyền, kết nối AI dịch thuật (Ollama/Gemini/Groq) & Sao lưu đám mây",
+            font=("Segoe UI", 11), text_color=TEXT_MUTED,
+        ).pack(anchor="w", pady=(1, 0))
+        
+        self._btn_help_settings = ctk.CTkButton(
+            hdr_frame, text="❓ Hướng dẫn", width=105, height=32, font=("Segoe UI", 11, "bold"),
+            fg_color="transparent", border_width=1, border_color=BORDER, hover_color=BG_CARD,
+            command=self._toggle_settings_help
+        )
+        self._btn_help_settings.pack(side="right")
+        
+        # Guide frame (mặc định ẩn hoàn toàn, không chiếm diện tích)
+        self._help_frame = ctk.CTkFrame(self, fg_color="#0E1726", corner_radius=10, border_width=1, border_color="#1E3A8A")
+        h_title = ctk.CTkFrame(self._help_frame, fg_color="transparent")
+        h_title.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(h_title, text="📖 HƯỚNG DẪN CẤU HÌNH HỆ THỐNG & KẾT NỐI AI (DÀNH CHO NGƯỜI MỚI)", font=("Segoe UI", 12, "bold"), text_color="#38BDF8").pack(side="left")
+        
+        help_content = (
+            "• 1. Quản lý Bản quyền & Gia hạn:\n"
+            "  - Hiển thị ngày hết hạn và trạng thái gói cước. Bấm 'Gia Hạn (Thanh Toán QR)' để quét mã VietQR tự động cộng ngày 24/7.\n"
+            "• 2. Cấu hình AI Dịch thuật (Nên chọn loại nào?):\n"
+            "  - ⚡ Cloud API (Khuyên dùng cho người mới): Chọn 'Chỉ dùng Cloud API' -> Dán Gemini API Key (lấy miễn phí tại aistudio.google.com) hoặc Groq Key (gsk_...). AI xử lý trên đám mây, cực nhanh, không tốn RAM máy tính.\n"
+            "  - 💻 Ollama Local (Chạy Offline không cần mạng): Dành cho máy có card đồ họa rời (VGA Nvidia RTX). Tải phần mềm Ollama (ollama.com) -> Cài model qwen2.5 -> Miễn phí vĩnh viễn không giới hạn.\n"
+            "  - 🔄 Tự động dự phòng: Chọn 'Cloud API trước ➔ Dự phòng Ollama' để hệ thống luôn dịch trơn tru kể cả khi mất mạng.\n"
+            "• 3. Google Drive Backup:\n"
+            "  - Bật tính năng này để video sau khi render tự động tải lên Google Drive cá nhân, chống đầy bộ nhớ máy tính."
+        )
+        ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=960).pack(anchor="w", padx=14, pady=(0, 10))
+        # Không grid lúc khởi tạo
         
         from auth_client import auth_client
         expire_date = auth_client.user_info.get("expire_date", "Chưa có") if auth_client.user_info else "Chưa có"
@@ -4881,7 +5215,7 @@ class SettingsTab(ctk.CTkFrame):
         status_text = "Đã hết hạn" if is_expired else "Đang hoạt động"
         
         plan_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=status_color)
-        plan_frame.grid(row=1, column=0, sticky="ew")
+        plan_frame.grid(row=2, column=0, sticky="ew")
         
         ctk.CTkLabel(plan_frame, text="Trạng thái:", font=("Segoe UI", 16)).grid(row=0, column=0, padx=20, pady=(20, 10), sticky="w")
         ctk.CTkLabel(plan_frame, text=status_text, font=("Segoe UI", 18, "bold"), text_color=status_color).grid(row=0, column=1, pady=(20, 10), sticky="w")
@@ -4900,10 +5234,10 @@ class SettingsTab(ctk.CTkFrame):
         ctk.CTkLabel(
             self, text="🧠  Cấu Hình AI Dịch Thuật (Ollama Local / API Key)",
             font=("Segoe UI", 18, "bold"), text_color=TEXT_MAIN,
-        ).grid(row=2, column=0, sticky="w", pady=(30, 10))
+        ).grid(row=3, column=0, sticky="w", pady=(24, 8))
         
         ai_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
-        ai_frame.grid(row=3, column=0, sticky="ew")
+        ai_frame.grid(row=4, column=0, sticky="ew")
         ai_frame.grid_columnconfigure(1, weight=1)
 
         import os
@@ -5035,10 +5369,10 @@ class SettingsTab(ctk.CTkFrame):
         ctk.CTkLabel(
             self, text="☁️  Google Drive Backup",
             font=("Segoe UI", 18, "bold"), text_color=TEXT_MAIN,
-        ).grid(row=4, column=0, sticky="w", pady=(30, 10))
+        ).grid(row=5, column=0, sticky="w", pady=(24, 8))
 
         drive_frame = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
-        drive_frame.grid(row=5, column=0, sticky="ew")
+        drive_frame.grid(row=6, column=0, sticky="ew")
         drive_frame.grid_columnconfigure(1, weight=1)
 
         from config.settings import GOOGLE_DRIVE_CONFIG
@@ -5243,6 +5577,17 @@ class SettingsTab(ctk.CTkFrame):
             f"Đã lưu cấu hình AI ({provider_choice}). Bạn có thể sử dụng tính năng Auto-Vietsub & Thuyết minh!"
         )
         self.app._update_user_ui()
+
+    def _toggle_settings_help(self):
+        if hasattr(self, "_help_frame") and self._help_frame.winfo_ismapped():
+            self._help_frame.grid_remove()
+            if hasattr(self, "_btn_help_settings"):
+                self._btn_help_settings.configure(fg_color="transparent", border_width=1, border_color=BORDER)
+        else:
+            if hasattr(self, "_help_frame"):
+                self._help_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+                if hasattr(self, "_btn_help_settings"):
+                    self._btn_help_settings.configure(fg_color="#1E3A8A", border_width=1, border_color="#38BDF8")
 
     def _show_payment_dialog(self):
         from auth_client import auth_client
