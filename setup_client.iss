@@ -1,4 +1,4 @@
-ff[Setup]
+[Setup]
 AppName=DouyinBot SaaS
 AppVersion=1.0
 DefaultDirName={pf}\DouyinBot

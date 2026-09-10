@@ -5597,58 +5597,156 @@ class SettingsTab(ctk.CTkFrame):
             return
             
         win = ctk.CTkToplevel(self)
-        win.title("Gia Hạn Bản Quyền")
-        win.geometry("500x650")
-        win.resizable(False, False)
+        win.title("💎 Nâng Cấp VIP - Thanh Toán Tự Động VietQR")
+        
+        # Căn giữa cửa sổ popup trên màn hình
+        win_w, win_h = 560, 780
+        screen_w = win.winfo_screenwidth()
+        screen_h = win.winfo_screenheight()
+        pos_x = max(0, (screen_w - win_w) // 2)
+        pos_y = max(0, (screen_h - win_h) // 2 - 25)
+        win.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
+        win.minsize(520, 680)
         win.transient(self.winfo_toplevel())
         win.grab_set()
+        win.configure(fg_color=BG_DARK)
         
-        ctk.CTkLabel(win, text="Thanh Toán Qua VietQR", font=("Segoe UI", 20, "bold")).pack(pady=(20, 10))
+        scroll = ctk.CTkScrollableFrame(win, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=16, pady=16)
         
+        # ─── 1. Header VIP ──────────────────────────────────────────────────────────
+        header_f = ctk.CTkFrame(scroll, fg_color="transparent")
+        header_f.pack(fill="x", pady=(0, 14))
+        
+        badge_f = ctk.CTkFrame(header_f, fg_color=ACCENT_BG, border_width=1, border_color=ACCENT, corner_radius=12)
+        badge_f.pack(anchor="center", pady=(0, 6))
+        ctk.CTkLabel(badge_f, text="👑  BẢN QUYỀN CAO CẤP VIP  👑", font=("Segoe UI", 11, "bold"), text_color=ACCENT_LIGHT).pack(padx=14, pady=3)
+        
+        ctk.CTkLabel(header_f, text="Nâng Cấp & Gia Hạn Bản Quyền", font=("Segoe UI", 20, "bold"), text_color=TEXT_MAIN).pack(anchor="center")
+        ctk.CTkLabel(header_f, text="Quét mã VietQR bằng app ngân hàng để kích hoạt tự động tức thì (3 - 5s)", font=("Segoe UI", 12), text_color=TEXT_DIM).pack(anchor="center", pady=(2, 0))
+
         username = auth_client.user_info.get("username", "Unknown") if auth_client.user_info else "Unknown"
         prefix = payment_info.get("payment_prefix", "DOUYIN")
-        syntax = f"{prefix} {username.upper()}"
         
-        ctk.CTkLabel(win, text="Chọn gói gia hạn:", font=("Segoe UI", 14)).pack(pady=(5, 5))
+        # ─── 2. Package Selector Card ────────────────────────────────────────────────
+        pkg_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        pkg_card.pack(fill="x", pady=(0, 12), padx=4)
         
-        # Sẽ được khởi tạo sau khi định nghĩa _update_qr
-        opt_plan_frame = ctk.CTkFrame(win, fg_color="transparent")
-        opt_plan_frame.pack(pady=5)
+        ctk.CTkLabel(pkg_card, text="📦  CHỌN GÓI DỊCH VỤ:", font=("Segoe UI", 12, "bold"), text_color=CYAN).pack(anchor="w", padx=16, pady=(12, 6))
         
-        # Tạo mapping giá kèm theo Mã Gói
         packages = payment_info.get("packages", [])
-        if not packages:
-            packages = [
-                {"code": "1M", "name": "1 Tháng (30 ngày)", "price": int(payment_info.get("price_1_month", "600000"))},
-                {"code": "3M", "name": "3 Tháng (90 ngày)", "price": int(payment_info.get("price_3_months", "1500000"))},
-                {"code": "6M", "name": "6 Tháng (180 ngày)", "price": int(payment_info.get("price_6_months", "2500000"))},
-                {"code": "1Y", "name": "1 Năm (365 ngày)", "price": int(payment_info.get("price_1_year", "4500000"))},
-                {"code": "LT", "name": "Vĩnh viễn (10 Năm)", "price": int(payment_info.get("price_lifetime", "10000000"))}
+        # Lọc bỏ các gói dùng thử / miễn phí (FREE, TRIAL hoặc giá <= 0đ) vì đây là popup quét QR thanh toán có phí
+        paid_packages = [
+            p for p in packages 
+            if str(p.get("code", "")).strip().upper() not in ("FREE", "TRIAL") and int(p.get("price", 0)) > 0
+        ]
+        if not paid_packages:
+            paid_packages = [p for p in packages if int(p.get("price", 0)) > 0]
+            
+        if not paid_packages:
+            paid_packages = [
+                {"code": "1M", "name": "1 Tháng (30 ngày)", "price": int(payment_info.get("price_1_month", "69000"))},
+                {"code": "3M", "name": "3 Tháng (90 ngày)", "price": int(payment_info.get("price_3_months", "200000"))},
+                {"code": "6M", "name": "6 Tháng (180 ngày)", "price": int(payment_info.get("price_6_months", "450000"))},
+                {"code": "1Y", "name": "1 Năm (365 ngày)", "price": int(payment_info.get("price_1_year", "1000000"))},
+                {"code": "LT", "name": "Vĩnh viễn (10 Năm)", "price": int(payment_info.get("price_lifetime", "4000000"))}
             ]
             
         price_map = {}
-        for p in packages:
-            price_map[f"{p['name']} - {int(p['price']):,}đ"] = (int(p["price"]), p["code"])
+        for p in paid_packages:
+            price_map[f"{p['name']}  —  {int(p['price']):,} đ"] = (int(p["price"]), p["code"])
             
         options = list(price_map.keys())
         
-        lbl_syntax = ctk.CTkLabel(win, text=f"Nội dung CK: {syntax}", font=("Consolas", 16, "bold"), text_color=SUCCESS)
-        lbl_syntax.pack(pady=10)
+        # ─── 3. VietQR Card ──────────────────────────────────────────────────────────
+        qr_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        qr_card.pack(fill="x", pady=(0, 12), padx=4)
         
-        # Label chứa ảnh QR
-        lbl_qr = ctk.CTkLabel(win, text="Đang tải QR Code...")
-        lbl_qr.pack(pady=10)
+        ctk.CTkLabel(qr_card, text="⚡  QUÉT MÃ VIETQR QUA APP NGÂN HÀNG:", font=("Segoe UI", 12, "bold"), text_color=WARNING).pack(anchor="center", pady=(12, 8))
         
+        # Khung nền trắng cho ảnh QR code để app quét cực nhanh và chuẩn nét
+        qr_white_box = ctk.CTkFrame(qr_card, fg_color="#FFFFFF", corner_radius=12, border_width=1, border_color="#E2E8F0")
+        qr_white_box.pack(anchor="center", padx=20, pady=(0, 8))
+        
+        lbl_qr = ctk.CTkLabel(qr_white_box, text="⚡ Đang tạo mã VietQR...", font=("Segoe UI", 13), text_color="#334155")
+        lbl_qr.pack(padx=14, pady=14)
+        
+        bank_name = payment_info.get("bank_name", "NGUYEN MINH HOAN")
+        bank_account = payment_info.get("bank_account", "")
+        bank_bin = payment_info.get("bank_bin", "")
+        
+        lbl_owner = ctk.CTkLabel(qr_card, text=f"Chủ tài khoản: {bank_name.upper()}", font=("Segoe UI", 13, "bold"), text_color=TEXT_MAIN)
+        lbl_owner.pack(anchor="center", pady=(0, 10))
+
+        # ─── 4. Manual Banking Info Card with 1-Click Copy ─────────────────────────
+        info_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        info_card.pack(fill="x", pady=(0, 12), padx=4)
+        
+        ctk.CTkLabel(info_card, text="📝  THÔNG TIN CHUYỂN KHOẢN THỦ CÔNG:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).pack(anchor="w", padx=16, pady=(12, 6))
+        
+        def _copy_val(val_str, btn):
+            try:
+                win.clipboard_clear()
+                win.clipboard_append(str(val_str))
+                win.update()
+                orig = btn.cget("text")
+                btn.configure(text="✓ Đã chép", fg_color=SUCCESS)
+                win.after(1400, lambda: btn.configure(text=orig, fg_color=ACCENT))
+            except Exception:
+                pass
+                
+        def make_row(parent, label_text, val_text, is_highlight=False):
+            rf = ctk.CTkFrame(parent, fg_color="#182032" if is_highlight else "transparent", corner_radius=8)
+            rf.pack(fill="x", padx=14, pady=3)
+            
+            ctk.CTkLabel(rf, text=label_text, width=105, anchor="w", font=("Segoe UI", 12), text_color=TEXT_MUTED).pack(side="left", padx=8, pady=6)
+            
+            val_color = SUCCESS if is_highlight else TEXT_MAIN
+            val_lbl = ctk.CTkLabel(rf, text=val_text, anchor="w", font=("Segoe UI", 13, "bold" if is_highlight else "normal"), text_color=val_color)
+            val_lbl.pack(side="left", fill="x", expand=True, padx=4)
+            
+            btn_cp = ctk.CTkButton(rf, text="📋 Chép", width=64, height=28, font=("Segoe UI", 11, "bold"),
+                                   fg_color=ACCENT, hover_color=ACCENT_HOVER, corner_radius=6)
+            btn_cp.configure(command=lambda: _copy_val(val_lbl.cget("text"), btn_cp))
+            btn_cp.pack(side="right", padx=6, pady=4)
+            return val_lbl, btn_cp
+            
+        make_row(info_card, "Ngân hàng:", "MB Bank (Napas 247)")
+        lbl_acc, _ = make_row(info_card, "Số tài khoản:", str(bank_account))
+        lbl_amount, _ = make_row(info_card, "Số tiền:", "0 đ")
+        lbl_syntax_val, btn_cp_syntax = make_row(info_card, "Nội dung CK:", f"{prefix} {username.upper()}", is_highlight=True)
+
+        # ─── 5. Status & Notice ─────────────────────────────────────────────────────
+        status_card = ctk.CTkFrame(scroll, fg_color="#0D2818", corner_radius=10, border_width=1, border_color="#10B981")
+        status_card.pack(fill="x", pady=(0, 10), padx=4)
+        
+        stat_f = ctk.CTkFrame(status_card, fg_color="transparent")
+        stat_f.pack(fill="x", padx=14, pady=10)
+        
+        ctk.CTkLabel(stat_f, text="●", font=("Segoe UI", 14, "bold"), text_color=SUCCESS).pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(stat_f, text="Đang lắng nghe giao dịch... Hệ thống sẽ tự động kích hoạt ngay sau khi nhận tiền.",
+                     font=("Segoe UI", 11, "bold"), text_color=SUCCESS, anchor="w").pack(side="left")
+                     
+        ctk.CTkLabel(
+            scroll, text="⚠️ Lưu ý quan trọng: Vui lòng ghi ĐÚNG NỘI DUNG CHUYỂN KHOẢN để được tự động cộng hạn dùng trong 3-5 giây.",
+            font=("Segoe UI", 11, "bold"), text_color=DANGER, wraplength=500, justify="center"
+        ).pack(pady=(0, 6))
+        
+        supp_text = payment_info.get("system_announcement") or "Mọi thắc mắc vui lòng liên hệ Admin qua Zalo/Tele: 0866655803 (@hoannm)"
+        ctk.CTkLabel(scroll, text=f"💬 {supp_text}", font=("Segoe UI", 11, "italic"), text_color=TEXT_MUTED, wraplength=500, justify="center").pack(pady=(0, 12))
+
+        # ─── 6. Logic Update QR & Plan ──────────────────────────────────────────────
         def _update_qr(selected_plan):
             amount, package_code = price_map[selected_plan]
-            bank_bin = payment_info.get("bank_bin", "")
-            bank_account = payment_info.get("bank_account", "")
+            lbl_amount.configure(text=f"{amount:,} đ")
             
             # Cập nhật lại nội dung chuyển khoản chứa Mã gói
             new_syntax = f"{prefix} {username.upper()} {package_code}"
-            lbl_syntax.configure(text=f"Nội dung CK: {new_syntax}")
+            lbl_syntax_val.configure(text=new_syntax)
             
             qr_url = f"https://img.vietqr.io/image/{bank_bin}-{bank_account}-compact2.png?amount={amount}&addInfo={new_syntax.replace(' ', '%20')}"
+            
+            lbl_qr.configure(image=None, text="⚡ Đang tạo mã VietQR...")
             
             def fetch_qr():
                 import urllib.request
@@ -5656,28 +5754,35 @@ class SettingsTab(ctk.CTkFrame):
                 from PIL import Image
                 try:
                     req = urllib.request.Request(qr_url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(req) as u:
+                    with urllib.request.urlopen(req, timeout=8) as u:
                         raw_data = u.read()
                     img = Image.open(io.BytesIO(raw_data))
-                    ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(250, 300))
-                    self.after(0, lambda: lbl_qr.configure(image=ctk_img, text=""))
+                    ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(240, 290))
+                    if win.winfo_exists():
+                        def _set_img():
+                            lbl_qr.configure(image=ctk_img, text="")
+                            lbl_qr._ctk_img = ctk_img
+                        win.after(0, _set_img)
                 except Exception as e:
-                    self.after(0, lambda: lbl_qr.configure(text=f"Lỗi tải QR: {e}", image=""))
+                    if win.winfo_exists():
+                        win.after(0, lambda: lbl_qr.configure(text=f"Lỗi tải QR: {e}", image=None))
             
             import threading
             threading.Thread(target=fetch_qr, daemon=True).start()
 
-        opt_plan = ctk.CTkOptionMenu(opt_plan_frame, values=options, command=_update_qr, width=300)
+        opt_plan = ctk.CTkOptionMenu(
+            pkg_card, values=options, command=_update_qr, 
+            height=38, font=("Segoe UI", 13, "bold"),
+            fg_color=ACCENT, button_color=ACCENT_HOVER, button_hover_color="#6D28D9",
+            dropdown_font=("Segoe UI", 12)
+        )
         opt_plan.set(options[0])
-        opt_plan.pack()
+        opt_plan.pack(fill="x", padx=16, pady=(0, 14))
         
         # Load default QR
         _update_qr(options[0])
-        
-        ctk.CTkLabel(win, text=f"Chủ thẻ: {payment_info.get('bank_name', 'UNKNOWN')}", font=("Segoe UI", 12, "bold")).pack(pady=5)
-        ctk.CTkLabel(win, text="⚠️ Vui lòng chuyển khoản ĐÚNG NỘI DUNG để được cộng ngày tự động.", font=("Segoe UI", 12), text_color=DANGER).pack(pady=5)
-        ctk.CTkLabel(win, text="Hệ thống đang tự động kiểm tra trạng thái thanh toán...", font=("Segoe UI", 11, "italic")).pack(pady=(0, 10))
-        
+
+        # ─── 7. Auto Payment Verification Loop ─────────────────────────────────────
         original_expire = auth_client.user_info.get("expire_date") if auth_client.user_info else None
         check_job = None
         
@@ -5691,16 +5796,15 @@ class SettingsTab(ctk.CTkFrame):
                     new_expire = data.get("expire_date")
                     if new_expire and new_expire != original_expire:
                         auth_client.mark_user_paid(username=username)
-                        messagebox.showinfo("Thành công", f"Thanh toán thành công!\nTài khoản đã được gia hạn đến: {new_expire}\n\nChúc mừng bạn! Tài khoản đã được kích hoạt gói bản quyền không giới hạn render video.")
+                        messagebox.showinfo("🎉 Nâng Cấp Thành Công", f"Chúc mừng bạn!\nTài khoản đã được kích hoạt VIP thành công.\nHạn dùng đến: {new_expire}\n\nToàn bộ tính năng không giới hạn render video đã sẵn sàng!")
                         win.destroy()
                         self.app._update_user_ui()
                         return
-
             except Exception:
                 pass
-            check_job = win.after(5000, _check_payment)
+            check_job = win.after(4000, _check_payment)
             
-        check_job = win.after(5000, _check_payment)
+        check_job = win.after(4000, _check_payment)
         
         def _on_close():
             if check_job:
@@ -5709,7 +5813,11 @@ class SettingsTab(ctk.CTkFrame):
             
         win.protocol("WM_DELETE_WINDOW", _on_close)
         
-        ctk.CTkButton(win, text="Đóng", command=_on_close, fg_color=BORDER, hover_color=BG_CARD).pack(pady=(10, 20))
+        ctk.CTkButton(
+            scroll, text="✕  Đóng Cửa Sổ", command=_on_close, 
+            width=160, height=36, font=("Segoe UI", 12, "bold"),
+            fg_color=BG_CARD, hover_color="#222B42", border_width=1, border_color=BORDER
+        ).pack(pady=(2, 16))
 
     def _build_admin(self):
         ctk.CTkLabel(
@@ -6975,11 +7083,20 @@ class App(ctk.CTk):
             LoginWindow(self, self._on_login_success)
 
     def _handle_sidebar_upgrade(self):
-        # Chuyển sang tab Settings
-        self._nav(7)
-        # Gọi hộp thoại thanh toán
-        if hasattr(self, "_tab_frames") and len(self._tab_frames) > 7:
-            self._tab_frames[7]._show_payment_dialog()
+        # Tìm index của SettingsTab động để tránh lệch khi thêm bớt tab
+        settings_idx = None
+        for i, (_, _, TabClass) in enumerate(self.TABS):
+            if TabClass == SettingsTab:
+                settings_idx = i
+                break
+        if settings_idx is None:
+            settings_idx = len(self.TABS) - 1
+
+        self._nav(settings_idx)
+        if hasattr(self, "_tab_frames") and len(self._tab_frames) > settings_idx:
+            tab_obj = self._tab_frames[settings_idx]
+            if hasattr(tab_obj, "_show_payment_dialog"):
+                tab_obj._show_payment_dialog()
 
     # ── Sidebar ──────────────────────────────────────────────────────────────
     def _build_sidebar(self):
