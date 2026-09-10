@@ -810,15 +810,15 @@ class TikTokUploader:
             logger.info(f"  📝 Dùng Custom Caption từ Database: {caption[:80]}...")
             return caption[:2200]
 
-        from utils.translator import translate_description, translate_hashtags
+        from utils.translator import translate_description, generate_tiktok_metadata_with_ai
         import re
         import ast
 
         # 1. Lấy title tiếng Việt (ưu tiên đã dịch sẵn trong DB)
         title_vi = video_info.get("title_vi", "")
-        if not title_vi:
-            original = video_info.get("title", "")
-            title_vi = translate_description(original) if original else ""
+        original = video_info.get("title", "")
+        if not title_vi and original:
+            title_vi = translate_description(original)
 
         # Sửa lỗi nếu title_vi bị lưu dạng list "['Tiêu đề', 'zh-CN']"
         if isinstance(title_vi, str) and title_vi.strip().startswith("[") and title_vi.strip().endswith("]"):
@@ -829,34 +829,25 @@ class TikTokUploader:
             except Exception:
                 pass
 
-        # Clean title
-        title_vi = re.sub(r"#\S+", "", str(title_vi)).strip()
-        title_vi = re.sub(r"@\S+", "", str(title_vi)).strip()
-        if not title_vi or len(title_vi) < 3:
-            title_vi = random.choice([
-                "Nhảy đẹp quá 😍",
-                "Hot dance 🔥",
-                "Xinh quá trời 💃",
-                "Trend mới đây 🌟",
-                "Dance cực đỉnh ✨",
-            ])
+        # 2. Sử dụng AI (Ollama/Gemini/Groq) kèm bộ nhận diện thể loại thông minh
+        meta = generate_tiktok_metadata_with_ai(
+            original_title=original,
+            translated_title=str(title_vi or ""),
+        )
+        caption = meta.get("caption", "").strip()
+        if not caption:
+            clean_t = re.sub(r"#\S+", "", str(title_vi or original or "Video mới")).strip()
+            caption = f"✨ {clean_t} #fyp #xuhuong #trending #viral"
 
-        # 2. Dịch hashtags gốc sang tiếng Việt
-        original_tags = video_info.get("tags", "")
-        vi_hashtags = translate_hashtags(original_tags) if original_tags else []
+        # Tự động lưu lại custom_caption vào DB để dùng ổn định các lần sau
+        vid = video_info.get("video_id")
+        if self.db and vid and caption:
+            try:
+                self.db.update_custom_caption(vid, caption)
+            except Exception:
+                pass
 
-        # 3. Build caption
-        caption = f"✨ {title_vi}"
-
-        # Thêm hashtags đã dịch (tối đa 5)
-        if vi_hashtags:
-            caption += " " + " ".join(vi_hashtags[:5])
-
-        # Thêm default hashtags
-        default_hashtags = self.config.get("default_hashtags", [])
-        caption += " " + " ".join(default_hashtags[:8])
-
-        logger.info(f"  📝 Caption: {caption[:80]}...")
+        logger.info(f"  📝 Caption ({meta.get('category', 'Auto')}): {caption[:80]}...")
         return caption[:2200]
 
     async def upload_pending_videos(

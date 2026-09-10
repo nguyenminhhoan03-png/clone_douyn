@@ -1112,3 +1112,200 @@ def summarize_review_with_gemini(full_transcript: str, api_keys: list = None, pr
         return ""
 
 
+def _match_keywords(text: str, keywords: list) -> bool:
+    """Khớp từ khóa thông minh có phân biệt ranh giới từ để tránh nhầm (vd: 'cá' trong 'cái')."""
+    import re
+    text_lower = text.lower()
+    for kw in keywords:
+        kw = kw.strip().lower()
+        if not kw:
+            continue
+        if any('\u4e00' <= ch <= '\u9fff' for ch in kw) or len(kw) >= 5:
+            if kw in text_lower:
+                return True
+        else:
+            pattern = rf"(?:\b|^|\s){re.escape(kw)}(?:\b|$|\s|[.,?!;:\'\"])"
+            if re.search(pattern, text_lower):
+                return True
+    return False
+
+
+def generate_tiktok_metadata_rule_based(title: str = "", original_title: str = "") -> dict:
+    """Fallback rule-based nhận diện thể loại và sinh hashtags chuẩn khi không có AI."""
+    import re
+    combined = f"{title or ''} {original_title or ''}"
+    
+    # 1. Ẩm thực / Nấu ăn
+    if _match_keywords(combined, ["nấu", "ăn", "món", "bếp", "bánh", "ngon", "thịt", "cá", "uống", "ẩm thực", "buffet", "mukbang", "quán ăn", "cơm", "lẩu", "đồ ăn", "nấu ăn", "làm bánh", "做饭", "美食"]):
+        category = "Ẩm thực"
+        hashtags = ["#nauan", "#amthuc", "#monngon", "#ancungtiktok", "#fyp", "#xuhuong"]
+    # 2. Thời trang / Phối đồ / Làm đẹp
+    elif _match_keywords(combined, ["mặc", "áo", "váy", "quần", "outfit", "phối", "style", "thử đồ", "xinh", "dáng", "make up", "son", "thời trang", "háng", "phối đồ", "biến hình", "穿搭", "衣服"]):
+        category = "Thời trang"
+        hashtags = ["#thoitrang", "#outfit", "#phoido", "#style", "#bienhinh", "#fyp", "#xuhuong"]
+    # 3. Hài hước / Giải trí / Troll
+    elif _match_keywords(combined, ["hài", "cười", "troll", "bựa", "vui", "chết cười", "bá đạo", "khó đỡ", "lầy", "meme", "funny", "té xỉu", "ngộ nghĩnh", "搞笑"]):
+        category = "Hài hước"
+        hashtags = ["#haihuoc", "#funny", "#giaitri", "#cucbua", "#trending", "#fyp", "#xuhuong"]
+    # 4. Tình cảm / Tâm trạng / Thả thính
+    elif _match_keywords(combined, ["yêu", "anh", "em", "crush", "thả thính", "tâm trạng", "buồn", "chia tay", "hẹn hò", "nhớ", "tình cảm", "người yêu", "tỏ tình", "恋爱"]):
+        category = "Tình cảm"
+        hashtags = ["#tinhyeu", "#tamtrang", "#thathinh", "#crush", "#fyp", "#xuhuong"]
+    # 5. Phim ảnh / Review / Đoạn trích
+    elif _match_keywords(combined, ["phim", "tập", "review", "cảnh", "diễn viên", "truyện", "điện ảnh", "kịch", "tập cuối", "phim hay", "电影", "短剧"]):
+        category = "Phim ảnh"
+        hashtags = ["#reviewphim", "#phimhay", "#movie", "#fyp", "#xuhuong"]
+    # 6. Khiêu vũ / Nhảy
+    elif _match_keywords(combined, ["nhảy", "dance", "vũ đạo", "bước nhảy", "cover dance", "nhảy đẹp", "vũ điệu", "跳舞"]):
+        category = "Vũ đạo"
+        hashtags = ["#dance", "#nhảy", "#vudao", "#trending", "#fyp", "#xuhuong"]
+    # 7. Mặc định trung tính
+    else:
+        category = "Xu hướng"
+        hashtags = ["#fyp", "#foryou", "#xuhuong", "#tiktokvietnam", "#trending", "#viral"]
+        
+    clean_title = re.sub(r"#\S+", "", str(title or original_title or "")).strip()
+    clean_title = re.sub(r"@\S+", "", clean_title).strip()
+    clean_title = re.sub(r"^[✨🔥🌟🎬💃😍\s]+", "", clean_title).strip()
+    if not clean_title or len(clean_title) < 3:
+        clean_title = "Xem ngay kẻo lỡ 🔥"
+        
+    caption = f"✨ {clean_title} " + " ".join(hashtags)
+    return {
+        "title": clean_title,
+        "category": category,
+        "hashtags": hashtags,
+        "caption": caption.strip()
+    }
+
+
+def generate_tiktok_metadata_with_ai(
+    original_title: str,
+    translated_title: str = "",
+    srt_context: str = "",
+    api_keys: list = None,
+    provider: str = None,
+    model: str = None,
+    ollama_url: str = None
+) -> dict:
+    """
+    Sử dụng AI (Ollama Local / Groq / Gemini / Vilao) để phân tích thể loại video
+    và sáng tạo Tiêu đề giật tít + Bộ Hashtag chuẩn xu hướng TikTok Việt Nam.
+    Có fallback tự động sang Rule-based nếu AI offline hoặc lỗi.
+    """
+    import os
+    import json
+    import re
+    from loguru import logger
+    from auth_client import auth_client
+    from config.settings import PROCESSOR_CONFIG
+
+    # Chuẩn bị title tiếng Việt nếu chưa có
+    if not translated_title and original_title:
+        translated_title = translate_description(original_title)
+        
+    # Sửa lỗi title dạng list chuỗi "['Tiêu đề', 'zh-CN']"
+    if isinstance(translated_title, str) and translated_title.strip().startswith("[") and translated_title.strip().endswith("]"):
+        try:
+            import ast
+            p_val = ast.literal_eval(translated_title.strip())
+            if isinstance(p_val, (list, tuple)) and len(p_val) > 0:
+                translated_title = str(p_val[0])
+        except Exception:
+            pass
+
+    # Lấy cấu hình AI nếu chưa truyền
+    if not api_keys:
+        api_keys = PROCESSOR_CONFIG.get("gemini_api_keys", [])
+    if not api_keys and PROCESSOR_CONFIG.get("gemini_api_key"):
+        api_keys = [PROCESSOR_CONFIG.get("gemini_api_key")]
+    if not api_keys:
+        raw_env_k = os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", "")).strip()
+        if raw_env_k:
+            api_keys = [k.strip() for k in raw_env_k.split(",") if k.strip()]
+
+    if not provider:
+        provider = PROCESSOR_CONFIG.get("ai_provider") or os.getenv("AI_PROVIDER")
+    if not ollama_url:
+        ollama_url = PROCESSOR_CONFIG.get("ollama_url") or os.getenv("OLLAMA_URL", "http://localhost:11434")
+    if not model:
+        model = PROCESSOR_CONFIG.get("custom_ai_model") or os.getenv("CUSTOM_AI_MODEL")
+
+    # Prompt chuyên sâu tối ưu Viral TikTok Việt Nam
+    prompt = (
+        "Bạn là một nhà sáng tạo nội dung TikTok triệu view và chuyên gia Viral Marketing tại Việt Nam.\n"
+        "Nhiệm vụ: Dựa vào thông tin video dưới đây, hãy nhận diện chính xác thể loại nội dung và sáng tạo Title + Hashtags TikTok cực kỳ cuốn hút, bắt trend Gen Z, kích thích lượt xem và tương tác mạnh mẽ.\n\n"
+        f"1. Tiêu đề gốc (Douyin): {original_title or 'Không có'}\n"
+        f"2. Bản dịch thô: {translated_title or 'Không có'}\n"
+        f"3. Lời thoại/Phụ đề video: {srt_context[:500] if srt_context else 'Không có'}\n\n"
+        "YÊU CẦU BẮT BUỘC:\n"
+        "- Thể loại (category): Phân loại chuẩn xác 1 thể loại (ví dụ: Nấu ăn / Ẩm thực, Thời trang / Phối đồ, Hài hước / Tình huống, Tình cảm / Tâm trạng, Review Phim, Đời sống / Vlog, Khiêu vũ, Mẹo vặt...).\n"
+        "- Tiêu đề (title): Dưới 85 ký tự, giật tít, tò mò, gần gũi phong cách TikTok Gen Z Việt Nam, có 1-2 emoji phù hợp. Tuyệt đối KHÔNG dịch thô ngô nghê word-by-word.\n"
+        "- Hashtags (hashtags): Đúng 5 đến 7 hashtags có dấu #. Trong đó có 3-4 hashtag ngách theo đúng thể loại video (VD nấu ăn: #nauan #amthuc #monngon #ancungtiktok; thời trang: #thoitrang #outfit #bienhinh; hài: #haihuoc #funny #giaitri) + 2-3 hashtag xu hướng (#fyp #xuhuong #trending).\n"
+        "- Caption (caption): Ghép tiêu đề và hashtags thành 1 dòng caption hoàn chỉnh sẵn sàng đăng.\n"
+        "- CHỈ TRẢ VỀ DUY NHẤT 1 ĐỐI TƯỢNG JSON HỢP LỆ (không markdown ```json, không giải thích):\n"
+        '{"title": "...", "category": "...", "hashtags": ["#tag1", "#tag2", ...], "caption": "..."}'
+    )
+
+    try:
+        is_ollama = (provider == "ollama") or (api_keys and api_keys[0] == "ollama") or (os.getenv("AI_PROVIDER") == "ollama")
+        custom_key = api_keys[0] if (api_keys and len(api_keys) > 0 and api_keys[0] != "ollama") else None
+        target_model = model or os.getenv("OLLAMA_MODEL", "qwen2.5")
+        ai_name = f"Ollama ({target_model})" if is_ollama else ("Groq" if custom_key and str(custom_key).startswith("gsk_") else "Gemini")
+
+        logger.info(f"✨ Đang dùng {ai_name} để sáng tạo TikTok Title & Hashtags...")
+        text = auth_client.generate_ai(
+            prompt,
+            api_key=custom_key if not is_ollama else None,
+            model=target_model if is_ollama else None,
+            provider="ollama" if is_ollama else None,
+            ollama_url=ollama_url
+        )
+
+        if text:
+            # Làm sạch json string nếu có bọc markdown
+            clean_txt = text.strip()
+            if clean_txt.startswith("```json"):
+                clean_txt = clean_txt[7:]
+            elif clean_txt.startswith("```"):
+                clean_txt = clean_txt[3:]
+            if clean_txt.endswith("```"):
+                clean_txt = clean_txt[:-3]
+            clean_txt = clean_txt.strip()
+
+            # Trích xuất JSON bằng regex nếu có text thừa
+            match = re.search(r"\{.*\}", clean_txt, re.DOTALL)
+            if match:
+                clean_txt = match.group(0)
+
+            data = json.loads(clean_txt)
+            if "title" in data and "hashtags" in data:
+                # Đảm bảo hashtags có dấu #
+                norm_tags = []
+                for t in data.get("hashtags", []):
+                    t = str(t).strip().replace(" ", "")
+                    if t:
+                        if not t.startswith("#"):
+                            t = f"#{t}"
+                        norm_tags.append(t)
+                data["hashtags"] = norm_tags
+
+                # Chuẩn hóa caption
+                if not data.get("caption"):
+                    data["caption"] = f"{data['title']} " + " ".join(norm_tags)
+                
+                # Thêm icon ✨ phía trước title nếu chưa có
+                if not data["title"].startswith("✨"):
+                    data["caption"] = f"✨ {data['caption'].lstrip('✨ ')}"
+                    
+                logger.info(f"✅ AI đã tạo TikTok Caption thành công ({data.get('category')}): {data['caption'][:80]}...")
+                return data
+
+    except Exception as e:
+        logger.warning(f"Lỗi AI tạo TikTok Caption: {e}. Chuyển sang bộ nhận diện Rule-based.")
+
+    # Fallback sang nhận diện từ khóa thể loại
+    return generate_tiktok_metadata_rule_based(title=translated_title, original_title=original_title)
+
+
+

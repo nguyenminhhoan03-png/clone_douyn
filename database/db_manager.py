@@ -462,6 +462,24 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def get_total_processed_count(self, username: str = None) -> int:
+        """Đếm tổng số video đã processed từ trước đến nay của user."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            query = "SELECT COUNT(*) FROM crawled_videos WHERE (status = 'processed' OR processed_at IS NOT NULL)"
+            params = []
+            if username:
+                clean_user = username.replace("@", "_").replace(".", "_")
+                query += " AND (username = ? OR username = ?)"
+                params.extend([username, clean_user])
+                
+            cursor.execute(query, tuple(params))
+            return cursor.fetchone()[0]
+        finally:
+            conn.close()
+
+
     # ============================================================
     # STATISTICS
     # ============================================================

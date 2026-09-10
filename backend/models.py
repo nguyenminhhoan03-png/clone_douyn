@@ -30,6 +30,7 @@ class User(Base):
     
     plan_id = Column(Integer, ForeignKey("plans.id"), nullable=True)
     plan_expires_at = Column(DateTime, nullable=True)
+    hwid = Column(String, nullable=True, index=True)
     
     plan = relationship("Plan", back_populates="users")
     

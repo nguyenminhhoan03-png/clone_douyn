@@ -28,6 +28,7 @@ python -m PyInstaller --noconfirm --onedir --windowed ^
     --collect-all "ctranslate2" ^
     --hidden-import "av" ^
     --collect-all "onnxruntime" ^
+    --collect-all "rapidocr_onnxruntime" ^
     --hidden-import "tokenizers" ^
     --hidden-import "pysrt" ^
     --hidden-import "pydub" ^

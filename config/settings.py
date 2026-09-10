@@ -75,16 +75,15 @@ TIKTOK_CONFIG = {
     # Default hashtags cho thị trường VN
     "default_hashtags": [
         "#fyp", "#foryou", "#xuhuong", "#tiktokvietnam",
-        "#trending", "#viral", "#dance", "#nhảy",
-        "#gainhay", "#hotgirl", "#tiktokgainhat",
+        "#trending", "#viral", "#videohay", "#xuhuongtiktok",
     ],
     # Caption templates
     "caption_templates": [
-        "😍 {title} #fyp #xuhuong",
+        "✨ {title} #fyp #xuhuong",
         "🔥 {title} #viral #tiktokvietnam",
-        "💃 {title} #dance #trending",
-        "✨ {title} #foryou #gainhay",
-        "🎵 {title} #nhảy #hotgirl",
+        "🌟 {title} #trending #xuhuong",
+        "💫 {title} #foryou #viral",
+        "🎬 {title} #videohay #xuhuongtiktok",
     ],
     # Browser settings cho Playwright
     "browser": {

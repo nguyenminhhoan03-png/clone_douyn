@@ -105,7 +105,7 @@ class VideoProcessor:
         _, h = self._get_video_dimensions(input_path)
         return h
 
-    def _compute_blur_coordinates(self, input_path: str, dialogue_timestamps: list = None):
+    def _compute_blur_coordinates(self, input_path: str, dialogue_timestamps: list = None, dialogue_samples: list = None):
         """Tính toán tọa độ và độ cao dải mờ phụ đề độc lập (Smart Subtitle Blur)."""
         blur_enabled = bool(self.config.get("blur_enabled", True))
         if not blur_enabled:
@@ -117,7 +117,11 @@ class VideoProcessor:
         if any(k in blur_pos_cfg for k in ("auto", "tự động")):
             try:
                 from utils.subtitle_detector import detect_subtitle_y_range
-                y_start, h = detect_subtitle_y_range(str(input_path), dialogue_timestamps=dialogue_timestamps)
+                y_start, h = detect_subtitle_y_range(
+                    str(input_path), 
+                    dialogue_timestamps=dialogue_timestamps,
+                    dialogue_samples=dialogue_samples
+                )
                 if custom_h is not None and isinstance(custom_h, (int, float)) and custom_h > 0:
                     center_y = y_start + (h / 2.0)
                     h = min(0.12, float(custom_h))
@@ -239,19 +243,28 @@ class VideoProcessor:
             if generated_srt:
                 clean_srt_path = str(srt_path).replace('.srt', '_clean.srt')
                 
-                # ─── 5.1.1. Tinh chỉnh vùng làm mờ thông minh theo MỐC CÂU THOẠI THẬT (Dialogue-Driven Blur) ───
+                # ─── 5.1.1. Tinh chỉnh vùng làm mờ thông minh theo OCR & MỐC CÂU THOẠI THẬT (Dialogue-Driven Blur) ───
                 if blur_enabled and any(k in str(self.config.get("blur_position", "auto")).lower() for k in ("auto", "tự động")):
                     try:
-                        from utils.subtitle_detector import extract_srt_sample_timestamps
-                        target_srt_for_time = clean_srt_path if os.path.exists(clean_srt_path) else str(srt_path)
+                        from utils.subtitle_detector import extract_srt_sample_timestamps, extract_dialogue_samples
+                        zh_srt_path = str(srt_path).replace('.srt', '_zh.srt')
+                        dialogue_samples = None
+                        if os.path.exists(zh_srt_path):
+                            dialogue_samples = extract_dialogue_samples(zh_srt_path, count=5)
+
+                        target_srt_for_time = zh_srt_path if os.path.exists(zh_srt_path) else (clean_srt_path if os.path.exists(clean_srt_path) else str(srt_path))
                         d_times = extract_srt_sample_timestamps(target_srt_for_time, count=5)
-                        if d_times:
-                            _, ref_y, ref_h = self._compute_blur_coordinates(str(input_path), dialogue_timestamps=d_times)
+                        if dialogue_samples or d_times:
+                            _, ref_y, ref_h = self._compute_blur_coordinates(
+                                str(input_path), 
+                                dialogue_timestamps=d_times,
+                                dialogue_samples=dialogue_samples
+                            )
                             blur_y_start, blur_h = ref_y, ref_h
                             self._current_blur_params = (blur_enabled, blur_y_start, blur_h)
-                            logger.info(f"  🎯 AI định vị phụ đề theo {len(d_times)} mốc câu thoại: Y={blur_y_start*100:.1f}%, H={blur_h*100:.1f}%")
+                            logger.info(f"  🎯 AI định vị phụ đề theo OCR/thoại: Y={blur_y_start*100:.1f}%, H={blur_h*100:.1f}%")
                     except Exception as b_err:
-                        logger.debug(f"Không thể tinh chỉnh blur theo dialogue timestamps: {b_err}")
+                        logger.debug(f"Không thể tinh chỉnh blur theo dialogue: {b_err}")
                 
                 # Sử dụng đường dẫn tương đối để tránh lỗi dấu hai chấm (:) của ổ đĩa trên Windows trong FFmpeg filter
                 rel_srt_path = os.path.relpath(clean_srt_path, os.getcwd())
@@ -524,10 +537,14 @@ class VideoProcessor:
             if srt_path and srt_path.exists():
                 try: srt_path.unlink()
                 except: pass
-                # Dọn cả file _clean.srt
+                # Dọn cả file _clean.srt và _zh.srt
                 clean_srt = Path(str(srt_path).replace('.srt', '_clean.srt'))
                 try:
                     if clean_srt.exists(): clean_srt.unlink()
+                except: pass
+                zh_srt = Path(str(srt_path).replace('.srt', '_zh.srt'))
+                try:
+                    if zh_srt.exists(): zh_srt.unlink()
                 except: pass
             if has_dubbing and mixed_audio_path:
                 try: Path(mixed_audio_path).unlink()
@@ -602,6 +619,20 @@ class VideoProcessor:
                             logger.error(f"Lỗi upload Drive khi process: {e}")
                             
                     self.db.update_translated_title(video_id, title)
+
+                    # Tự động tạo trước Caption và Hashtags chuẩn xu hướng bằng AI
+                    try:
+                        from utils.translator import generate_tiktok_metadata_with_ai
+                        ai_cap_data = generate_tiktok_metadata_with_ai(
+                            original_title=video.get("title", ""),
+                            translated_title=title
+                        )
+                        if ai_cap_data and ai_cap_data.get("caption"):
+                            self.db.update_custom_caption(video_id, ai_cap_data["caption"])
+                            logger.info(f"  ✨ Đã tạo sẵn AI Caption cho {video_id}: {ai_cap_data['caption'][:60]}...")
+                    except Exception as cap_err:
+                        logger.debug(f"Bỏ qua tạo AI Caption khi process: {cap_err}")
+
                     self.db.update_video_status(video_id=video_id, status="processed", processed_path=processed_path, drive_processed_id=drive_processed_id)
                     cb(100, "Hoàn thành!")
                     item = {"video_id": video_id, "processed_path": processed_path, "drive_processed_id": drive_processed_id}

@@ -29,6 +29,7 @@ class UserCreate(BaseModel):
     password: str
     role: str = "user"
     max_daily_videos: int = 5
+    hwid: str = None
 
 class Token(BaseModel):
     access_token: str
@@ -61,6 +62,11 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
     db_user = db.query(models.User).filter(models.User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
+        
+    if user.hwid:
+        existing_hwid = db.query(models.User).filter(models.User.hwid == user.hwid).first()
+        if existing_hwid:
+            raise HTTPException(status_code=400, detail="Thiết bị này đã đăng ký tài khoản dùng thử trước đó. Mỗi máy chỉ được đăng ký 1 tài khoản!")
     
     free_plan = db.query(models.Plan).filter(models.Plan.name == "Free").first()
     if not free_plan:
@@ -71,12 +77,14 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         username=user.username,
         hashed_password=hashed_password,
         role=user.role,
-        plan_id=free_plan.id
+        plan_id=free_plan.id,
+        hwid=user.hwid
     )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
     return {"message": "User created successfully"}
+
 
 @app.post("/login", response_model=Token)
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):

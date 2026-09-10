@@ -250,6 +250,21 @@ class SubtitleGenerator:
                 logger.warning("Không nhận diện được giọng nói trong video.")
                 if progress_cb: progress_cb(10, "Cảnh báo: Video không có giọng nói hoặc AI không nghe rõ.")
                 return None
+
+            # Lưu file _zh.srt chứa phụ đề tiếng Trung gốc và timestamps chính xác (cho OCR đối chiếu định vị hardsub)
+            try:
+                zh_path = str(output_srt_path).replace('.srt', '_zh.srt')
+                srt_content_zh = []
+                for s_idx, s_data in enumerate(segment_data, 1):
+                    srt_content_zh.append(str(s_idx))
+                    srt_content_zh.append(f"{s_data['start_time']} --> {s_data['end_time']}")
+                    srt_content_zh.append(s_data['original_text'])
+                    srt_content_zh.append("")
+                with open(zh_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(srt_content_zh))
+                logger.info(f"Đã lưu phụ đề gốc tiếng Trung phục vụ OCR đối chiếu: {zh_path}")
+            except Exception as e:
+                logger.warning(f"Không thể lưu _zh.srt: {e}")
                 
             ai_provider = PROCESSOR_CONFIG.get("ai_provider") or os.getenv("AI_PROVIDER", "ollama_first")
             ollama_url = PROCESSOR_CONFIG.get("ollama_url") or os.getenv("OLLAMA_URL", "http://localhost:11434")

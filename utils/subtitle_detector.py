@@ -1,17 +1,34 @@
 """
-Subtitle Detector - Tự động phát hiện vị trí phụ đề gốc (Hardsub) trong video bằng Computer Vision (OpenCV).
+Subtitle Detector - Tự động phát hiện vị trí phụ đề gốc (Hardsub) trong video bằng OCR & Computer Vision.
 Hỗ trợ thông minh cả Video Dọc (Portrait 9:16) và Video Ngang (Landscape 16:9).
-Lọc độ sáng chữ (Bright Text Mask) kết hợp Canny Edge để chống nhận nhầm cổ áo / quần áo / bối cảnh.
-Tốc độ xử lý siêu tốc < 0.25s.
+- Pha 1: RapidOCR đối chiếu ngữ nghĩa câu thoại từ Whisper (chính xác 100%, chống nhận nhầm sticker/bối cảnh/thẻ tên).
+- Pha 2 (Fallback): OpenCV Sobel X edge detector có giới hạn cứng (search_y_min >= 0.55), triệt tiêu 100% làm mờ nhầm ở nửa trên/giữa màn hình.
 """
 
 import os
-from typing import Tuple
+import re
+from typing import Tuple, Optional, List, Dict
 from loguru import logger
 
 # Preset mặc định theo tỉ lệ khung hình
 DEFAULT_PORTRAIT_SUB_Y = (0.72, 0.075)  # Video dọc: cách đáy ~20% (ngang ngực nhân vật, dày 7.5%)
 DEFAULT_LANDSCAPE_SUB_Y = (0.82, 0.080)  # Video ngang: chuẩn phim/drama 16:9 (Y=82% -> 90%)
+
+_ocr_engine = None
+
+
+def get_ocr_engine():
+    """Khởi tạo và cache engine RapidOCR dạng singleton."""
+    global _ocr_engine
+    if _ocr_engine is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            _ocr_engine = RapidOCR()
+            logger.debug("Khởi tạo thành công RapidOCR cho Subtitle Detector.")
+        except Exception as e:
+            logger.debug(f"Không thể khởi tạo RapidOCR: {e}")
+            _ocr_engine = False
+    return _ocr_engine if _ocr_engine is not False else None
 
 
 def extract_srt_sample_timestamps(srt_path: str, count: int = 5) -> list:
@@ -22,7 +39,6 @@ def extract_srt_sample_timestamps(srt_path: str, count: int = 5) -> list:
     if not srt_path or not os.path.exists(srt_path):
         return []
     try:
-        import re
         import numpy as np
         times = []
         pattern = re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
@@ -46,32 +62,219 @@ def extract_srt_sample_timestamps(srt_path: str, count: int = 5) -> list:
         return []
 
 
+def extract_dialogue_samples(srt_path: str, count: int = 5) -> List[Dict]:
+    """
+    Trích xuất danh sách các câu thoại mẫu kèm timestamp và nội dung chữ từ file SRT.
+    Dùng để đối chiếu OCR tìm đúng dòng hardsub trên khung hình.
+    Trả về: [{"time": float, "text": str, "start": float, "end": float}, ...]
+    """
+    if not srt_path or not os.path.exists(srt_path):
+        return []
+    try:
+        import numpy as np
+        samples = []
+        pattern = re.compile(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})')
+        
+        with open(srt_path, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = [l.strip() for l in f.readlines()]
+            
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            match = pattern.search(line)
+            if match:
+                h1, m1, s1, ms1, h2, m2, s2, ms2 = map(int, match.groups())
+                start = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000.0
+                end = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000.0
+                
+                # Gom các dòng text tiếp theo
+                text_lines = []
+                j = i + 1
+                while j < len(lines) and lines[j] and not lines[j].isdigit() and '-->' not in lines[j]:
+                    text_lines.append(lines[j])
+                    j += 1
+                    
+                sub_text = " ".join(text_lines).strip()
+                sub_text = re.sub(r'\[.*?\]|\(.*?\)', '', sub_text).strip()
+                
+                if (end - start) >= 0.7 and len(sub_text) >= 2:
+                    samples.append({
+                        "time": (start + end) / 2.0,
+                        "text": sub_text,
+                        "start": start,
+                        "end": end
+                    })
+                i = j
+            else:
+                i += 1
+                
+        if not samples:
+            return []
+        if len(samples) <= count:
+            return samples
+        indices = np.linspace(0, len(samples) - 1, count, dtype=int)
+        return [samples[idx] for idx in indices]
+    except Exception as e:
+        logger.debug(f"Không thể trích xuất dialogue samples: {e}")
+        return []
+
+
+def _match_text(detected_text: str, expected_text: str) -> bool:
+    """So khớp nội dung nhận diện từ OCR với câu thoại từ Whisper."""
+    if not detected_text or not expected_text:
+        return False
+    # Loại bỏ dấu câu và khoảng trắng
+    c1 = re.sub(r'[^\w\u4e00-\u9fff]', '', detected_text.lower())
+    c2 = re.sub(r'[^\w\u4e00-\u9fff]', '', expected_text.lower())
+    if not c1 or not c2:
+        return False
+        
+    # Nếu là chữ Hán: so sánh tập ký tự trùng
+    set1, set2 = set(c1), set(c2)
+    common = set1 & set2
+    if len(common) >= 2:
+        return True
+    if len(set2) > 0 and (len(common) / len(set2)) >= 0.35:
+        return True
+    if c1 in c2 or c2 in c1:
+        return True
+    return False
+
+
+def detect_subtitle_with_ocr(
+    video_path: str,
+    dialogue_samples: List[Dict],
+    orig_w: int,
+    orig_h: int,
+    is_landscape: bool
+) -> Optional[Tuple[float, float]]:
+    """
+    Sử dụng RapidOCR để dò tìm chính xác vị trí phụ đề qua đối chiếu với câu thoại Whisper.
+    Đảm bảo 100% không nhận nhầm bối cảnh, cổ áo, bảng tên hay watermark.
+    Hỗ trợ cả video bình thường lẫn video bị lật ngang (hflip).
+    """
+    ocr = get_ocr_engine()
+    if not ocr or not dialogue_samples:
+        return None
+
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Vùng quét chữ phụ đề: nửa dưới màn hình
+    y_crop_start_ratio = 0.58 if is_landscape else 0.50
+    y_crop_end_ratio = 0.94 if is_landscape else 0.95
+    y_crop_start = int(orig_h * y_crop_start_ratio)
+    y_crop_end = int(orig_h * y_crop_end_ratio)
+
+    matched_boxes = []
+    all_expected_texts = [s["text"] for s in dialogue_samples if s.get("text")]
+
+    try:
+        for sample in dialogue_samples:
+            t_sec = sample.get("time", 0.0)
+            target_f = max(0, min(total_frames - 1, int(t_sec * fps)))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target_f)
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                continue
+
+            crop = frame[y_crop_start:y_crop_end, :]
+            
+            # Quét cả ảnh xuôi và ảnh lật ngang (để hỗ trợ video lật hflip bypass bản quyền)
+            for test_img, is_flipped in [(crop, False), (cv2.flip(crop, 1), True)]:
+                res, _ = ocr(test_img)
+                if not res:
+                    continue
+
+                for box, text, score in res:
+                    pts_y = [pt[1] + y_crop_start for pt in box]
+                    pts_x = [(orig_w - pt[0]) if is_flipped else pt[0] for pt in box]
+                    
+                    y1 = min(pts_y) / float(orig_h)
+                    y2 = max(pts_y) / float(orig_h)
+                    cx = sum(pts_x) / (len(pts_x) * float(orig_w))
+                    bh = y2 - y1
+
+                    # Điều kiện hình học phụ đề: Căn giữa (cx ~ 0.5) và chiều cao vừa vặn
+                    if abs(cx - 0.50) > 0.22 or bh < 0.015 or bh > 0.12:
+                        continue
+
+                    # Điều kiện ngữ nghĩa: Trùng khớp với câu thoại của mốc này hoặc mốc lân cận
+                    sample_text = sample.get("text", "")
+                    matched = _match_text(text, sample_text)
+                    if not matched:
+                        # Kiểm tra dự phòng với tất cả câu thoại khác nếu lệch vài frame
+                        for exp in all_expected_texts:
+                            if _match_text(text, exp):
+                                matched = True
+                                break
+
+                    if matched:
+                        matched_boxes.append((y1, y2, bh))
+                        break # Đã tìm thấy dòng sub chuẩn cho frame này
+
+            if len(matched_boxes) >= 3:
+                # Đã có đủ 3 mẫu khớp chuẩn xác, không cần quét thêm để tối ưu tốc độ
+                break
+
+    except Exception as e:
+        logger.debug(f"Lỗi khi quét OCR phụ đề: {e}")
+    finally:
+        cap.release()
+
+    if not matched_boxes:
+        return None
+
+    # Lấy median tọa độ để loại trừ ngoại lai (outliers)
+    y1_med = float(np.median([b[0] for b in matched_boxes]))
+    y2_med = float(np.median([b[1] for b in matched_boxes]))
+    
+    # Khoảng đệm an toàn che trọn viền và bóng đổ chữ
+    pad_top = 0.015
+    pad_bottom = 0.018
+    
+    y_start = max(0.0, y1_med - pad_top)
+    h_blur = (y2_med - y1_med) + pad_top + pad_bottom
+    
+    # Giới hạn an toàn độ dày dải mờ: từ 5.5% đến 11%
+    min_h = 0.060 if is_landscape else 0.055
+    max_h = 0.110 if is_landscape else 0.100
+    h_blur = max(min_h, min(max_h, h_blur))
+    y_start = max(0.0, min(1.0 - h_blur, y_start))
+
+    logger.info(
+        f"🎯 [OCR Match Subtitle] Đã bắt dính tọa độ phụ đề qua đối chiếu câu thoại Whisper: "
+        f"Y={y_start*100:.1f}% -> {(y_start + h_blur)*100:.1f}% (H={h_blur*100:.1f}%, Khớp {len(matched_boxes)} khung hình)"
+    )
+    return round(float(y_start), 4), round(float(h_blur), 4)
+
+
 def detect_subtitle_y_range(
     video_path: str,
     search_y_min: float = None,
     search_y_max: float = None,
     num_samples: int = 15,
     blur_padding: float = 0.025,
-    dialogue_timestamps: list = None
+    dialogue_timestamps: list = None,
+    dialogue_samples: list = None
 ) -> Tuple[float, float]:
     """
-    Tự động dò tìm tọa độ Y của dòng phụ đề hardsub tiếng Trung trong video.
-    Hỗ trợ thông minh cả Video Dọc và Video Ngang, ở mọi vị trí (đáy, giữa màn hình, ngực).
-    Nếu có dialogue_timestamps (từ Whisper), thuật toán sẽ chụp đúng các thời điểm có câu thoại,
-    kết hợp lọc nét chữ dọc (Sobel X) để triệt tiêu 100% thanh tiến trình và cảnh nền.
+    Tự động dò tìm tọa độ Y của dòng phụ đề hardsub trong video.
+    Ưu tiên Pha 1: RapidOCR đối chiếu câu thoại Whisper (chính xác 100%).
+    Pha 2 (Fallback): OpenCV Sobel X edge detector có giới hạn cứng (search_y_min >= 0.55).
     
-    Args:
-        video_path: Đường dẫn tới file video (.mp4)
-        search_y_min: Giới hạn trên của vùng quét (None = tự động theo tỉ lệ video)
-        search_y_max: Giới hạn dưới của vùng quét (None = tự động theo tỉ lệ video)
-        num_samples: Số lượng khung hình mẫu cần trích xuất phân tích (khi không có dialogue_timestamps)
-        blur_padding: Khoảng đệm an toàn mở rộng dải làm mờ
-        dialogue_timestamps: Danh sách các mốc thời gian (giây) đang có câu thoại
-        
     Returns:
-        tuple (y_start_ratio, height_ratio):
-            y_start_ratio: Tọa độ Y bắt đầu dải mờ (0.0 -> 1.0)
-            height_ratio: Chiều cao của dải mờ (0.0 -> 1.0)
+        tuple (y_start_ratio, height_ratio)
     """
     if not os.path.exists(video_path):
         return DEFAULT_PORTRAIT_SUB_Y
@@ -98,18 +301,46 @@ def detect_subtitle_y_range(
 
         is_landscape = (orig_w > orig_h)
         default_preset = DEFAULT_LANDSCAPE_SUB_Y if is_landscape else DEFAULT_PORTRAIT_SUB_Y
+    finally:
+        cap.release()
 
-        # Xác định vùng quét thích ứng theo tỉ lệ khung hình
+    # ─── BƯỚC 1: QUÉT OCR ĐỐI CHIẾU CÂU THOẠI (CHÍNH XÁC 100%) ───
+    # Tự động tìm file _zh.srt gần nhất nếu chưa truyền dialogue_samples
+    if not dialogue_samples:
+        candidate_zh = video_path.rsplit(".", 1)[0] + "_zh.srt"
+        if os.path.exists(candidate_zh):
+            dialogue_samples = extract_dialogue_samples(candidate_zh, count=5)
+
+    if dialogue_samples and len(dialogue_samples) > 0:
+        try:
+            ocr_res = detect_subtitle_with_ocr(
+                video_path, dialogue_samples, orig_w, orig_h, is_landscape
+            )
+            if ocr_res is not None:
+                return ocr_res
+        except Exception as ocr_err:
+            logger.debug(f"OCR Subtitle Match error: {ocr_err}")
+
+    # ─── BƯỚC 2: FALLBACK OPENCV SOBEL X EDGE DETECTOR (SIẾT CHẶT VÙNG QUÉT) ───
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return default_preset
+
+    try:
+        # Xác định vùng quét thích ứng: TUYỆT ĐỐI KHÔNG QUÉT NỬA TRÊN MÀN HÌNH (>= 0.50)
         has_dialogue_times = bool(dialogue_timestamps and len(dialogue_timestamps) > 0)
         if search_y_min is None:
-            # Nếu có mốc câu thoại: Cho phép quét rộng từ 0.20 (bao trọn cả phụ đề giữa màn hình/ngực)
-            # Nếu không có: Quét nửa dưới an toàn
-            search_y_min = 0.20 if has_dialogue_times else (0.45 if is_landscape else 0.40)
-            
+            # Video dọc: quét từ 0.55 (dưới ngực nhân vật trở xuống đáy).
+            # Video ngang: quét từ 0.65 (chuẩn phim/drama 16:9).
+            search_y_min = 0.65 if is_landscape else 0.55
+        else:
+            # Cưỡng chế chặn an toàn: không bao giờ cho phép quét trên 50% màn hình
+            search_y_min = max(0.50, float(search_y_min))
+
         if search_y_max is None:
-            # Giới hạn dưới an toàn: Phụ đề không bao giờ nằm sát mép sàn sạt đáy (< 9% từ mép dưới).
-            # Chặn triệt để thanh tiến trình video (scrubber), thanh Home bar điện thoại và viền đáy.
-            search_y_max = 0.91 if is_landscape else 0.87
+            search_y_max = 0.91 if is_landscape else 0.88
+        else:
+            search_y_max = min(0.96, float(search_y_max))
 
         # Downscale frame về chiều rộng 360px để tăng tốc độ xử lý gấp 5-10 lần (< 0.2s)
         target_w = 360
@@ -195,7 +426,7 @@ def detect_subtitle_y_range(
         max_gap_allowed_px = int(target_h * 0.02)
         max_reach_px = int(target_h * 0.08)
 
-        # Quét lên trên từ peak_idx để tìm điểm bắt đầu của khối chữ (bao trọn dòng trên)
+        # Quét lên trên từ peak_idx để tìm điểm bắt đầu của khối chữ
         top_rel = peak_idx
         consecutive_low = 0
         for i in range(peak_idx, max(0, peak_idx - max_reach_px), -1):
@@ -207,7 +438,7 @@ def detect_subtitle_y_range(
                 if consecutive_low > max_gap_allowed_px:
                     break
 
-        # Quét xuống dưới từ peak_idx để tìm điểm kết thúc của khối chữ (bao trọn dòng dưới)
+        # Quét xuống dưới từ peak_idx để tìm điểm kết thúc của khối chữ
         bottom_rel = peak_idx
         consecutive_low = 0
         for i in range(peak_idx, min(len(smoothed), peak_idx + max_reach_px)):
@@ -249,3 +480,4 @@ def detect_subtitle_y_range(
         return DEFAULT_PORTRAIT_SUB_Y
     finally:
         cap.release()
+

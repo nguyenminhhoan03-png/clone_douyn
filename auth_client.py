@@ -73,24 +73,25 @@ class AuthClient:
         except Exception as e:
             return False, str(e)
 
+    def get_hwid(self) -> str:
+        """Lấy HWID duy nhất của máy tính (dựa trên MachineGuid trên Windows hoặc UUID)."""
+        import uuid
+        import hashlib
+        import platform
+        mac = str(uuid.getnode())
+        try:
+            if platform.system() == "Windows":
+                import winreg
+                registry = winreg.ConnectRegistry(None, winreg.HKEY_LOCAL_MACHINE)
+                key = winreg.OpenKey(registry, r"SOFTWARE\Microsoft\Cryptography")
+                mac, _ = winreg.QueryValueEx(key, "MachineGuid")
+        except Exception:
+            pass
+        return hashlib.md5(mac.encode()).hexdigest()
+
     def register(self, username, password):
         try:
-            import uuid
-            import hashlib
-            
-            import platform
-            
-            mac = str(uuid.getnode())
-            try:
-                if platform.system() == "Windows":
-                    import winreg
-                    registry = winreg.ConnectRegistry(None, winreg.HKEY_LOCAL_MACHINE)
-                    key = winreg.OpenKey(registry, r"SOFTWARE\Microsoft\Cryptography")
-                    mac, _ = winreg.QueryValueEx(key, "MachineGuid")
-            except:
-                pass
-            hwid = hashlib.md5(mac.encode()).hexdigest()
-            
+            hwid = self.get_hwid()
             resp = requests.post(f"{API_BASE_URL}/register", json={
                 "username": username,
                 "password": password,
@@ -107,6 +108,158 @@ class AuthClient:
         except Exception as e:
             return False, str(e)
 
+    def is_admin(self) -> bool:
+        """Kiểm tra xem user hiện tại có phải là Admin / Super Admin hay không."""
+        if not self.user_info:
+            return False
+        role = str(self.user_info.get("role", "user")).lower()
+        return role in ("admin", "super_admin", "superadmin")
+
+    def is_paid_user(self) -> bool:
+        """
+        Kiểm tra xem user có phải là tài khoản đã mua gói bản quyền hay không.
+        - Admin: Mặc định là full, không giới hạn.
+        - Role 'vip' hoặc 'pro': Gói trả phí.
+        - Người dùng có thời hạn > 3 ngày (gói 1M, 3M, 6M, 1Y, LT): Đã mua gói.
+        - User từng thanh toán thành công (lưu trong subscription cache): Đã mua gói.
+        """
+        if not self.user_info:
+            return False
+            
+        if self.is_admin():
+            return True
+            
+        if self.user_info.get("is_expired", True):
+            return False
+            
+        role = str(self.user_info.get("role", "user")).lower()
+        if role in ("vip", "pro"):
+            return True
+            
+        username = self.user_info.get("username", "default")
+        clean_user = username.replace("@", "_").replace(".", "_")
+        
+        # 1. Kiểm tra cache subscription cục bộ
+        from config.settings import COOKIES_DIR
+        user_dir = COOKIES_DIR / clean_user
+        sub_file = user_dir / "subscription.json"
+        if sub_file.exists():
+            try:
+                with open(sub_file, "r", encoding="utf-8") as f:
+                    sub_data = json.load(f)
+                    if sub_data.get("is_paid"):
+                        return True
+            except Exception:
+                pass
+                
+        # 2. Kiểm tra ngày hết hạn từ server:
+        # Dùng thử chỉ có 1-3 ngày. Gói mua luôn từ 30 ngày trở lên (1M: 30, 3M: 90, 6M: 180, 1Y: 365, LT: 3650).
+        expire_str = self.user_info.get("expire_date")
+        if expire_str and expire_str != "Chưa có":
+            try:
+                from datetime import datetime
+                exp_dt = datetime.strptime(expire_str, "%d/%m/%Y")
+                days_left = (exp_dt.date() - datetime.now().date()).days
+                if days_left > 3:
+                    # Tự động ghi nhớ tài khoản này là tài khoản đã mua gói
+                    user_dir.mkdir(parents=True, exist_ok=True)
+                    with open(sub_file, "w", encoding="utf-8") as f:
+                        json.dump({"username": username, "is_paid": True, "expire_date": expire_str}, f)
+                    return True
+            except Exception:
+                pass
+                
+        return False
+
+    def mark_user_paid(self, username: str = None):
+        """Đánh dấu vĩnh viễn user này đã nâng cấp gói."""
+        uname = username or (self.user_info.get("username", "default") if self.user_info else "default")
+        clean_user = uname.replace("@", "_").replace(".", "_")
+        from config.settings import COOKIES_DIR
+        user_dir = COOKIES_DIR / clean_user
+        user_dir.mkdir(parents=True, exist_ok=True)
+        sub_file = user_dir / "subscription.json"
+        try:
+            with open(sub_file, "w", encoding="utf-8") as f:
+                json.dump({"username": uname, "is_paid": True}, f)
+        except Exception:
+            pass
+
+    def get_trial_info(self) -> dict:
+        """
+        Lấy thông tin lượt render của tài khoản:
+        - is_unlimited: True nếu là Admin hoặc User đã mua gói
+        - max_allowed: 4 video đối với tài khoản dùng thử
+        - used_count: tổng số video đã render
+        - remaining: số video còn lại có thể render
+        """
+        if self.is_admin() or self.is_paid_user():
+            return {
+                "is_unlimited": True,
+                "max_allowed": None,
+                "used_count": 0,
+                "remaining": 999999,
+                "plan_type": "Admin (Toàn quyền)" if self.is_admin() else "Gói Bản Quyền (Không giới hạn)"
+            }
+            
+        from database.db_manager import DatabaseManager
+        db = DatabaseManager()
+        username = self.user_info.get("username", "default") if self.user_info else "default"
+        clean_user = username.replace("@", "_").replace(".", "_")
+        
+        # 1. Đếm theo tài khoản trong database
+        user_processed = db.get_total_processed_count(username=username)
+        
+        # 2. Đếm theo mã máy (HWID) để chống tạo nhiều tài khoản trên 1 máy
+        from config.settings import BASE_DIR
+        hw_file = BASE_DIR / "config" / ".hw_trial.json"
+        hw_used = 0
+        hwid = self.get_hwid()
+        if hw_file.exists():
+            try:
+                with open(hw_file, "r", encoding="utf-8") as f:
+                    hw_data = json.load(f)
+                    hw_used = hw_data.get(hwid, 0)
+            except Exception:
+                pass
+                
+        used_count = max(user_processed, hw_used)
+        max_trial = 4
+        remaining = max(0, max_trial - used_count)
+        
+        return {
+            "is_unlimited": False,
+            "max_allowed": max_trial,
+            "used_count": used_count,
+            "remaining": remaining,
+            "plan_type": "Dùng thử (Free Trial)"
+        }
+
+    def record_trial_render(self, count: int = 1):
+        """Ghi nhận số lượng video đã render vào hồ sơ máy tính (HWID)."""
+        if self.is_admin() or self.is_paid_user():
+            return
+            
+        from config.settings import BASE_DIR
+        hw_file = BASE_DIR / "config" / ".hw_trial.json"
+        hw_file.parent.mkdir(parents=True, exist_ok=True)
+        hwid = self.get_hwid()
+        hw_data = {}
+        if hw_file.exists():
+            try:
+                with open(hw_file, "r", encoding="utf-8") as f:
+                    hw_data = json.load(f)
+            except Exception:
+                pass
+                
+        current = hw_data.get(hwid, 0)
+        hw_data[hwid] = current + count
+        try:
+            with open(hw_file, "w", encoding="utf-8") as f:
+                json.dump(hw_data, f)
+        except Exception:
+            pass
+
     def get_me(self):
         if not self.token:
             return False, "Not logged in"
@@ -118,12 +271,16 @@ class AuthClient:
             
             if resp.status_code == 200:
                 self.user_info = resp.json()
+                # Tự động đồng bộ trạng thái gói đã mua nếu hợp lệ
+                if not self.is_admin():
+                    self.is_paid_user()
                 return True, self.user_info
             else:
                 self.clear_session()
                 return False, "Session expired"
         except Exception as e:
             return False, str(e)
+
 
     def sync_douyin_cookie(self):
         if not self.token:
