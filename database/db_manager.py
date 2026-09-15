@@ -291,7 +291,43 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_authors(self, status: str = None, username: str = None) -> list:
+    def delete_author_data(self, author: str, username: str = None) -> int:
+        """Xóa toàn bộ video thuộc một Kênh/Tác giả (cục bộ, Google Drive, Database) và alias."""
+        conn = self._get_connection()
+        video_ids = []
+        try:
+            cursor = conn.cursor()
+            query = "SELECT video_id FROM crawled_videos WHERE author = ?"
+            params = [author]
+            if username:
+                clean_user = username.replace("@", "_").replace(".", "_")
+                query += " AND (username = ? OR REPLACE(REPLACE(username, '@', '_'), '.', '_) = ?)"
+                params.extend([username, clean_user])
+            cursor.execute(query, tuple(params))
+            video_ids = [row["video_id"] for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+        deleted_count = 0
+        for vid in video_ids:
+            if self.delete_video_data(vid):
+                deleted_count += 1
+
+        # Xóa alias nếu có
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM author_aliases WHERE original_author = ? OR alias = ?", (author, author))
+            conn.commit()
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+        logger.info(f"Đã xóa nhóm '{author}': {deleted_count} video đã được dọn sạch.")
+        return deleted_count
+
+    def get_authors(self, status: str = None, username: str = None, pending_only: bool = False) -> list:
         """Lấy danh sách các tác giả duy nhất."""
         conn = self._get_connection()
         try:
@@ -301,9 +337,12 @@ class DatabaseManager:
             if status:
                 query += " AND status = ?"
                 params.append(status)
+            if pending_only:
+                query += " AND id NOT IN (SELECT crawled_video_id FROM posted_videos WHERE status = 'posted')"
             if username:
-                query += " AND username = ?"
-                params.append(username)
+                clean_user = username.replace("@", "_").replace(".", "_")
+                query += " AND (username = ? OR REPLACE(REPLACE(username, '@', '_'), '.', '_') = ?)"
+                params.extend([username, clean_user])
             query += " ORDER BY author ASC"
             cursor.execute(query, tuple(params))
             return [row["author"] for row in cursor.fetchall()]

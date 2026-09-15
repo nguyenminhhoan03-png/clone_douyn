@@ -38,6 +38,8 @@ from auth_client import auth_client
 from config.settings import PROCESSOR_CONFIG
 from ui.log_toolbar import LogToolbar
 from ui.tabs.livestream_tab import LivestreamTab
+from uploader.upload_logger import UploadLogManager
+from ui.upload_log_dialog import UploadLogHistoryDialog
 from ui.theme import (
     BG_DARK, BG_CARD, BG_SIDEBAR, ACCENT, ACCENT_HOVER, ACCENT_LIGHT, ACCENT_BG,
     CYAN, SUCCESS, WARNING, DANGER, TEXT_MAIN, TEXT_DIM, TEXT_MUTED, BORDER
@@ -684,6 +686,59 @@ def show_rename_author_dialog(parent, opt_widget, reload_callback):
     entry_new_name.bind("<Return>", lambda _: on_confirm())
 
 
+def show_delete_author_dialog(parent, opt_widget, reload_callback):
+    """Mở hộp thoại xác nhận xóa Kênh/Nhóm Douyin và toàn bộ video của nhóm."""
+    from database.db_manager import DatabaseManager
+    from auth_client import auth_client
+    db = DatabaseManager()
+    current_user = auth_client.user_info.get("username") if auth_client.user_info else None
+
+    curr_selected = opt_widget.get().strip() if opt_widget else "Tất cả Kênh"
+    if curr_selected == "Tất cả Kênh" or not curr_selected:
+        messagebox.showwarning(
+            "Chưa chọn nhóm",
+            "Vui lòng chọn một nhóm/kênh cụ thể từ danh sách để xóa (không thể chọn 'Tất cả Kênh')!",
+            parent=parent
+        )
+        return
+
+    # Kiểm tra số lượng video của nhóm
+    conn = db._get_connection()
+    try:
+        cursor = conn.cursor()
+        query = "SELECT COUNT(*) FROM crawled_videos WHERE author = ?"
+        params = [curr_selected]
+        if current_user:
+            clean_user = current_user.replace("@", "_").replace(".", "_")
+            query += " AND (username = ? OR REPLACE(REPLACE(username, '@', '_'), '.', '_') = ?)"
+            params.extend([current_user, clean_user])
+        cursor.execute(query, tuple(params))
+        total_vids = cursor.fetchone()[0]
+    finally:
+        conn.close()
+
+    msg = f"Bạn có chắc chắn muốn xóa nhóm/kênh '{curr_selected}' không?\n\n"
+    if total_vids > 0:
+        msg += f"⚠️ Thao tác này sẽ XÓA VĨNH VIỄN tất cả {total_vids} video thuộc nhóm này (bao gồm file trên máy tính, Google Drive và toàn bộ dữ liệu liên quan)."
+    else:
+        msg += "Nhóm này hiện không còn video nào trong hệ thống. Nhóm sẽ được xóa sạch khỏi danh sách lựa chọn."
+
+    if not messagebox.askyesno("Xác nhận xóa nhóm", msg, icon="warning", parent=parent):
+        return
+
+    deleted = db.delete_author_data(curr_selected, username=current_user)
+
+    if opt_widget:
+        opt_widget.set("Tất cả Kênh")
+
+    reload_callback()
+    messagebox.showinfo(
+        "Đã xóa nhóm",
+        f"Đã xóa thành công nhóm '{curr_selected}' ({deleted} video đã được dọn sạch)!",
+        parent=parent
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Tab: Process
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -769,6 +824,11 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             fg_color="#2980b9", hover_color="#3498db", command=self._rename_author_dialog
         )
         self._btn_rename_author.pack(side="left", padx=(6, 0))
+        self._btn_delete_author = ctk.CTkButton(
+            list_header, text="🗑 Xóa nhóm", width=85, height=24, font=("Segoe UI", 11, "bold"),
+            fg_color="#c0392b", hover_color="#e74c3c", command=self._delete_author_dialog
+        )
+        self._btn_delete_author.pack(side="left", padx=(6, 0))
         
         ctk.CTkButton(list_header, text="🔄 Refresh", width=60, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._load_videos).pack(side="right")
         ctk.CTkButton(list_header, text="🗑 Xóa", width=60, height=24, fg_color="#e74c3c", hover_color="#c0392b", command=self._delete_selected).pack(side="right", padx=(0, 10))
@@ -958,7 +1018,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             elif "trên cùng" in choice.lower():
                 self._entry_blur_height.insert(0, "8%")
             else: # Dưới cùng
-                self._entry_blur_height.insert(0, "10%")
+                self._entry_blur_height.insert(0, "14%")
             _update_blur_ui(choice)
 
         def _toggle_blur_widgets():
@@ -1277,6 +1337,9 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
 
     def _rename_author_dialog(self):
         show_rename_author_dialog(self, self._opt_author_filter, self._load_videos)
+
+    def _delete_author_dialog(self):
+        show_delete_author_dialog(self, self._opt_author_filter, self._load_videos)
 
     def _delete_selected(self):
         selected_ids = [vid for vid, var in self._checkboxes.items() if var.get()]
@@ -1939,6 +2002,11 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             fg_color="#2980b9", hover_color="#3498db", command=self._rename_author_dialog
         )
         self._btn_rename_author_up.pack(side="left", padx=(6, 0))
+        self._btn_delete_author_up = ctk.CTkButton(
+            list_header, text="🗑 Xóa nhóm", width=85, height=24, font=("Segoe UI", 11, "bold"),
+            fg_color="#c0392b", hover_color="#e74c3c", command=self._delete_author_dialog
+        )
+        self._btn_delete_author_up.pack(side="left", padx=(6, 0))
         
         ctk.CTkButton(list_header, text="🔄 Refresh", width=60, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._load_videos).pack(side="right")
         ctk.CTkButton(list_header, text="🧹 Dọn rác", width=65, height=24, fg_color="#7f8c8d", hover_color="#95a5a6", command=self._clean_missing_videos).pack(side="right", padx=(0, 6))
@@ -2239,7 +2307,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         
         author_val = self._opt_author_filter_up.get() if hasattr(self, "_opt_author_filter_up") else "Tất cả Kênh"
         if hasattr(self, "_opt_author_filter_up"):
-            authors = db.get_authors(status="processed", username=current_user)
+            authors = db.get_authors(status="processed", username=current_user, pending_only=True)
             new_values = ["Tất cả Kênh"] + authors
             self._opt_author_filter_up.configure(values=new_values)
             if author_val not in new_values:
@@ -2610,6 +2678,9 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
     def _rename_author_dialog(self):
         show_rename_author_dialog(self, self._opt_author_filter_up, self._load_videos)
 
+    def _delete_author_dialog(self):
+        show_delete_author_dialog(self, self._opt_author_filter_up, self._load_videos)
+
     def _update_selected_count(self, *args):
         count = sum(1 for var in self._checkboxes.values() if var.get())
         if hasattr(self, '_entry_limit'):
@@ -2744,14 +2815,16 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         )
 
     def _on_task_done(self):
+        self._current_session_id = None
         super()._on_task_done()
         self.is_running = False
         self.after(0, lambda: self._btn_upload.configure(text="▶  Bắt đầu Upload", state="normal", fg_color="#e74c3c", hover_color="#c0392b"))
         self.after(0, lambda: self._status_badge.set("Xong", SUCCESS) if not getattr(self, "cancel_flag", False) else self._status_badge.set("Đã dừng", DANGER))
 
     def _log(self, msg: str, level: str = "INFO"):
-        """Ghi log hiển thị UI và đồng thời lưu vào file log của phiên."""
-        super()._log(msg, level)
+        """Ghi log hiển thị UI và đồng thời lưu vào file log của phiên (không bị trùng lặp)."""
+        if hasattr(self, "_log_widget"):
+            self.after(0, lambda: self._log_widget.append(msg, level))
         sid = getattr(self, "_current_session_id", None)
         if sid:
             UploadLogManager.append_log(sid, msg, level)
@@ -3144,6 +3217,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                 status_msg += f" Có {fail_count} video thất bại hoặc bị bỏ qua."
             self._log(status_msg, "SUCCESS" if fail_count == 0 else "WARNING")
             self._log("💡 Bạn có thể bấm nút '📜 Xem lịch sử Logs' ở trên để xem lại chi tiết bất cứ lúc nào.", "INFO")
+            self._current_session_id = None
 
         self.after(0, self._load_videos)
 

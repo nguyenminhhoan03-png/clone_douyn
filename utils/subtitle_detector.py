@@ -12,7 +12,7 @@ from loguru import logger
 
 # Preset mặc định theo tỉ lệ khung hình
 DEFAULT_PORTRAIT_SUB_Y = (0.72, 0.075)  # Video dọc: cách đáy ~20% (ngang ngực nhân vật, dày 7.5%)
-DEFAULT_LANDSCAPE_SUB_Y = (0.82, 0.080)  # Video ngang: chuẩn phim/drama 16:9 (Y=82% -> 90%)
+DEFAULT_LANDSCAPE_SUB_Y = (0.86, 0.110)  # Video ngang: chuẩn phim/drama 16:9 (Y=86% -> 97%)
 
 _ocr_engine = None
 
@@ -62,7 +62,7 @@ def extract_srt_sample_timestamps(srt_path: str, count: int = 5) -> list:
         return []
 
 
-def extract_dialogue_samples(srt_path: str, count: int = 5) -> List[Dict]:
+def extract_dialogue_samples(srt_path: str, count: int = 8) -> List[Dict]:
     """
     Trích xuất danh sách các câu thoại mẫu kèm timestamp và nội dung chữ từ file SRT.
     Dùng để đối chiếu OCR tìm đúng dòng hardsub trên khung hình.
@@ -171,8 +171,8 @@ def detect_subtitle_with_ocr(
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     # Vùng quét chữ phụ đề: nửa dưới màn hình
-    y_crop_start_ratio = 0.58 if is_landscape else 0.50
-    y_crop_end_ratio = 0.94 if is_landscape else 0.95
+    y_crop_start_ratio = 0.55 if is_landscape else 0.50
+    y_crop_end_ratio = 1.0  # Quét trọn vẹn tới sát mép đáy màn hình để không bị cắt cụt chữ sát đáy
     y_crop_start = int(orig_h * y_crop_start_ratio)
     y_crop_end = int(orig_h * y_crop_end_ratio)
 
@@ -205,8 +205,8 @@ def detect_subtitle_with_ocr(
                     cx = sum(pts_x) / (len(pts_x) * float(orig_w))
                     bh = y2 - y1
 
-                    # Điều kiện hình học phụ đề: Căn giữa (cx ~ 0.5) và chiều cao vừa vặn
-                    if abs(cx - 0.50) > 0.22 or bh < 0.015 or bh > 0.12:
+                    # Điều kiện hình học phụ đề: Căn giữa tương đối và chiều cao vừa vặn
+                    if abs(cx - 0.50) > 0.35 or bh < 0.015 or bh > 0.14:
                         continue
 
                     # Điều kiện ngữ nghĩa: Trùng khớp với câu thoại của mốc này hoặc mốc lân cận
@@ -240,17 +240,22 @@ def detect_subtitle_with_ocr(
     y2_med = float(np.median([b[1] for b in matched_boxes]))
     
     # Khoảng đệm an toàn che trọn viền và bóng đổ chữ
-    pad_top = 0.015
-    pad_bottom = 0.018
+    pad_top = 0.025
+    pad_bottom = 0.035
     
     y_start = max(0.0, y1_med - pad_top)
     h_blur = (y2_med - y1_med) + pad_top + pad_bottom
     
-    # Giới hạn an toàn độ dày dải mờ: từ 5.5% đến 11%
-    min_h = 0.060 if is_landscape else 0.055
-    max_h = 0.110 if is_landscape else 0.100
-    h_blur = max(min_h, min(max_h, h_blur))
-    y_start = max(0.0, min(1.0 - h_blur, y_start))
+    # Nếu phụ đề nằm ở dải dưới (kết thúc >= 90% hoặc y2_med >= 0.88),
+    # tự động kéo dải mờ tràn kịch đáy 100% (1.0 - y_start) để triệt tiêu hoàn toàn
+    # mọi chân chữ, nét phẩy, viền bóng đổ bị hở ra ở cạnh đáy màn hình!
+    if (y_start + h_blur) >= 0.90 or y2_med >= 0.88:
+        h_blur = round(1.0 - y_start, 4)
+    else:
+        min_h = 0.080 if is_landscape else 0.065
+        max_h = 0.160 if is_landscape else 0.130
+        h_blur = max(min_h, min(max_h, h_blur))
+        y_start = max(0.0, min(1.0 - h_blur, y_start))
 
     logger.info(
         f"🎯 [OCR Match Subtitle] Đã bắt dính tọa độ phụ đề qua đối chiếu câu thoại Whisper: "
@@ -338,9 +343,9 @@ def detect_subtitle_y_range(
             search_y_min = max(0.50, float(search_y_min))
 
         if search_y_max is None:
-            search_y_max = 0.91 if is_landscape else 0.88
+            search_y_max = 0.985 if is_landscape else 0.92
         else:
-            search_y_max = min(0.96, float(search_y_max))
+            search_y_max = min(0.99, float(search_y_max))
 
         # Downscale frame về chiều rộng 360px để tăng tốc độ xử lý gấp 5-10 lần (< 0.2s)
         target_w = 360
@@ -453,9 +458,9 @@ def detect_subtitle_y_range(
         sub_top_px = y_min_px + top_rel
         sub_bottom_px = y_min_px + bottom_rel
 
-        # Đệm an toàn thanh thoát: vừa khít viền/bóng đổ của font chữ mà không ăn vào nhân vật
-        pad_top_px = int(target_h * 0.012)
-        pad_bottom_px = int(target_h * 0.015)
+        # Đệm an toàn: vừa khít viền/bóng đổ của font chữ mà không ăn quá sâu vào nhân vật
+        pad_top_px = int(target_h * 0.015)
+        pad_bottom_px = int(target_h * 0.020)
 
         y_start_px = max(0, sub_top_px - pad_top_px)
         y_end_px = min(target_h, sub_bottom_px + pad_bottom_px)
@@ -463,11 +468,15 @@ def detect_subtitle_y_range(
         y_start_ratio = y_start_px / float(target_h)
         height_ratio = (y_end_px - y_start_px) / float(target_h)
 
-        # Giới hạn an toàn vừa khít: video dọc từ 5.5% đến 8.5%, video ngang từ 6.5% đến 9.5%
-        min_h = 0.065 if is_landscape else 0.055
-        max_h = 0.095 if is_landscape else 0.085
-        height_ratio = max(min_h, min(max_h, height_ratio))
-        y_start_ratio = max(0.0, min(1.0 - height_ratio, y_start_ratio))
+        # Nếu phụ đề nằm ở dải dưới (kết thúc >= 90% hoặc sub_bottom_px >= target_h * 0.88),
+        # tự động kéo dải mờ tràn kịch đáy 100% để che sạch mọi chân chữ và bóng đổ
+        if (y_start_ratio + height_ratio) >= 0.90 or (sub_bottom_px / float(target_h)) >= 0.88:
+            height_ratio = round(1.0 - y_start_ratio, 4)
+        else:
+            min_h = 0.075 if is_landscape else 0.060
+            max_h = 0.150 if is_landscape else 0.110
+            height_ratio = max(min_h, min(max_h, height_ratio))
+            y_start_ratio = max(0.0, min(1.0 - height_ratio, y_start_ratio))
 
         logger.info(
             f"🎯 [Smart Blur] Đã phát hiện phụ đề ({'Video Ngang' if is_landscape else 'Video Dọc'}): "

@@ -124,7 +124,7 @@ class VideoProcessor:
                 )
                 if custom_h is not None and isinstance(custom_h, (int, float)) and custom_h > 0:
                     center_y = y_start + (h / 2.0)
-                    h = min(0.12, float(custom_h))
+                    h = min(0.25, float(custom_h))
                     y_start = max(0.0, min(1.0 - h, center_y - (h / 2.0)))
                 return True, y_start, h
             except Exception as e:
@@ -132,7 +132,7 @@ class VideoProcessor:
                 try:
                     w, vid_h = self._get_video_dimensions(str(input_path))
                     if w > vid_h:
-                        return True, 0.82, 0.080
+                        return True, 0.86, 0.110
                 except:
                     pass
                 return True, 0.72, 0.075
@@ -148,7 +148,7 @@ class VideoProcessor:
             h = min(0.12, float(custom_h)) if (custom_h and custom_h > 0) else 0.08
             return True, 0.0, h
         else: # Dưới cùng (Đáy video)
-            h = min(0.12, float(custom_h)) if (custom_h and custom_h > 0) else 0.09
+            h = min(0.25, float(custom_h)) if (custom_h and custom_h > 0) else 0.14
             y_start = max(0.0, 1.0 - h)
             return True, y_start, h
 
