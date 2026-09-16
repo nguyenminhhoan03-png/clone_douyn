@@ -26,6 +26,7 @@ class DouyinCrawler:
         self.proxy = DOUYIN_CONFIG.get("proxy")
         self.delay_range = DOUYIN_CONFIG["request_delay"]
         self.current_username = None
+        self.last_error = ""
 
     def _random_delay(self):
         """Random delay giữa các request."""
@@ -463,6 +464,7 @@ class DouyinCrawler:
                 "_ytdlp_url": api_url,
             }
 
+        self.last_error = f"Tất cả API phân giải video Douyin đều thất bại (Video: {video_id})."
         logger.error(
             f"❌ Tất cả API thất bại cho video: {video_id}\n"
             f"   URL: {video_url}\n"
@@ -529,6 +531,7 @@ class DouyinCrawler:
                 logger.info(f"✅ Downloaded: {save_path.name} ({size_mb:.1f} MB)")
                 return str(save_path)
 
+        self.last_error = f"Không tải được file video {video_id} (Cả direct URL và yt-dlp đều thất bại)."
         logger.error(f"❌ Download thất bại: {video_id}")
         if save_path.exists():
             save_path.unlink(missing_ok=True)
@@ -611,10 +614,14 @@ class DouyinCrawler:
 
         if "v.douyin.com" in user_url:
             user_url = await self.resolve_short_url(user_url)
-            if not user_url: return []
+            if not user_url:
+                self.last_error = f"Không phân giải được short URL profile: {user_url}"
+                return []
 
         match = re.search(r"/user/([A-Za-z0-9_-]+)", user_url)
-        if not match: return []
+        if not match:
+            self.last_error = f"Link profile không đúng định dạng Douyin (thiếu /user/...): {user_url}"
+            return []
 
         sec_uid = match.group(1)
         logger.info(f"Crawling user profile: {sec_uid} (max {max_videos} videos)")

@@ -414,7 +414,7 @@ class YouTubeUploader:
 
             # Chuẩn bị file local từ Drive nếu cần
             video_path = video.get("processed_path")
-            drive_processed_id = video.get("drive_processed_id")
+            drive_processed_id = video.get("drive_processed_id") or video.get("drive_download_id")
             temp_downloaded_path = None
             
             if not video_path or not Path(video_path).exists():

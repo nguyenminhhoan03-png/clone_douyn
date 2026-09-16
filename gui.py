@@ -41,8 +41,9 @@ from ui.tabs.livestream_tab import LivestreamTab
 from uploader.upload_logger import UploadLogManager
 from ui.upload_log_dialog import UploadLogHistoryDialog
 from ui.theme import (
-    BG_DARK, BG_CARD, BG_SIDEBAR, ACCENT, ACCENT_HOVER, ACCENT_LIGHT, ACCENT_BG,
-    CYAN, SUCCESS, WARNING, DANGER, TEXT_MAIN, TEXT_DIM, TEXT_MUTED, BORDER
+    BG_DARK, BG_CARD, BG_CARD_HOVER, BG_SIDEBAR, ACCENT, ACCENT_HOVER, ACCENT_LIGHT, ACCENT_BG,
+    CYAN, CYAN_HOVER, CYAN_BG, SUCCESS, SUCCESS_HOVER, SUCCESS_BG, WARNING, WARNING_HOVER, WARNING_BG,
+    DANGER, DANGER_HOVER, DANGER_BG, PINK, PINK_BG, TEXT_MAIN, TEXT_DIM, TEXT_MUTED, BORDER, BORDER_FOCUS, BORDER_GLOW
 )
 from ui.components import (
     LogWidget, StatusBadge, ToolTip, ToastNotification, show_toast,
@@ -530,13 +531,19 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         crawler = DouyinCrawler(db=db)
         crawler.current_username = auth_client.user_info.get("username") if auth_client.user_info else None
         self._log(f"Crawling {len(urls)} URLs...", "INFO")
-        results = asyncio.run(crawler.crawl_multiple_videos(urls))
-        if results:
-            self._log(f"✅ Crawled thành công {len(results)}/{len(urls)} video!", "SUCCESS")
-        else:
-            self._log(f"⚠️ Crawled 0/{len(urls)} video. Vui lòng kiểm tra lại link hoặc làm mới cookie Douyin!", "WARNING")
-            self.after(0, lambda: self._status_badge.set("Thất bại", WARNING))
-        auth_client.send_telemetry("CRAWL", f"Tải xong {len(results)} video từ list URL")
+        try:
+            results = asyncio.run(crawler.crawl_multiple_videos(urls))
+            if results:
+                self._log(f"✅ Crawled thành công {len(results)}/{len(urls)} video!", "SUCCESS")
+                auth_client.send_telemetry("CRAWL", f"Tải xong {len(results)}/{len(urls)} video từ list URL")
+            else:
+                err_detail = getattr(crawler, "last_error", None) or "Tất cả link đều thất bại hoặc không thể tải file"
+                self._log(f"⚠️ Crawled 0/{len(urls)} video. Chi tiết: {err_detail}", "WARNING")
+                self.after(0, lambda: self._status_badge.set("Thất bại", WARNING))
+                auth_client.send_telemetry("ERROR", f"[CRAWL THẤT BẠI] 0/{len(urls)} video từ danh sách URL. Lỗi: {err_detail}")
+        except Exception as e:
+            self._log(f"❌ Lỗi ngoại lệ Crawl URL: {e}", "ERROR")
+            auth_client.send_telemetry("ERROR", f"[CRAWL NGOẠI LỆ] Lỗi cào URL: {str(e)[:250]}")
 
     def _do_crawl_profile(self, profile, count):
         from crawler.douyin_crawler import DouyinCrawler
@@ -546,9 +553,19 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         crawler = DouyinCrawler(db=db)
         crawler.current_username = auth_client.user_info.get("username") if auth_client.user_info else None
         self._log(f"Crawling profile ({count} videos)...", "INFO")
-        results = asyncio.run(crawler.crawl_user_profile(profile, max_videos=count))
-        self._log(f"✅ Crawled {len(results)} videos!", "SUCCESS")
-        auth_client.send_telemetry("CRAWL", f"Tải xong {len(results)} video từ profile: {profile}")
+        try:
+            results = asyncio.run(crawler.crawl_user_profile(profile, max_videos=count))
+            if results:
+                self._log(f"✅ Crawled {len(results)} videos!", "SUCCESS")
+                auth_client.send_telemetry("CRAWL", f"Tải xong {len(results)} video từ profile: {profile}")
+            else:
+                err_detail = getattr(crawler, "last_error", None) or "Không tải được video nào (Kênh riêng tư hoặc Douyin chặn)"
+                self._log(f"⚠️ Không tải được video nào từ profile {profile}. Chi tiết: {err_detail}", "WARNING")
+                self.after(0, lambda: self._status_badge.set("Thất bại", WARNING))
+                auth_client.send_telemetry("ERROR", f"[CRAWL THẤT BẠI] 0 video từ profile: {profile}. Lỗi: {err_detail}")
+        except Exception as e:
+            self._log(f"❌ Lỗi ngoại lệ Crawl Profile: {e}", "ERROR")
+            auth_client.send_telemetry("ERROR", f"[CRAWL PROFILE NGOẠI LỆ] Profile {profile} | {str(e)[:250]}")
 
     def _do_crawl_file(self, file_path, limit=150):
         from crawler.douyin_crawler import DouyinCrawler
@@ -559,12 +576,14 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
             urls = Path(file_path).read_text(encoding="utf-8").strip().splitlines()
         except Exception as e:
             self._log(f"❌ Lỗi đọc file: {e}", "ERROR")
+            auth_client.send_telemetry("ERROR", f"[CRAWL FILE LỖI] Đọc file {Path(file_path).name}: {str(e)[:200]}")
             self._on_task_done()
             return
             
         urls = [u.strip() for u in urls if u.strip() and not u.startswith("#")]
         if not urls:
             self._log(f"❌ File rỗng hoặc không có URL hợp lệ!", "ERROR")
+            auth_client.send_telemetry("ERROR", f"[CRAWL FILE LỖI] File {Path(file_path).name} rỗng hoặc không có URL hợp lệ")
             self._on_task_done()
             return
             
@@ -579,20 +598,29 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         self._log(f"Đọc {len(urls)} URLs từ file {Path(file_path).name}...", "INFO")
         total_crawled = 0
         
-        if profile_urls:
-            self._log(f"Phát hiện {len(profile_urls)} link Profile. Cào tối đa {limit} video/người.", "INFO")
-            for idx, p_url in enumerate(profile_urls):
-                self._log(f"[{idx+1}/{len(profile_urls)}] Đang cào Profile: {p_url}", "INFO")
-                res = asyncio.run(crawler.crawl_user_profile(p_url, max_videos=limit))
+        try:
+            if profile_urls:
+                self._log(f"Phát hiện {len(profile_urls)} link Profile. Cào tối đa {limit} video/người.", "INFO")
+                for idx, p_url in enumerate(profile_urls):
+                    self._log(f"[{idx+1}/{len(profile_urls)}] Đang cào Profile: {p_url}", "INFO")
+                    res = asyncio.run(crawler.crawl_user_profile(p_url, max_videos=limit))
+                    total_crawled += len(res)
+                    
+            if video_urls:
+                self._log(f"Phát hiện {len(video_urls)} link Video đơn lẻ. Đang cào...", "INFO")
+                res = asyncio.run(crawler.crawl_multiple_videos(video_urls))
                 total_crawled += len(res)
                 
-        if video_urls:
-            self._log(f"Phát hiện {len(video_urls)} link Video đơn lẻ. Đang cào...", "INFO")
-            res = asyncio.run(crawler.crawl_multiple_videos(video_urls))
-            total_crawled += len(res)
-            
-        self._log(f"✅ Tổng cộng cào thành công {total_crawled} video!", "SUCCESS")
-        auth_client.send_telemetry("CRAWL", f"Tải xong {total_crawled} video từ file .txt")
+            if total_crawled > 0:
+                self._log(f"✅ Tổng cộng cào thành công {total_crawled} video!", "SUCCESS")
+                auth_client.send_telemetry("CRAWL", f"Tải xong {total_crawled} video từ file {Path(file_path).name}")
+            else:
+                err_detail = getattr(crawler, "last_error", None) or "Tất cả URL trong file đều không cào được video"
+                self._log(f"⚠️ Không cào được video nào từ file {Path(file_path).name}! Chi tiết: {err_detail}", "WARNING")
+                auth_client.send_telemetry("ERROR", f"[CRAWL THẤT BẠI] 0 video từ file {Path(file_path).name}. Lỗi: {err_detail}")
+        except Exception as e:
+            self._log(f"❌ Lỗi ngoại lệ cào file: {e}", "ERROR")
+            auth_client.send_telemetry("ERROR", f"[CRAWL FILE NGOẠI LỆ] File {Path(file_path).name} | {str(e)[:250]}")
 
     def _on_task_done(self):
         super()._on_task_done()
@@ -1873,12 +1901,41 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             if self.cancel_flag:
                 self._log("Đã ngắt quá trình xử lý (Stop).", "WARNING")
             else:
-                self._log(f"✅ Đã xử lý {len(results)} videos!", "SUCCESS")
                 from auth_client import auth_client
                 if not trial_info["is_unlimited"]:
                     auth_client.record_trial_render(len(results))
-                auth_client.send_telemetry("PROCESS", f"Hoàn thành xử lý {len(results)} video (Blur: {PROCESSOR_CONFIG.get('blur_enabled')}, Sub: {PROCESSOR_CONFIG.get('subtitle_overlay')}, TTS: {PROCESSOR_CONFIG.get('tts_voice')})")
 
+                failed_items = getattr(processor, "last_failed_videos", [])
+                
+                if len(results) == 0:
+                    self._log("❌ Xử lý hoàn tất nhưng 0 video thành công!", "ERROR")
+                    if failed_items:
+                        for it in failed_items:
+                            self._log(f"  ❌ Video #{it['video_id']}: {it['error']}", "ERROR")
+                        err_reasons = "; ".join([f"Video #{it['video_id']}: {it['error']}" for it in failed_items])
+                        auth_client.send_telemetry("ERROR", f"[PROCESS THẤT BẠI] 0/{len(failed_items)} video. Lỗi chi tiết: {err_reasons} (Blur: {PROCESSOR_CONFIG.get('blur_enabled')}, Sub: {PROCESSOR_CONFIG.get('subtitle_overlay')}, TTS: {PROCESSOR_CONFIG.get('tts_voice')})")
+                    else:
+                        if selected_ids:
+                            self._log(f"  ❌ Không tìm thấy video hợp lệ trong CSDL để xử lý (đã chọn {len(selected_ids)} ID: {selected_ids})!", "ERROR")
+                            auth_client.send_telemetry("ERROR", f"[PROCESS THẤT BẠI] 0 video. Không tìm thấy video hợp lệ trong CSDL ứng với IDs: {selected_ids}")
+                        else:
+                            self._log("  ❌ Hàng đợi trống: Không có video nào ở trạng thái 'Đã tải về' trong CSDL!", "ERROR")
+                            auth_client.send_telemetry("ERROR", "[PROCESS THẤT BẠI] 0 video. Hàng đợi CSDL không có video nào ở trạng thái 'Đã tải về'.")
+                elif failed_items:
+                    self._log(f"⚠️ Đã xử lý {len(results)} videos ({len(failed_items)} video lỗi)!", "WARNING")
+                    for it in failed_items:
+                        self._log(f"  ❌ Video #{it['video_id']}: {it['error']}", "ERROR")
+                    err_reasons = "; ".join([f"Video #{it['video_id']}: {it['error']}" for it in failed_items])
+                    auth_client.send_telemetry("ERROR", f"[PROCESS CÓ LỖI] {len(results)} thành công, {len(failed_items)} lỗi: {err_reasons}")
+                else:
+                    self._log(f"✅ Đã xử lý thành công {len(results)}/{len(results)} videos!", "SUCCESS")
+                    auth_client.send_telemetry("PROCESS", f"Hoàn thành xử lý {len(results)} video (Blur: {PROCESSOR_CONFIG.get('blur_enabled')}, Sub: {PROCESSOR_CONFIG.get('subtitle_overlay')}, TTS: {PROCESSOR_CONFIG.get('tts_voice')})")
+        except Exception as e:
+            import traceback
+            tb_str = traceback.format_exc()
+            self._log(f"❌ Lỗi ngoại lệ hệ thống xử lý video: {e}", "ERROR")
+            from auth_client import auth_client
+            auth_client.send_telemetry("ERROR", f"[PROCESS NGOẠI LỆ] {str(e)} | Trace: {tb_str[-250:]}")
         finally:
             try:
                 logger.remove(sink_id)
@@ -2746,7 +2803,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._btn_upload.configure(state="normal", text="⏹ Dừng lại", fg_color=DANGER, hover_color="#c0392b")
         self._status_badge.set("Đang upload...", WARNING)
         self._log_widget.clear()
-        self._log("Bắt đầu upload video lên TikTok...", "INFO")
+        self._log("Bắt đầu chuẩn bị upload video...", "INFO")
         
         # Lấy tất cả giá trị GUI ở thread chính trước khi chạy ngầm
         selected_vids = [vid for vid, var in self._checkboxes.items() if var.get()]
@@ -2795,6 +2852,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         if do_tt: active_platforms.append("TikTok")
         if do_yt: active_platforms.append("YouTube")
         if do_fb: active_platforms.append("Facebook")
+        self._log(f"🎯 Nền tảng kích hoạt: {', '.join(active_platforms)}", "INFO")
 
         # Bắt đầu session ghi log độc lập
         try:
@@ -3085,8 +3143,18 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                                     self._log(f"✅ [TikTok - Luồng {slot+1}] Upload xong {len(results)}/{len(vids)} video ({account_file})!", "SUCCESS")
                                 else:
                                     self._log(f"⚠️ [TikTok - Luồng {slot+1}] Không upload được video nào ({account_file})! Vui lòng kiểm tra lại file.", "WARNING")
+                                    try:
+                                        from auth_client import auth_client
+                                        auth_client.send_telemetry("ERROR", f"[TikTok - {account_file}] 0/{len(vids)} video tải lên thành công (lỗi cookie hoặc bị chặn)")
+                                    except Exception:
+                                        pass
                             except Exception as e:
                                 self._log(f"❌ [TikTok - Luồng {slot+1}] Lỗi upload TikTok {account_file}: {e}", "ERROR")
+                                try:
+                                    from auth_client import auth_client
+                                    auth_client.send_telemetry("ERROR", f"[TikTok - {account_file}] Ngoại lệ: {e}")
+                                except Exception:
+                                    pass
                             finally:
                                 await uploader.close()
                         finally:
@@ -3218,6 +3286,21 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             self._log(status_msg, "SUCCESS" if fail_count == 0 else "WARNING")
             self._log("💡 Bạn có thể bấm nút '📜 Xem lịch sử Logs' ở trên để xem lại chi tiết bất cứ lúc nào.", "INFO")
             self._current_session_id = None
+
+        # Gửi telemetry về server cho Admin giám sát
+        try:
+            from auth_client import auth_client
+            active_p = []
+            if do_tt: active_p.append("TikTok")
+            if do_yt: active_p.append("YouTube")
+            if do_fb: active_p.append("Facebook")
+            p_str = ", ".join(active_p) if active_p else "Nền tảng"
+            if fail_count > 0:
+                auth_client.send_telemetry("ERROR", f"[Upload {p_str}] Hoàn tất {total_success}/{total_vids_count} video ({fail_count} thất bại/bỏ qua)")
+            elif total_vids_count > 0:
+                auth_client.send_telemetry("UPLOAD", f"[Upload {p_str}] Đã upload thành công {total_success}/{total_vids_count} video")
+        except Exception:
+            pass
 
         self.after(0, self._load_videos)
 
@@ -3471,9 +3554,20 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                         account_groups_fb[acc_fb] = []
                     account_groups_fb[acc_fb].append(vid)
 
+        if not account_groups_tt and not account_groups_yt and not account_groups_fb:
+            off_platforms = []
+            if not do_tt: off_platforms.append("TikTok")
+            if not do_yt: off_platforms.append("YouTube")
+            if not do_fb: off_platforms.append("Facebook")
+            off_msg = f" (Nền tảng đang bị TẮT ở cột cấu hình bên phải: {', '.join(off_platforms)})" if off_platforms else ""
+            self._log(f"⚠️ Không có video nào được chỉ định tài khoản hợp lệ trên các nền tảng đang kích hoạt!{off_msg}", "WARNING")
+            self._log("💡 Hướng dẫn: Cuộn thanh cuộn ở cột bên phải lên trên để BẬT công tắc nền tảng (ví dụ: TikTok), hoặc chọn tài khoản cụ thể cho từng video (tránh để 'Không up').", "INFO")
+            self.after(0, self._on_task_done)
+            return
+
         import asyncio
         import sys
-        if sys.platform == 'win32':
+        if sys.platform == 'win32' and sys.version_info < (3, 14):
             try:
                 asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
             except Exception:
@@ -4345,7 +4439,7 @@ class AccountsTab(ctk.CTkFrame, TaskMixin):
                     finally:
                         await uploader.close()
                 import sys
-                if sys.platform == 'win32':
+                if sys.platform == 'win32' and sys.version_info < (3, 14):
                     try:
                         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
                     except Exception:
@@ -6853,96 +6947,617 @@ class SettingsTab(ctk.CTkFrame):
                       font=("Segoe UI", 12, "bold")).pack(side="left")
 
     def _build_admin_logs(self, parent):
-        top_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        top_frame.pack(fill="x", padx=20, pady=(20, 10))
-        
-        ctk.CTkLabel(top_frame, text="Nhật ký Hoạt động (Realtime)", font=("Segoe UI", 16, "bold"), text_color=TEXT_MAIN).pack(side="left")
-        
-        btn_refresh = ctk.CTkButton(top_frame, text="🔄 Làm mới", width=100, fg_color=BORDER, hover_color=BG_CARD)
-        btn_refresh.pack(side="right")
-        
-        # Table Header
-        header = ctk.CTkFrame(parent, fg_color=BG_CARD, height=40, corner_radius=8)
-        header.pack(fill="x", padx=20, pady=(0, 10))
-        
-        cols = [("Thời gian", 150), ("User", 150), ("Action", 100), ("IP", 120), ("Chi tiết", 0)]
-        for text, width in cols:
-            lbl = ctk.CTkLabel(header, text=text, font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM, anchor="w")
-            if width > 0:
-                lbl.pack(side="left", padx=10, pady=8)
-                lbl.configure(width=width)
-            else:
-                lbl.pack(side="left", fill="x", expand=True, padx=10, pady=8)
-                
-        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=20, pady=(0, 20))
-        
+        # ── Biến trạng thái ──
+        all_logs_data = []
+        filtered_logs_cache = []
+        current_page = [1]
+        page_size_val = [25]
+        selected_log_ref = [None]
+        active_row_widget = [None]
+        search_timer = [None]
         is_loading = [False]
 
-        def _render_logs(succ, logs):
+        def _get_action_style(action, details):
+            action_up = str(action).upper()
+            dt = str(details).lower()
+            is_err = action_up == "ERROR" or any(w in dt for w in ["lỗi", "thất bại", "0 video", "hết hạn", "error", "failed"])
+            
+            if is_err:
+                return f"⚠️ {action_up if action_up != 'INFO' else 'LỖI'}", DANGER_BG, "#FCA5A5", True
+            elif action_up == "UPLOAD":
+                return "🚀 UPLOAD", SUCCESS_BG, "#6EE7B7", False
+            elif action_up == "PROCESS":
+                return "🎬 PROCESS", WARNING_BG, "#FDE68A", False
+            elif action_up == "CRAWL":
+                return "📥 CRAWL", CYAN_BG, "#67E8F9", False
+            elif action_up == "LOGIN":
+                return "🔑 LOGIN", ACCENT_BG, "#C4B5FD", False
+            else:
+                return f"ℹ️ {action_up}", "#1E293B", "#CBD5E1", False
+
+        # ── Dialog Popup xem chi tiết log ──
+        def _show_log_detail_dialog(log):
+            if not log:
+                return
+            root_win = self.winfo_toplevel()
+            dlg = ctk.CTkToplevel(root_win)
+            dlg.title(f"Chi tiết Hoạt động - {log.get('username', 'N/A')}")
+            w, h = 760, 520
+            dlg.minsize(580, 400)
+            dlg.transient(root_win)
+
+            try:
+                rx = root_win.winfo_rootx()
+                ry = root_win.winfo_rooty()
+                rw = root_win.winfo_width()
+                rh = root_win.winfo_height()
+                x = rx + max(0, (rw - w) // 2)
+                y = ry + max(0, (rh - h) // 2)
+                dlg.geometry(f"{w}x{h}+{x}+{y}")
+            except Exception:
+                dlg.geometry(f"{w}x{h}")
+
+            dlg.lift()
+            dlg.focus_force()
+
+            hdr_card = ctk.CTkFrame(dlg, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+            hdr_card.pack(fill="x", padx=20, pady=(16, 8))
+
+            action = log.get("action", "INFO")
+            details_content = str(log.get("details", ""))
+            act_text, act_bg, act_fg, is_error = _get_action_style(action, details_content)
+
+            row_title = ctk.CTkFrame(hdr_card, fg_color="transparent")
+            row_title.pack(fill="x", padx=16, pady=(12, 6))
+            ctk.CTkLabel(row_title, text=f" {act_text} ", font=("Segoe UI", 11, "bold"), text_color=act_fg, fg_color=act_bg, corner_radius=6).pack(side="left")
+            ctk.CTkLabel(row_title, text=f"  Nhật ký #{log.get('id', '')} - Người dùng: {log.get('username', 'N/A')}", font=("Segoe UI", 14, "bold"), text_color=TEXT_MAIN).pack(side="left", padx=8)
+
+            info_frame = ctk.CTkFrame(hdr_card, fg_color="transparent")
+            info_frame.pack(fill="x", padx=16, pady=(0, 12))
+            info_frame.grid_columnconfigure(1, weight=1)
+            info_frame.grid_columnconfigure(3, weight=1)
+
+            ctk.CTkLabel(info_frame, text="🕒 Thời gian:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).grid(row=0, column=0, sticky="w", pady=2)
+            ctk.CTkLabel(info_frame, text=log.get("time", ""), font=("Consolas", 12), text_color=TEXT_MAIN).grid(row=0, column=1, sticky="w", padx=8, pady=2)
+
+            ctk.CTkLabel(info_frame, text="🌐 Địa chỉ IP:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).grid(row=0, column=2, sticky="w", padx=(15, 0), pady=2)
+            ctk.CTkLabel(info_frame, text=log.get("ip_address", "N/A"), font=("Consolas", 12), text_color=TEXT_MAIN).grid(row=0, column=3, sticky="w", padx=8, pady=2)
+
+            ctk.CTkLabel(info_frame, text="👤 Tài khoản:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).grid(row=1, column=0, sticky="w", pady=2)
+            ctk.CTkLabel(info_frame, text=log.get("username", ""), font=("Segoe UI", 12, "bold"), text_color="#A78BFA").grid(row=1, column=1, sticky="w", padx=8, pady=2)
+
+            ctk.CTkLabel(info_frame, text="⚡ Trạng thái:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).grid(row=1, column=2, sticky="w", padx=(15, 0), pady=2)
+            stat_text = "Phát hiện LỖI / Thất bại" if is_error else "Hoạt động bình thường"
+            ctk.CTkLabel(info_frame, text=stat_text, font=("Segoe UI", 11, "bold"), text_color=DANGER if is_error else SUCCESS).grid(row=1, column=3, sticky="w", padx=8, pady=2)
+
+            ctk.CTkLabel(dlg, text="📋 Nội dung chi tiết hoạt động & Thông báo lỗi:", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", padx=20, pady=(4, 6))
+
+            txt_details = ctk.CTkTextbox(dlg, font=("Consolas", 12), fg_color=BG_CARD, border_width=1, border_color="#f38ba8" if is_error else BORDER, wrap="word")
+            txt_details.pack(fill="both", expand=True, padx=20, pady=(0, 14))
+            txt_details.insert("1.0", details_content)
+            txt_details.configure(state="disabled")
+
+            btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
+            btn_row.pack(fill="x", padx=20, pady=(0, 16))
+
+            def _copy_details():
+                dlg.clipboard_clear()
+                copy_text = f"Thời gian: {log.get('time')}\nUser: {log.get('username')}\nAction: {action}\nIP: {log.get('ip_address')}\nTrạng thái: {stat_text}\n\nNội dung chi tiết:\n{details_content}"
+                dlg.clipboard_append(copy_text)
+                btn_copy.configure(text="✅ Đã sao chép!", fg_color=SUCCESS)
+                dlg.after(2000, lambda: btn_copy.configure(text="📋 Sao chép toàn bộ", fg_color=BORDER))
+
+            btn_copy = ctk.CTkButton(btn_row, text="📋 Sao chép toàn bộ", width=160, height=32, font=("Segoe UI", 11, "bold"), fg_color=BORDER, hover_color=BG_CARD, command=_copy_details)
+            btn_copy.pack(side="left")
+
+            btn_close = ctk.CTkButton(btn_row, text="✕ Đóng", width=100, height=32, font=("Segoe UI", 11, "bold"), fg_color=ACCENT, hover_color=ACCENT_HOVER, command=dlg.destroy)
+            btn_close.pack(side="right")
+
+        # ── 1. Top Bar: Header & Live Action Buttons ──
+        top_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        top_frame.pack(fill="x", padx=20, pady=(14, 6))
+
+        title_box = ctk.CTkFrame(top_frame, fg_color="transparent")
+        title_box.pack(side="left")
+
+        ctk.CTkLabel(title_box, text="⚡ Nhật Ký Hoạt Động & Live Telemetry", font=("Segoe UI", 18, "bold"), text_color=TEXT_MAIN).pack(anchor="w")
+        ctk.CTkLabel(title_box, text="Theo dõi sự kiện thời gian thực, giám sát tiến trình người dùng và chẩn đoán sự cố hệ thống", font=("Segoe UI", 11), text_color=TEXT_MUTED).pack(anchor="w", pady=(1, 0))
+
+        btn_refresh = ctk.CTkButton(top_frame, text="🔄 Làm mới dữ liệu", width=135, height=32, font=("Segoe UI", 11, "bold"), fg_color=ACCENT, hover_color=ACCENT_HOVER, corner_radius=8)
+        btn_refresh.pack(side="right")
+
+        # ── 2. KPI Stat Cards (4 Metric Badges) ──
+        kpi_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        kpi_frame.pack(fill="x", padx=20, pady=(4, 10))
+        kpi_frame.grid_columnconfigure((0, 1, 2, 3), weight=1, uniform="kpi")
+
+        def _create_kpi_card(col_idx, icon, title, initial_val, text_col, border_glow, click_filter_val=None):
+            card = ctk.CTkFrame(kpi_frame, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER, cursor="hand2")
+            card.grid(row=0, column=col_idx, sticky="ew", padx=4 if col_idx not in (0, 3) else (0 if col_idx == 0 else 0))
+            
+            inner = ctk.CTkFrame(card, fg_color="transparent")
+            inner.pack(fill="both", expand=True, padx=12, pady=8)
+            
+            t_box = ctk.CTkFrame(inner, fg_color="transparent")
+            t_box.pack(fill="x")
+            ctk.CTkLabel(t_box, text=f"{icon}  {title}", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left")
+            
+            lbl_v = ctk.CTkLabel(inner, text=str(initial_val), font=("Segoe UI", 20, "bold"), text_color=text_col)
+            lbl_v.pack(anchor="w", pady=(2, 0))
+
+            def _on_enter(e):
+                card.configure(border_color=border_glow, fg_color=BG_CARD_HOVER)
+            def _on_leave(e):
+                card.configure(border_color=BORDER, fg_color=BG_CARD)
+            
+            card.bind("<Enter>", _on_enter)
+            card.bind("<Leave>", _on_leave)
+            lbl_v.bind("<Enter>", _on_enter)
+            lbl_v.bind("<Leave>", _on_leave)
+            
+            if click_filter_val is not None:
+                def _on_click(e=None):
+                    entry_search.delete(0, "end")
+                    opt_user.set("Tất cả User")
+                    opt_action.set(click_filter_val)
+                    _apply_filter()
+                card.bind("<Button-1>", _on_click)
+                inner.bind("<Button-1>", _on_click)
+                t_box.bind("<Button-1>", _on_click)
+                lbl_v.bind("<Button-1>", _on_click)
+                
+            return lbl_v
+
+        lbl_kpi_total = _create_kpi_card(0, "📊", "Tổng Sự Kiện", "0", ACCENT_LIGHT, ACCENT, "Tất cả Action")
+        lbl_kpi_error = _create_kpi_card(1, "⚠️", "Sự Cố & Lỗi", "0", DANGER, DANGER, "⚠️ Chỉ xem LỖI / 0 video")
+        lbl_kpi_upload = _create_kpi_card(2, "🚀", "Tải Lên (Upload)", "0", SUCCESS, SUCCESS, "UPLOAD")
+        lbl_kpi_process = _create_kpi_card(3, "🎬", "Xử Lý & Cào", "0", CYAN, CYAN, "PROCESS")
+
+        def _update_kpi_metrics():
+            tot = len(all_logs_data)
+            err_cnt = 0
+            up_cnt = 0
+            proc_cnt = 0
+            for l in all_logs_data:
+                act = str(l.get("action", "")).upper()
+                dt = str(l.get("details", "")).lower()
+                if act == "ERROR" or any(w in dt for w in ["lỗi", "thất bại", "0 video", "hết hạn", "error", "failed"]):
+                    err_cnt += 1
+                if act == "UPLOAD":
+                    up_cnt += 1
+                elif act in ("PROCESS", "CRAWL"):
+                    proc_cnt += 1
+            lbl_kpi_total.configure(text=str(tot))
+            lbl_kpi_error.configure(text=str(err_cnt))
+            lbl_kpi_upload.configure(text=str(up_cnt))
+            lbl_kpi_process.configure(text=str(proc_cnt))
+
+        # ── 3. Toolbar Lọc & Tìm Kiếm ──
+        filter_bar = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        filter_bar.pack(fill="x", padx=20, pady=(0, 10))
+
+        row_filter = ctk.CTkFrame(filter_bar, fg_color="transparent")
+        row_filter.pack(fill="x", padx=14, pady=8)
+
+        entry_search = ctk.CTkEntry(
+            row_filter, placeholder_text="🔍 Tìm User, IP, nội dung lỗi...",
+            width=250, height=30, font=("Segoe UI", 11),
+            fg_color=BG_DARK, border_color=BORDER, corner_radius=8
+        )
+        entry_search.pack(side="left", padx=(0, 12))
+
+        ctk.CTkLabel(row_filter, text="👤 User:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=(0, 5))
+        opt_user = ctk.CTkOptionMenu(row_filter, values=["Tất cả User"], width=135, height=30, font=("Segoe UI", 11), fg_color=BG_DARK, button_color=BORDER, corner_radius=8)
+        opt_user.pack(side="left", padx=(0, 12))
+
+        ctk.CTkLabel(row_filter, text="⚡ Hành động:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=(0, 5))
+        opt_action = ctk.CTkOptionMenu(
+            row_filter,
+            values=["Tất cả Action", "⚠️ Chỉ xem LỖI / 0 video", "UPLOAD", "PROCESS", "CRAWL", "LOGIN"],
+            width=175, height=30, font=("Segoe UI", 11), fg_color=BG_DARK, button_color=BORDER, corner_radius=8
+        )
+        opt_action.pack(side="left", padx=(0, 12))
+
+        lbl_filter_status = ctk.CTkLabel(
+            row_filter, text="Khớp: 0 logs", font=("Segoe UI", 11, "bold"),
+            text_color=CYAN, fg_color=CYAN_BG, corner_radius=6, padx=10, pady=3
+        )
+        lbl_filter_status.pack(side="left")
+
+        def _reset_filters():
+            entry_search.delete(0, "end")
+            opt_user.set("Tất cả User")
+            opt_action.set("Tất cả Action")
+            _apply_filter()
+
+        btn_reset = ctk.CTkButton(
+            row_filter, text="✕ Đặt lại", width=75, height=28, font=("Segoe UI", 10, "bold"),
+            fg_color="transparent", border_width=1, border_color=BORDER, hover_color=BG_DARK,
+            text_color=TEXT_MUTED, corner_radius=6, command=_reset_filters
+        )
+        btn_reset.pack(side="right")
+
+        # ── 4. Card Chứa Bảng Dữ Liệu & Phân Trang ──
+        table_card = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        table_card.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+
+        # Header Bảng
+        header = ctk.CTkFrame(table_card, fg_color="#182032", height=38, corner_radius=6)
+        header.pack(fill="x", padx=6, pady=(6, 2))
+
+        # Cột Xem ở bên phải ghim cố định
+        lbl_xem = ctk.CTkLabel(header, text="🔍 Xem", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED, width=70, anchor="center")
+        lbl_xem.pack(side="right", padx=(6, 12), pady=6)
+
+        left_cols = [
+            ("🕒 Thời gian", 135),
+            ("👤 Người dùng", 125),
+            ("⚡ Hành động", 115),
+            ("🌐 Địa chỉ IP", 115),
+        ]
+        for text, width in left_cols:
+            lbl = ctk.CTkLabel(header, text=text, font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED, width=width, anchor="w")
+            lbl.pack(side="left", padx=8, pady=6)
+
+        lbl_details_hdr = ctk.CTkLabel(header, text="📋 Chi tiết hoạt động & Thông báo sự cố", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED, anchor="w")
+        lbl_details_hdr.pack(side="left", fill="x", expand=True, padx=8, pady=6)
+
+        # Scrollable rows
+        scroll = ctk.CTkScrollableFrame(table_card, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=6, pady=(0, 2))
+
+        # Pagination Bar (đặt gọn gàng ngay đáy table_card)
+        pagi_bar = ctk.CTkFrame(table_card, fg_color="#101522", height=38, corner_radius=6)
+        pagi_bar.pack(fill="x", padx=6, pady=(2, 6))
+
+        btn_prev = ctk.CTkButton(pagi_bar, text="◀ Trước", width=85, height=26, font=("Segoe UI", 10, "bold"), fg_color=BORDER, hover_color=BG_CARD, corner_radius=6)
+        btn_prev.pack(side="left", padx=(10, 6), pady=6)
+
+        lbl_pagination = ctk.CTkLabel(pagi_bar, text="Trang 1 / 1", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN)
+        lbl_pagination.pack(side="left", padx=8)
+
+        btn_next = ctk.CTkButton(pagi_bar, text="Sau ▶", width=85, height=26, font=("Segoe UI", 10, "bold"), fg_color=BORDER, hover_color=BG_CARD, corner_radius=6)
+        btn_next.pack(side="left", padx=(6, 16), pady=6)
+
+        ctk.CTkLabel(pagi_bar, text="Hiển thị mỗi trang:", font=("Segoe UI", 11), text_color=TEXT_MUTED).pack(side="left", padx=(10, 4))
+        opt_page_size = ctk.CTkOptionMenu(
+            pagi_bar, values=["25 logs", "50 logs", "100 logs"], width=95, height=26, font=("Segoe UI", 10),
+            fg_color=BG_DARK, button_color=BORDER, corner_radius=6
+        )
+        opt_page_size.pack(side="left")
+
+        def _on_page_size_change(val):
+            try:
+                page_size_val[0] = int(val.split()[0])
+            except Exception:
+                page_size_val[0] = 25
+            current_page[0] = 1
+            _render_current_page()
+
+        opt_page_size.configure(command=_on_page_size_change)
+
+        def _go_prev():
+            if current_page[0] > 1:
+                current_page[0] -= 1
+                _render_current_page()
+
+        def _go_next():
+            total_items = len(filtered_logs_cache)
+            total_pages = max(1, (total_items + page_size_val[0] - 1) // page_size_val[0])
+            if current_page[0] < total_pages:
+                current_page[0] += 1
+                _render_current_page()
+
+        btn_prev.configure(command=_go_prev)
+        btn_next.configure(command=_go_next)
+
+        # ── 5. Khung Kiểm Tra Nhanh (Smart Inspector Drawer) ──
+        inspector_frame = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        inspector_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+        # View thu gọn mặc định
+        collapsed_view = ctk.CTkFrame(inspector_frame, fg_color="transparent")
+        collapsed_view.pack(fill="x", padx=14, pady=6)
+
+        ctk.CTkLabel(
+            collapsed_view,
+            text="💡 Nhấp chuột vào bất kỳ dòng nào trên bảng để mở nhanh Khung kiểm tra chi tiết & Chẩn đoán sự cố tại đây",
+            font=("Segoe UI", 11), text_color=TEXT_MUTED
+        ).pack(side="left")
+
+        # View mở rộng chi tiết
+        expanded_view = ctk.CTkFrame(inspector_frame, fg_color="transparent")
+
+        exp_top = ctk.CTkFrame(expanded_view, fg_color="transparent")
+        exp_top.pack(fill="x", pady=(0, 6))
+
+        badge_inspect_action = ctk.CTkLabel(exp_top, text=" ACTION ", font=("Segoe UI", 10, "bold"), fg_color=ACCENT_BG, text_color=ACCENT_LIGHT, corner_radius=6)
+        badge_inspect_action.pack(side="left")
+
+        lbl_inspect_user = ctk.CTkLabel(exp_top, text="User", font=("Segoe UI", 12, "bold"), text_color="#A78BFA")
+        lbl_inspect_user.pack(side="left", padx=(8, 12))
+
+        lbl_inspect_time = ctk.CTkLabel(exp_top, text="", font=("Consolas", 11), text_color=TEXT_MUTED)
+        lbl_inspect_time.pack(side="left", padx=(0, 12))
+
+        lbl_inspect_ip = ctk.CTkLabel(exp_top, text="", font=("Consolas", 11), text_color=TEXT_MUTED)
+        lbl_inspect_ip.pack(side="left")
+
+        btn_inspect_close = ctk.CTkButton(
+            exp_top, text="✕ Thu gọn", width=75, height=22, font=("Segoe UI", 10, "bold"),
+            fg_color="transparent", border_width=1, border_color=BORDER, hover_color=BG_DARK, text_color=TEXT_MUTED
+        )
+        btn_inspect_close.pack(side="right")
+
+        btn_inspect_popup = ctk.CTkButton(
+            exp_top, text="🔍 Cửa sổ riêng", width=105, height=22, font=("Segoe UI", 10, "bold"),
+            fg_color="#2563EB", hover_color="#1D4ED8"
+        )
+        btn_inspect_popup.pack(side="right", padx=6)
+
+        btn_inspect_copy = ctk.CTkButton(
+            exp_top, text="📋 Sao chép", width=85, height=22, font=("Segoe UI", 10, "bold"),
+            fg_color=BORDER, hover_color=BG_DARK
+        )
+        btn_inspect_copy.pack(side="right")
+
+        # Khung nội dung chi tiết trong Drawer (Toàn chiều rộng)
+        exp_body = ctk.CTkFrame(expanded_view, fg_color="transparent")
+        exp_body.pack(fill="x", pady=(0, 4))
+
+        txt_inspect_details = ctk.CTkTextbox(
+            exp_body, height=80, font=("Consolas", 11),
+            fg_color=BG_DARK, border_width=1, border_color=BORDER, wrap="word"
+        )
+        txt_inspect_details.pack(fill="x", expand=True)
+
+        def _collapse_inspector():
+            if expanded_view.winfo_ismapped():
+                expanded_view.pack_forget()
+                collapsed_view.pack(fill="x", padx=14, pady=6)
+            if active_row_widget[0] and active_row_widget[0].winfo_exists():
+                try:
+                    active_row_widget[0].configure(fg_color=getattr(active_row_widget[0], "_def_bg", "transparent"))
+                except Exception:
+                    pass
+                active_row_widget[0] = None
+
+        btn_inspect_close.configure(command=_collapse_inspector)
+
+        def _select_log(log, row_widget=None):
+            selected_log_ref[0] = log
+            if active_row_widget[0] and active_row_widget[0].winfo_exists():
+                try:
+                    active_row_widget[0].configure(fg_color=getattr(active_row_widget[0], "_def_bg", "transparent"))
+                except Exception:
+                    pass
+            if row_widget and row_widget.winfo_exists():
+                row_widget.configure(fg_color="#263352")
+                active_row_widget[0] = row_widget
+
+            action = log.get("action", "")
+            details = str(log.get("details", ""))
+            act_text, act_bg, act_fg, is_err = _get_action_style(action, details)
+
+            if collapsed_view.winfo_ismapped():
+                collapsed_view.pack_forget()
+                expanded_view.pack(fill="x", padx=12, pady=8)
+
+            badge_inspect_action.configure(text=f" {act_text} ", fg_color=act_bg, text_color=act_fg)
+            lbl_inspect_user.configure(text=log.get("username", "N/A"))
+            lbl_inspect_time.configure(text=f"🕒 {log.get('time', '')}")
+            lbl_inspect_ip.configure(text=f"🌐 {log.get('ip_address', '')}")
+
+            txt_inspect_details.configure(state="normal")
+            txt_inspect_details.delete("1.0", "end")
+            txt_inspect_details.insert("1.0", details)
+            txt_inspect_details.configure(state="disabled", border_color="#f38ba8" if is_err else BORDER)
+
+        def _do_quick_copy():
+            log = selected_log_ref[0]
+            if not log:
+                return
+            self.clipboard_clear()
+            copy_text = f"Thời gian: {log.get('time')}\nUser: {log.get('username')}\nAction: {log.get('action')}\nIP: {log.get('ip_address')}\nChi tiết: {log.get('details')}"
+            self.clipboard_append(copy_text)
+            btn_inspect_copy.configure(text="✅ Đã chép!", fg_color=SUCCESS)
+            self.after(1500, lambda: btn_inspect_copy.configure(text="📋 Sao chép", fg_color=BORDER))
+
+        btn_inspect_copy.configure(command=_do_quick_copy)
+        btn_inspect_popup.configure(command=lambda: _show_log_detail_dialog(selected_log_ref[0]))
+
+        # ── 6. Render Trang Hiện Tại ──
+        def _render_current_page():
             if not scroll.winfo_exists():
                 return
             for widget in scroll.winfo_children():
-                try:
-                    widget.destroy()
-                except Exception:
-                    pass
-                
-            if not succ or not isinstance(logs, list):
-                ctk.CTkLabel(scroll, text="Không thể tải dữ liệu", text_color=DANGER).pack(pady=20)
-                return
-                
-            if not logs:
-                ctk.CTkLabel(scroll, text="Chưa có nhật ký hoạt động nào", text_color=TEXT_DIM).pack(pady=20)
+                try: widget.destroy()
+                except Exception: pass
+
+            total_items = len(filtered_logs_cache)
+            total_pages = max(1, (total_items + page_size_val[0] - 1) // page_size_val[0])
+            if current_page[0] > total_pages: current_page[0] = total_pages
+            if current_page[0] < 1: current_page[0] = 1
+
+            start_idx = (current_page[0] - 1) * page_size_val[0]
+            end_idx = min(start_idx + page_size_val[0], total_items)
+            page_items = filtered_logs_cache[start_idx:end_idx]
+
+            lbl_pagination.configure(text=f"Trang {current_page[0]} / {total_pages} • Hiển thị {start_idx+1 if total_items else 0} - {end_idx} trong {total_items} logs")
+            btn_prev.configure(state="normal" if current_page[0] > 1 else "disabled")
+            btn_next.configure(state="normal" if current_page[0] < total_pages else "disabled")
+
+            if not page_items:
+                empty_box = ctk.CTkFrame(scroll, fg_color="transparent")
+                empty_box.pack(pady=40)
+                ctk.CTkLabel(empty_box, text="🔍 Không tìm thấy nhật ký phù hợp", font=("Segoe UI", 13, "bold"), text_color=TEXT_MUTED).pack()
+                ctk.CTkLabel(empty_box, text="Thử thay đổi từ khóa tìm kiếm hoặc chọn 'Tất cả Action'", font=("Segoe UI", 11), text_color=TEXT_MUTED).pack(pady=(2, 0))
                 return
 
-            for idx, log in enumerate(logs):
-                bg_col = "#1e212b" if idx % 2 == 0 else "transparent"
-                row = ctk.CTkFrame(scroll, fg_color=bg_col, height=36, corner_radius=4)
-                row.pack(fill="x", pady=2)
-                
-                # Time
-                t_lbl = ctk.CTkLabel(row, text=log.get("time", ""), font=("Consolas", 11), text_color=TEXT_DIM, width=150, anchor="w")
-                t_lbl.pack(side="left", padx=10, pady=4)
-                
-                # User
-                u_lbl = ctk.CTkLabel(row, text=log.get("username", ""), font=("Segoe UI", 12, "bold"), text_color="#f38ba8", width=150, anchor="w")
-                u_lbl.pack(side="left", padx=10, pady=4)
-                
-                # Action
+            for idx, log in enumerate(page_items):
+                bg_col = "#111624" if idx % 2 == 0 else "transparent"
+                row = ctk.CTkFrame(scroll, fg_color=bg_col, height=36, corner_radius=6, cursor="hand2")
+                row._def_bg = bg_col
+                row.pack(fill="x", pady=1.5)
+
                 action = log.get("action", "")
-                act_col = SUCCESS if action == "UPLOAD" else (WARNING if action == "PROCESS" else (ACCENT if action == "CRAWL" else "#cba6f7"))
-                a_lbl = ctk.CTkLabel(row, text=f" {action} ", font=("Segoe UI", 10, "bold"), text_color=BG_DARK, fg_color=act_col, corner_radius=6, width=100)
-                a_lbl.pack(side="left", padx=10, pady=8)
-                
+                details_str = str(log.get("details", ""))
+                act_text, act_bg, act_fg, is_error = _get_action_style(action, details_str)
+
+                # Hover row highlight effect
+                def _on_row_enter(e, r=row):
+                    if active_row_widget[0] != r:
+                        r.configure(fg_color="#1D2538")
+
+                def _on_row_leave(e, r=row, def_bg=bg_col):
+                    if active_row_widget[0] != r:
+                        r.configure(fg_color=def_bg)
+
+                row.bind("<Enter>", _on_row_enter)
+                row.bind("<Leave>", _on_row_leave)
+                row.bind("<Button-1>", lambda e, l=log, r=row: _select_log(l, r))
+
+                # Time
+                t_lbl = ctk.CTkLabel(row, text=log.get("time", ""), font=("Consolas", 11), text_color=TEXT_DIM, width=135, anchor="w")
+                t_lbl.pack(side="left", padx=8, pady=4)
+                t_lbl.bind("<Button-1>", lambda e, l=log, r=row: _select_log(l, r))
+
+                # User
+                u_lbl = ctk.CTkLabel(row, text=f"👤 {log.get('username', '')}", font=("Segoe UI", 11, "bold"), text_color="#A78BFA", width=125, anchor="w")
+                u_lbl.pack(side="left", padx=8, pady=4)
+                u_lbl.bind("<Button-1>", lambda e, l=log, r=row: _select_log(l, r))
+
+                # Action Badge
+                a_box = ctk.CTkFrame(row, fg_color="transparent", width=115)
+                a_box.pack(side="left", padx=6, pady=4)
+                a_lbl = ctk.CTkLabel(a_box, text=f" {act_text} ", font=("Segoe UI", 10, "bold"), text_color=act_fg, fg_color=act_bg, corner_radius=6)
+                a_lbl.pack(side="left")
+                a_lbl.bind("<Button-1>", lambda e, l=log, r=row: _select_log(l, r))
+                a_box.bind("<Button-1>", lambda e, l=log, r=row: _select_log(l, r))
+
                 # IP
-                i_lbl = ctk.CTkLabel(row, text=log.get("ip_address", ""), font=("Consolas", 11), text_color=TEXT_DIM, width=120, anchor="w")
-                i_lbl.pack(side="left", padx=10, pady=4)
-                
-                # Details
-                d_lbl = ctk.CTkLabel(row, text=log.get("details", ""), font=("Segoe UI", 12), text_color=TEXT_MAIN, anchor="w")
-                d_lbl.pack(side="left", fill="x", expand=True, padx=10, pady=4)
+                i_lbl = ctk.CTkLabel(row, text=log.get("ip_address", "N/A"), font=("Consolas", 11), text_color=TEXT_MUTED, width=115, anchor="w")
+                i_lbl.pack(side="left", padx=8, pady=4)
+                i_lbl.bind("<Button-1>", lambda e, l=log, r=row: _select_log(l, r))
+
+                # Button Xem (Ghim cố định ở mép phải trước để luôn luôn hiển thị)
+                btn_v = ctk.CTkButton(
+                    row, text="Chi tiết", width=66, height=24, font=("Segoe UI", 10, "bold"),
+                    fg_color="#1E293B", hover_color=ACCENT, text_color="#F8FAFC", corner_radius=6,
+                    command=lambda l=log: _show_log_detail_dialog(l)
+                )
+                btn_v.pack(side="right", padx=(6, 12), pady=6)
+
+                # Details (Preview 1 dòng ngắn gọn, tự co giãn theo khoảng trống còn lại)
+                clean_dt = details_str.replace("\n", " ").strip()
+                if len(clean_dt) > 90:
+                    clean_dt = clean_dt[:87] + "..."
+                d_text = clean_dt if not is_error else f"⚠️  {clean_dt}"
+                d_color = "#FCA5A5" if is_error else TEXT_MAIN
+                d_lbl = ctk.CTkLabel(row, text=d_text, font=("Segoe UI", 11), text_color=d_color, anchor="w")
+                d_lbl.pack(side="left", fill="x", expand=True, padx=8, pady=4)
+                d_lbl.bind("<Button-1>", lambda e, l=log, r=row: _select_log(l, r))
+
+            try:
+                scroll._parent_canvas.yview_moveto(0)
+            except Exception:
+                pass
+
+        # ── 7. Lọc Dữ Liệu ──
+        def _apply_filter(*args):
+            query = entry_search.get().strip().lower()
+            selected_user = opt_user.get()
+            selected_action = opt_action.get()
+
+            filtered = []
+            for log in all_logs_data:
+                u = str(log.get("username", ""))
+                ip = str(log.get("ip_address", ""))
+                details = str(log.get("details", ""))
+                action = str(log.get("action", ""))
+
+                is_err = action == "ERROR" or any(w in details.lower() for w in ["lỗi", "thất bại", "0 video", "hết hạn", "error", "failed"])
+
+                if selected_user != "Tất cả User" and u != selected_user:
+                    continue
+
+                if selected_action == "⚠️ Chỉ xem LỖI / 0 video":
+                    if not is_err:
+                        continue
+                elif selected_action != "Tất cả Action":
+                    if action != selected_action:
+                        continue
+
+                if query:
+                    combined = f"{u} {ip} {details} {action}".lower()
+                    if query not in combined:
+                        continue
+
+                filtered.append(log)
+
+            filtered_logs_cache.clear()
+            filtered_logs_cache.extend(filtered)
+            current_page[0] = 1
+            lbl_filter_status.configure(text=f"Khớp: {len(filtered)}/{len(all_logs_data)} logs")
+            _render_current_page()
+
+        def _on_search_key(event=None):
+            if search_timer[0]:
+                self.after_cancel(search_timer[0])
+            search_timer[0] = self.after(250, _apply_filter)
+
+        entry_search.bind("<KeyRelease>", _on_search_key)
+        opt_user.configure(command=_apply_filter)
+        opt_action.configure(command=_apply_filter)
+
+        def _render_logs(succ, logs):
+            nonlocal all_logs_data
+            if not scroll.winfo_exists():
+                return
+
+            if not succ or not isinstance(logs, list):
+                for widget in scroll.winfo_children():
+                    try: widget.destroy()
+                    except Exception: pass
+                ctk.CTkLabel(scroll, text="Không thể tải dữ liệu nhật ký từ server", text_color=DANGER).pack(pady=20)
+                return
+
+            all_logs_data = logs
+            _update_kpi_metrics()
+
+            unique_users = sorted(list(set(str(l.get("username", "")) for l in logs if l.get("username"))))
+            curr_user_sel = opt_user.get()
+            opt_user.configure(values=["Tất cả User"] + unique_users)
+            if curr_user_sel in unique_users:
+                opt_user.set(curr_user_sel)
+            else:
+                opt_user.set("Tất cả User")
+
+            _apply_filter()
 
         def _fetch_logs():
             if is_loading[0]:
                 return
             is_loading[0] = True
+            btn_refresh.configure(state="disabled", text="⏳ Đang tải...")
             def _worker():
                 try:
                     from auth_client import auth_client
-                    succ, logs = auth_client.admin_get_logs(limit=100)
+                    succ, logs = auth_client.admin_get_logs(limit=500)
                 except Exception:
                     succ, logs = False, []
                 finally:
                     is_loading[0] = False
                 if scroll.winfo_exists():
-                    scroll.after(0, lambda: _render_logs(succ, logs))
+                    scroll.after(0, lambda: [
+                        btn_refresh.configure(state="normal", text="🔄 Làm mới dữ liệu"),
+                        _render_logs(succ, logs)
+                    ])
             threading.Thread(target=_worker, daemon=True).start()
 
         btn_refresh.configure(command=_fetch_logs)
         self._fetch_admin_logs = _fetch_logs
 
-        # Tải logs lần đầu an toàn
         self.after(300, lambda: _fetch_logs() if self.tabview.get() == "Hoạt động" else None)
 
 

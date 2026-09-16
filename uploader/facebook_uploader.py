@@ -492,7 +492,7 @@ class FacebookUploader:
 
             video_id = video.get("video_id") or str(video.get("id"))
             proc_path = video.get("processed_path")
-            drive_processed_id = video.get("drive_processed_id")
+            drive_processed_id = video.get("drive_processed_id") or video.get("drive_download_id")
             temp_downloaded_path = None
 
             if not proc_path or not Path(proc_path).exists():

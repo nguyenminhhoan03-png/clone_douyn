@@ -52,6 +52,8 @@ class VideoProcessor:
         
         whisper_model = self.config.get("whisper_model", os.getenv("WHISPER_MODEL", "base"))
         self.subtitle_generator = SubtitleGenerator(model_size=whisper_model) if self.config.get("auto_subtitle") else None
+        self.last_failed_videos = []
+        self.last_process_error = None
 
     @staticmethod
     def _get_font_path(font_name: str = "arial") -> str:
@@ -157,6 +159,7 @@ class VideoProcessor:
         input_path = Path(input_path)
         if not input_path.exists():
             msg = f"Lỗi: Không tìm thấy file gốc {input_path.name}"
+            self.last_process_error = msg
             logger.error(msg)
             if progress_cb: progress_cb(0, msg)
             return None
@@ -173,6 +176,7 @@ class VideoProcessor:
         video_duration = self._get_video_duration(str(input_path))
         if video_duration <= 0:
             msg = "Lỗi: Không thể đọc thời lượng video (Thiếu ffprobe hoặc file lỗi)"
+            self.last_process_error = msg
             logger.error(msg)
             if progress_cb: progress_cb(0, msg)
             return None
@@ -527,10 +531,12 @@ class VideoProcessor:
             # Lấy các dòng lỗi thực sự ở cuối stderr thay vì banner đầu file
             lines = [l.strip() for l in err_msg.strip().splitlines() if l.strip() and not l.startswith("frame=")]
             real_err = " | ".join(lines[-3:]) if lines else err_msg[:200]
+            self.last_process_error = f"Lỗi FFmpeg: {real_err[:200]}"
             if progress_cb: progress_cb(0, f"Lỗi FFmpeg: {real_err[:200]}")
             return None
         except Exception as e:
             logger.error(f"FFmpeg process error: {str(e)}")
+            self.last_process_error = f"Lỗi hệ thống: {str(e)[:200]}"
             if progress_cb: progress_cb(0, f"Lỗi hệ thống FFmpeg: {str(e)[:200]}")
             return None
         finally:
@@ -599,9 +605,9 @@ class VideoProcessor:
                         if uploader.download_file(drive_download_id, temp_downloaded_path):
                             input_path = temp_downloaded_path
                         else:
-                            raise Exception("Không thể tải video từ Google Drive")
+                            raise Exception(f"Không thể tải video từ Google Drive (Drive ID: {drive_download_id[:12]}...)")
                     else:
-                        raise Exception("Không tìm thấy file video (cả local và Drive)")
+                        raise Exception("Không tìm thấy file video nguồn (cả local và Drive đều không có)")
 
                 processed_path = self.process_video(input_path=input_path, title=title, progress_cb=cb)
                 if processed_path:
@@ -640,15 +646,21 @@ class VideoProcessor:
                         results.append(item)
                     return item
                 else:
-                    self.db.update_video_status(video_id=video_id, status="failed", error_message="Processing failed")
-                    cb(0, "Lỗi xử lý!")
+                    err_msg = getattr(self, "last_process_error", None) or "Xử lý thất bại (FFmpeg hoặc Subtitle/TTS lỗi)"
+                    self.db.update_video_status(video_id=video_id, status="failed", error_message=err_msg)
+                    cb(0, f"Lỗi xử lý: {err_msg[:60]}")
+                    with results_lock:
+                        self.last_failed_videos.append({"video_id": video_id, "title": title, "error": err_msg})
                     return None
 
             except Exception as e:
                 import traceback
                 logger.error(f"Lỗi không xác định khi xử lý video {video_id}: {traceback.format_exc()}")
-                self.db.update_video_status(video_id=video_id, status="failed", error_message=str(e))
-                cb(0, f"Lỗi Code: {str(e)[:100]}")
+                err_msg = str(e)
+                self.db.update_video_status(video_id=video_id, status="failed", error_message=err_msg)
+                cb(0, f"Lỗi: {err_msg[:60]}")
+                with results_lock:
+                    self.last_failed_videos.append({"video_id": video_id, "title": title, "error": err_msg})
                 return None
             finally:
                 # Clean up file tải tạm từ Drive nếu có

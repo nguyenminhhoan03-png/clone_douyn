@@ -74,7 +74,7 @@ class TikTokUploader:
     async def _init_browser(self):
         """Khởi tạo Playwright browser với cookies, proxy, và random fingerprint."""
         import sys
-        if sys.platform == 'win32':
+        if sys.platform == 'win32' and sys.version_info < (3, 14):
             try:
                 if not isinstance(asyncio.get_event_loop_policy(), asyncio.WindowsProactorEventLoopPolicy):
                     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -946,7 +946,7 @@ class TikTokUploader:
 
                 # Chuẩn bị file local từ Drive nếu cần
                 video_path = video.get("processed_path")
-                drive_processed_id = video.get("drive_processed_id")
+                drive_processed_id = video.get("drive_processed_id") or video.get("drive_download_id")
                 
                 # Nếu path Windows (E:\...) không tồn tại trên Linux VPS, thử tìm theo tên file trong PROCESSED_DIR hoặc DOWNLOADS_DIR
                 if video_path and not Path(video_path).exists():
