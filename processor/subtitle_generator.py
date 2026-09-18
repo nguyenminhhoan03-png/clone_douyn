@@ -266,7 +266,7 @@ class SubtitleGenerator:
             except Exception as e:
                 logger.warning(f"Không thể lưu _zh.srt: {e}")
                 
-            ai_provider = PROCESSOR_CONFIG.get("ai_provider") or os.getenv("AI_PROVIDER", "ollama_first")
+            ai_provider = PROCESSOR_CONFIG.get("ai_provider") or os.getenv("AI_PROVIDER", "cloud_first")
             ollama_url = PROCESSOR_CONFIG.get("ollama_url") or os.getenv("OLLAMA_URL", "http://localhost:11434")
             ollama_model = PROCESSOR_CONFIG.get("ollama_model") or os.getenv("OLLAMA_MODEL", "qwen2.5")
 

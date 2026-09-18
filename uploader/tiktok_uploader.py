@@ -249,18 +249,37 @@ class TikTokUploader:
 
     async def _check_network_and_proxy(self):
         """Kiểm tra IP hiện tại qua context để đảm bảo Proxy sống trước khi làm việc."""
-        try:
-            logger.info("🔍 Đang kiểm tra kết nối mạng và Proxy (Check IP)...")
-            response = await self.page.goto("https://api.ipify.org", timeout=15000)
-            if response and response.ok:
-                ip = await response.text()
-                logger.info(f"✅ KẾT NỐI THÀNH CÔNG. IP hiện tại: {ip.strip()}")
-            else:
-                raise Exception(f"HTTP Status: {response.status if response else 'No response'}")
-        except Exception as e:
-            err_msg = str(e).split('\n')[0]
-            logger.error(f"❌ Lỗi Proxy/Mạng: {err_msg}")
-            raise Exception(f"Lỗi Proxy/Mạng: {err_msg}")
+        endpoints = [
+            "https://api.ipify.org",
+            "https://icanhazip.com",
+            "https://ifconfig.me/ip"
+        ]
+        last_err = None
+        for url in endpoints:
+            try:
+                logger.info(f"🔍 Đang kiểm tra kết nối mạng và Proxy (Check IP qua {url})...")
+                response = await self.page.goto(url, timeout=12000)
+                if response and response.ok:
+                    ip = await response.text()
+                    logger.info(f"✅ KẾT NỐI THÀNH CÔNG. IP hiện tại: {ip.strip()}")
+                    return
+                else:
+                    last_err = f"HTTP Status: {response.status if response else 'No response'}"
+            except Exception as e:
+                err_str = str(e)
+                if "ERR_HTTP_RESPONSE_CODE_FAILURE" in err_str:
+                    last_err = "Proxy từ chối xác thực (HTTP 407/502 - Proxy hết hạn, sai User/Pass hoặc chưa Whitelist IP mạng của bạn trên trang mua Proxy)"
+                    break
+                elif "ERR_PROXY_CONNECTION_FAILED" in err_str:
+                    last_err = "Không thể kết nối đến máy chủ Proxy (Proxy Die/Offline hoặc sai Host:Port)"
+                    break
+                elif "Timeout" in err_str or "timed out" in err_str:
+                    last_err = f"Timeout kết nối qua Proxy (>12s) khi vào {url}"
+                else:
+                    last_err = err_str.split('\n')[0]
+
+        logger.error(f"❌ Lỗi Proxy/Mạng: {last_err}")
+        raise Exception(f"Lỗi Proxy/Mạng: {last_err}")
 
     async def _load_cookies(self):
         """Load cookies TikTok từ file JSON."""

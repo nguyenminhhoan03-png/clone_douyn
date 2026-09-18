@@ -44,6 +44,24 @@ class UsageLog(Base):
     action_type = Column(String) # 'upload_tiktok', 'upload_youtube', 'process_video'
     date_str = Column(String) # 'YYYY-MM-DD'
     count = Column(Integer, default=1)
+
+class Feedback(Base):
+    __tablename__ = "feedbacks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username = Column(String, index=True)
+    rating = Column(Integer, default=5) # 1 - 5 sao
+    category = Column(String, default="Đánh giá") # 'Đánh giá', 'Góp ý tính năng', 'Báo lỗi', 'Khác'
+    content = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class SystemConfig(Base):
+    __tablename__ = "system_configs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, unique=True, index=True)
+    value = Column(String)
     
 # Khởi tạo Database SQLite
 DB_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -52,3 +70,20 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Tự động migrate các cột mới nếu bảng users đã tồn tại từ trước
+    import sqlite3
+    db_file = os.path.join(DB_DIR, 'saas.db')
+    try:
+        conn = sqlite3.connect(db_file)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(users)")
+        cols = [row[1] for row in cursor.fetchall()]
+        if cols:
+            if "hwid" not in cols:
+                cursor.execute("ALTER TABLE users ADD COLUMN hwid TEXT")
+            if "plan_expires_at" not in cols:
+                cursor.execute("ALTER TABLE users ADD COLUMN plan_expires_at TIMESTAMP")
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        pass

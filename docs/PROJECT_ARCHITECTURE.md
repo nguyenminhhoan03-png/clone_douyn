@@ -42,12 +42,18 @@ tiktok-upload-video/
 
 ## 3. CÁC LUỒNG HOẠT ĐỘNG CHÍNH (CORE WORKFLOWS)
 
-### 3.1. Luồng Xác Thực & Phân Quyền (Auth & Permissions)
+### 3.1. Luồng Xác Thực, Bản Quyền & Phân Quyền (Auth & Licensing)
 - Người dùng đăng nhập qua `gui.py` -> Gọi `auth_client.py` -> Backend `main.py`.
-- Lấy được JWT Token và thông tin (Role, Giới hạn ngày).
-- **Giới hạn (Limits):** Ở các thao tác `_start_process` và `_start_upload` trong `gui.py`, luôn kiểm tra `role`:
-  - `role == "admin"`: Vô hạn.
-  - `role == "user"`: Mặc định tối đa **10 Video/Ngày** (Process/Upload). Sử dụng `db_manager.get_today_processed_count` để đếm.
+- **Tài khoản mới đăng ký (Free Trial 10 ngày)**:
+  - Khi đăng ký tài khoản qua `/register`, hệ thống tự động gán gói Free và thời hạn 10 ngày: `plan_expires_at = now + 10 days`.
+  - Hết thời hạn 10 ngày, tài khoản chuyển sang trạng thái hết hạn (`is_expired = True`). Các tab tác vụ (Crawl, Process, Upload, Auto, Farm) sẽ tự động khóa và điều hướng người dùng sang trang quét mã QR thanh toán để gia hạn.
+- **Hạn mức xử lý (Process Quota)**:
+  - `role == "admin"`: Toàn quyền, vô hạn lượt.
+  - `role == "vip"` hoặc `role == "pro"` (Gói bản quyền trả phí): Không giới hạn lượt render video.
+  - `role == "user"` (Gói Free dùng thử 10 ngày): Giới hạn tối đa **5 Video/Ngày** (kiểm tra qua `db_manager.get_today_processed_count` và lưu vết HWID theo ngày). Hạn mức tự động hồi 5 video sau 00:00 mỗi ngày.
+- **Cấu hình AI Dịch Thuật Mặc Định**:
+  - Đối với tài khoản gói Free, cấu hình AI mặc định được ưu tiên là **"Cloud API trước ➔ Dự phòng Ollama"** (`cloud_first`).
+  - Hệ thống sử dụng Cloud API có sẵn trên máy (Vilao / Gemini / Groq), nếu gặp sự cố hoặc hết quota sẽ tự động chuyển sang Ollama Local để cứu hộ không làm gián đoạn luồng xử lý.
 
 ### 3.2. Luồng Cách Ly Dữ Liệu Theo Người Dùng (Data Isolation)
 **RẤT QUAN TRỌNG:** Mọi file dữ liệu phải được lưu theo `username` của người đăng nhập hiện tại để tránh việc người dùng xem được file hoặc cấu hình của nhau.

@@ -184,5 +184,23 @@ Tài liệu này tổng hợp lại toàn bộ những lỗi (bugs) hóc búa, c
   - **Tối ưu tùy chọn tài nguyên Ollama**: Giảm `num_ctx: 2048` và `num_predict: 1024` để giảm 50% bộ nhớ đệm KV Cache trên RAM, giúp CPU xử lý nhanh hơn 25%.
   - **Khuyến nghị tốc độ siêu tốc (2 giây/video)**: Nếu muốn dịch siêu tốc 2 giây thay vì chờ CPU 40s, người dùng có thể cấu hình Groq API Key miễn phí (`gsk_...`) vào cài đặt để tận dụng chip LPU Cloud của Groq dịch 1000 từ/giây.
 
+
+## 11. Kiến Trúc Gói Free Trial (10 Ngày), Giới Hạn 5 Video/Ngày & AI Provider Mặc Định Cloud API
+- **Vấn đề**: Trước đây tài khoản dùng thử bị giới hạn cứng 4 video vĩnh viễn (lifetime) và không lưu ngày hết hạn khi đăng ký mới; cấu hình AI mặc định rơi về `ollama_first` khiến máy không có card đồ họa bị dịch chậm trên CPU.
+- **Giải pháp chuẩn hóa**:
+  1. **Tài khoản mới Free 10 Ngày**:
+     - Khi user đăng ký tại `/register`, server tính toán `plan_expires_at = datetime.utcnow() + timedelta(days=10)`.
+     - Endpoint `/me` trả về `expire_date` (định dạng `DD/MM/YYYY`), `is_expired` (boolean) và `days_left`.
+     - Hết 10 ngày, `is_expired == True`: Hệ thống tự động khóa quyền thao tác tại các tab Crawl, Process, Upload, Auto, Farm và hiển thị hộp thoại điều hướng quét mã QR gia hạn.
+  2. **Hạn mức 5 Video Process/Ngày**:
+     - Hàm `db_manager.get_today_processed_count(username)` đếm số video có `DATE(processed_at) = today` cho cả `username` và `clean_user`.
+     - File `.hw_trial.json` lưu trữ theo khóa ngày `{hwid: {"date": "YYYY-MM-DD", "count": N}}` để chống lách luật tạo nhiều account trên 1 máy tính.
+     - Sau 00:00 mỗi ngày, hạn mức 5 video tự động được làm mới cho người dùng.
+  3. **Mặc định AI Provider "Cloud API trước ➔ Dự phòng Ollama" (`cloud_first`)**:
+     - Người dùng gói Free mặc định được thiết lập `cloud_first`.
+     - Quy trình ưu tiên sử dụng Cloud API của hệ thống (`GEMINI_API_KEY` trong `.env` hoặc API key tùy chỉnh của user).
+     - Nếu Cloud API hết lượt, timeout hoặc gặp lỗi mạng, bộ điều phối `subtitle_generator.py` tự động chuyển sang Ollama Local cứu hộ, đảm bảo quy trình render luôn hoàn thành mượt mà.
+
 ---
 *Lưu ý cho AI Assistant: Luôn đọc file này trước khi propose các thay đổi kiến trúc hoặc debug các lỗi liên quan đến Playwright/Camoufox/Ollama/TTS/Whisper.*
+

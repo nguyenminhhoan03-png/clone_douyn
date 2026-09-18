@@ -342,8 +342,8 @@ class VideoProcessor:
             logger.info("  🎙️ Generating AI Vietnamese voiceover...")
             voiceover_path = get_user_processed_dir(self.current_username) / f"{input_path.stem}_voiceover.mp3"
             
-            tts_voice = self.config.get("tts_voice", "vi-VN-HoaiMyNeural")
-            tts_rate = self.config.get("tts_rate", "+0%")
+            tts_voice = self.config.get("tts_voice", "Multi")
+            tts_rate = self.config.get("tts_rate", "+15%")
             
             vo_result = generate_voiceover_from_srt(
                 str(srt_path), str(voiceover_path),

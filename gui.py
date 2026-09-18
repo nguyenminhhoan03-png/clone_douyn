@@ -79,8 +79,8 @@ class DashboardTab(ctk.CTkFrame):
             font=("Segoe UI", 22, "bold"), text_color=TEXT_MAIN,
         ).pack(anchor="w")
         ctk.CTkLabel(
-            title_box, text="Hệ thống Tự Động Hóa & Phân Tích Video Đa Nền Tảng AI",
-            font=("Segoe UI", 11), text_color=TEXT_MUTED,
+            title_box, text="Tự động hóa Video AI • 🎁 Miễn phí 10 ngày Full tính năng",
+            font=("Segoe UI", 11, "bold"), text_color="#FBBF24",
         ).pack(anchor="w", pady=(2, 0))
 
         # Nút hành động + Status Badge bên phải
@@ -231,9 +231,13 @@ class DashboardTab(ctk.CTkFrame):
                 self._card_expire.set_value(auth_client.user_info.get("expire_date", "Chưa có"))
                 
                 is_expired = auth_client.user_info.get("is_expired", True)
+                is_free = auth_client.user_info.get("is_free", False)
                 if is_expired:
                     self._card_status.set_value("HẾT HẠN")
                     self._card_features.set_value("Đã khóa")
+                elif is_free:
+                    self._card_status.set_value("Dùng thử Free")
+                    self._card_features.set_value("🎁 Free 10 Ngày")
                 else:
                     self._card_status.set_value("Hoạt động")
                     self._card_features.set_value("Mở khóa (Full)")
@@ -831,9 +835,9 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=960).pack(anchor="w", padx=14, pady=(0, 10))
         # Không grid lúc khởi tạo
 
-        # Khởi tạo 2 cột (Trái: Danh sách, Phải: Sidebar công cụ)
-        self.grid_columnconfigure(0, weight=5)
-        self.grid_columnconfigure(1, weight=4)
+        # Khởi tạo 2 cột (Trái: Danh sách, Phải: Sidebar công cụ cố định 380px)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=0, minsize=380)
         self.grid_rowconfigure(2, weight=1)
 
         # --- LEFT PANE ---
@@ -871,8 +875,8 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         self._log_toolbar.grid(row=2, column=0, sticky="ew", pady=(0, 4))
         self._log_widget.grid(row=3, column=0, sticky="nsew")
 
-        # --- RIGHT PANE (SIDEBAR) ---
-        right_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        # --- RIGHT PANE (SIDEBAR CẤU HÌNH CỐ ĐỊNH) ---
+        right_frame = ctk.CTkScrollableFrame(self, width=380, fg_color="transparent")
         right_frame.grid(row=2, column=1, sticky="nsew")
         right_frame.grid_columnconfigure(0, weight=1)
 
@@ -1112,12 +1116,12 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             values=["Giọng Nam", "Giọng Nữ", "Đa giọng (Đoản kịch)", "Vbee - Ngọc Huyền (Nữ)", "Vbee - Mai Phương (Nữ)", "Vbee - Minh Hoàng (Nam)", "Vbee - Đa giọng (Đoản kịch)"], 
             width=140, font=("Segoe UI", 11), fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
         )
-        self._opt_voice.set("Giọng Nữ")
+        self._opt_voice.set("Đa giọng (Đoản kịch)")
         self._opt_voice.pack(side="left", padx=(0, 10))
 
         ctk.CTkLabel(voice_tools, text="Tốc độ:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(0, 5))
-        self._entry_tts_rate = ctk.CTkEntry(voice_tools, width=45, placeholder_text="0%", font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
-        self._entry_tts_rate.insert(0, "0%")
+        self._entry_tts_rate = ctk.CTkEntry(voice_tools, width=45, placeholder_text="15%", font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_tts_rate.insert(0, "15%")
         self._entry_tts_rate.pack(side="left", padx=(0, 5))
         
         def _on_tts_slider(val):
@@ -1125,7 +1129,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             self._entry_tts_rate.insert(0, f"{int(val)}%")
             
         self._slider_tts_rate = ctk.CTkSlider(voice_tools, from_=-50, to=50, width=80, command=_on_tts_slider)
-        self._slider_tts_rate.set(0)
+        self._slider_tts_rate.set(15)
         self._slider_tts_rate.pack(side="left")
 
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
@@ -1228,10 +1232,11 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         if hasattr(self, "_status_badge") and not getattr(self, "is_running", False):
             trial_info = auth_client.get_trial_info()
             if not trial_info["is_unlimited"]:
+                max_allowed = trial_info.get("max_allowed", 5)
                 if trial_info["remaining"] > 0:
-                    self._status_badge.set(f"Dùng thử: Còn {trial_info['remaining']}/4 video", WARNING)
+                    self._status_badge.set(f"Dùng thử: Còn {trial_info['remaining']}/{max_allowed} video hôm nay", WARNING)
                 else:
-                    self._status_badge.set("Hết 4 lượt dùng thử", DANGER)
+                    self._status_badge.set(f"Hết {max_allowed} lượt render hôm nay", DANGER)
             else:
                 self._status_badge.set("Sẵn sàng", SUCCESS)
 
@@ -1641,14 +1646,16 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         # Kiểm tra quyền & giới hạn render video:
         # - Admin / Super Admin: Không giới hạn (Full luôn)
         # - Tài khoản đã mua gói (1M, 3M, 6M, 1Y, LT): Dùng theo gói, không giới hạn video
-        # - Tài khoản dùng thử (Free Trial): Giới hạn tối đa 4 video
+        # - Tài khoản dùng thử (Free Trial 10 ngày): Giới hạn tối đa 5 video/ngày
         trial_info = auth_client.get_trial_info()
         if not trial_info["is_unlimited"]:
+            max_allowed = trial_info.get("max_allowed", 5)
             if trial_info["remaining"] <= 0:
                 msg = (
-                    "🎁 TÀI KHOẢN DÙNG THỬ ĐÃ HẾT LƯỢT RENDER\n\n"
-                    f"Bạn đã sử dụng hết hạn mức {trial_info['max_allowed']} video dùng thử miễn phí.\n\n"
-                    "👉 Để tiếp tục render video KHÔNG GIỚI HẠN, vui lòng nâng cấp gói bản quyền tại tab [Cài đặt ➔ Bản Quyền]!"
+                    "🎁 TÀI KHOẢN DÙNG THỬ ĐÃ HẾT HẠN MỨC HÔM NAY\n\n"
+                    f"Bạn đã sử dụng hết hạn mức {max_allowed} video/ngày của gói dùng thử miễn phí.\n\n"
+                    f"Hạn mức sẽ được làm mới {max_allowed} video vào ngày mai.\n"
+                    "👉 Để tiếp tục render video KHÔNG GIỚI HẠN ngay bây giờ, vui lòng nâng cấp gói bản quyền tại tab [Cài đặt ➔ Bản Quyền]!"
                 )
                 if messagebox.askyesno("Hết Lượt Dùng Thử", msg + "\n\nBạn có muốn mở trang Gia Hạn ngay không?"):
                     try:
@@ -1665,8 +1672,8 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
             selected_ids = [vid for vid, var in self._checkboxes.items() if var.get()]
             if selected_ids and len(selected_ids) > trial_info["remaining"]:
                 ans = messagebox.askyesno(
-                    "Giới Hạn Dùng Thử",
-                    f"Tài khoản dùng thử của bạn chỉ còn lại {trial_info['remaining']} lượt render video miễn phí "
+                    "Giới Hạn Dùng Thử Trong Ngày",
+                    f"Tài khoản dùng thử hôm nay chỉ còn lại {trial_info['remaining']}/{max_allowed} lượt render video "
                     f"(bạn đang chọn {len(selected_ids)} video).\n\n"
                     f"Hệ thống sẽ chỉ render {trial_info['remaining']} video đầu tiên. Bạn có muốn tiếp tục không?"
                 )
@@ -1754,12 +1761,13 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         from auth_client import auth_client
         trial_info = auth_client.get_trial_info()
         if not trial_info["is_unlimited"]:
+            max_allowed = trial_info.get("max_allowed", 5)
             if trial_info["remaining"] <= 0:
-                self._log("Tài khoản dùng thử đã hết hạn mức 4 video render. Vui lòng nâng cấp bản quyền!", "ERROR")
+                self._log(f"Tài khoản dùng thử đã hết hạn mức {max_allowed} video hôm nay. Vui lòng đợi qua ngày mai hoặc nâng cấp bản quyền!", "ERROR")
                 self._on_task_done()
                 return
             if len(selected_ids) > trial_info["remaining"]:
-                self._log(f"Tài khoản dùng thử: Giới hạn chỉ render {trial_info['remaining']} video còn lại trong hạn mức.", "WARNING")
+                self._log(f"Tài khoản dùng thử: Giới hạn chỉ render {trial_info['remaining']} video còn lại trong hạn mức hôm nay.", "WARNING")
                 selected_ids = selected_ids[:trial_info["remaining"]]
 
         self._log(f"Bắt đầu xử lý {len(selected_ids)} video với {threads} luồng song song...", "INFO")
@@ -2037,9 +2045,9 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkLabel(self._help_frame, text=help_content, font=("Segoe UI", 11), text_color=TEXT_DIM, justify="left", wraplength=960).pack(anchor="w", padx=14, pady=(0, 10))
         # Không grid lúc khởi tạo
 
-        # Khởi tạo 2 cột (Trái: Danh sách, Phải: Sidebar công cụ)
-        self.grid_columnconfigure(0, weight=5)
-        self.grid_columnconfigure(1, weight=4)
+        # Khởi tạo 2 cột (Trái: Danh sách video, Phải: Sidebar cấu hình cố định độ rộng 380px)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=0, minsize=380)
         self.grid_rowconfigure(2, weight=1)
 
         # --- LEFT PANE ---
@@ -2048,29 +2056,37 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         left_frame.grid_columnconfigure(0, weight=1)
         left_frame.grid_rowconfigure(1, weight=1)
 
-        # Danh sách chọn video
+        # Danh sách chọn video - Header chia 2 hàng khoa học tránh tràn ngang
         list_header = ctk.CTkFrame(left_frame, fg_color="transparent")
-        list_header.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        ctk.CTkLabel(list_header, text="Danh sách Video đã xử lý:", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="left")
-        self._opt_author_filter_up = ctk.CTkOptionMenu(list_header, values=["Tất cả Kênh"], width=130, command=lambda _: self._load_videos())
+        list_header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+
+        # Hàng 1: Bộ lọc tác giả / kênh + Refresh
+        row_filter = ctk.CTkFrame(list_header, fg_color="transparent")
+        row_filter.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(row_filter, text="Danh sách Video đã xử lý:", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="left")
+        self._opt_author_filter_up = ctk.CTkOptionMenu(row_filter, values=["Tất cả Kênh"], width=130, command=lambda _: self._load_videos())
         self._opt_author_filter_up.pack(side="left", padx=(10, 0))
         self._btn_rename_author_up = ctk.CTkButton(
-            list_header, text="✏️ Đổi tên", width=75, height=24, font=("Segoe UI", 11, "bold"),
+            row_filter, text="✏️ Đổi tên", width=75, height=24, font=("Segoe UI", 11, "bold"),
             fg_color="#2980b9", hover_color="#3498db", command=self._rename_author_dialog
         )
         self._btn_rename_author_up.pack(side="left", padx=(6, 0))
         self._btn_delete_author_up = ctk.CTkButton(
-            list_header, text="🗑 Xóa nhóm", width=85, height=24, font=("Segoe UI", 11, "bold"),
+            row_filter, text="🗑 Xóa nhóm", width=85, height=24, font=("Segoe UI", 11, "bold"),
             fg_color="#c0392b", hover_color="#e74c3c", command=self._delete_author_dialog
         )
         self._btn_delete_author_up.pack(side="left", padx=(6, 0))
-        
-        ctk.CTkButton(list_header, text="🔄 Refresh", width=60, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._load_videos).pack(side="right")
-        ctk.CTkButton(list_header, text="🧹 Dọn rác", width=65, height=24, fg_color="#7f8c8d", hover_color="#95a5a6", command=self._clean_missing_videos).pack(side="right", padx=(0, 6))
-        ctk.CTkButton(list_header, text="🗑 Xóa", width=60, height=24, fg_color="#e74c3c", hover_color="#c0392b", command=self._delete_selected).pack(side="right", padx=(0, 6))
-        ctk.CTkButton(list_header, text="⏪ Về Process", width=85, height=24, fg_color="#f39c12", hover_color="#e67e22", command=self._revert_to_process).pack(side="right", padx=(0, 6))
-        ctk.CTkButton(list_header, text="✨ AI Caption", width=95, height=24, font=("Segoe UI", 11, "bold"), fg_color="#8e44ad", hover_color="#9b59b6", command=self._generate_batch_ai_captions).pack(side="right", padx=(0, 6))
-        ctk.CTkButton(list_header, text="☑ Chọn", width=55, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._toggle_selection).pack(side="right", padx=(0, 6))
+
+        ctk.CTkButton(row_filter, text="🔄 Refresh", width=65, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._load_videos).pack(side="right")
+        ctk.CTkButton(row_filter, text="🧹 Dọn rác", width=65, height=24, fg_color="#7f8c8d", hover_color="#95a5a6", command=self._clean_missing_videos).pack(side="right", padx=(0, 6))
+
+        # Hàng 2: Thanh công cụ thao tác hàng loạt
+        row_actions = ctk.CTkFrame(list_header, fg_color="transparent")
+        row_actions.pack(fill="x")
+        ctk.CTkButton(row_actions, text="☑ Chọn tất cả", width=90, height=24, fg_color=BORDER, hover_color=BG_CARD, command=self._toggle_selection).pack(side="left")
+        ctk.CTkButton(row_actions, text="✨ AI Caption", width=95, height=24, font=("Segoe UI", 11, "bold"), fg_color="#8e44ad", hover_color="#9b59b6", command=self._generate_batch_ai_captions).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(row_actions, text="⏪ Về Process", width=85, height=24, fg_color="#f39c12", hover_color="#e67e22", command=self._revert_to_process).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(row_actions, text="🗑 Xóa đã chọn", width=95, height=24, fg_color="#e74c3c", hover_color="#c0392b", command=self._delete_selected).pack(side="left", padx=(6, 0))
         
         self._video_list_frame = ctk.CTkScrollableFrame(left_frame, fg_color=BG_DARK, border_color=BORDER, border_width=1)
         self._video_list_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
@@ -2080,8 +2096,8 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._log_toolbar.grid(row=2, column=0, sticky="ew", pady=(0, 4))
         self._log_widget.grid(row=3, column=0, sticky="nsew")
 
-        # --- RIGHT PANE (SIDEBAR) ---
-        right_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        # --- RIGHT PANE (SIDEBAR CẤU HÌNH CỐ ĐỊNH) ---
+        right_frame = ctk.CTkScrollableFrame(self, width=380, fg_color="transparent")
         right_frame.grid(row=2, column=1, sticky="nsew")
         right_frame.grid_columnconfigure(0, weight=1)
 
@@ -2093,39 +2109,39 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
 
         # Cấu hình xếp dọc theo Sidebar
         config_frame = ctk.CTkFrame(opts, fg_color="transparent")
-        config_frame.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 14))
+        config_frame.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 14))
         
         # --- Cấu hình chung ---
         row_cfg_top = ctk.CTkFrame(config_frame, fg_color="transparent")
-        row_cfg_top.pack(fill="x", pady=(0, 6))
-        ctk.CTkLabel(row_cfg_top, text="Cấu hình chung", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(side="left")
+        row_cfg_top.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(row_cfg_top, text="⚙️ Cấu hình chung", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(side="left")
         ctk.CTkButton(
-            row_cfg_top, text="💾 Lưu cấu hình", width=95, height=24, font=("Segoe UI", 11, "bold"),
+            row_cfg_top, text="💾 Lưu cấu hình", width=100, height=26, font=("Segoe UI", 11, "bold"),
             fg_color="#2980b9", hover_color="#3498db", command=self._save_upload_config
         ).pack(side="right")
         
-        row1 = ctk.CTkFrame(config_frame, fg_color="transparent")
-        row1.pack(fill="x", pady=(0, 8))
-        
-        ctk.CTkLabel(row1, text="Số video:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(0, 5))
-        self._entry_limit = ctk.CTkEntry(row1, width=45, font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
+        row_limit = ctk.CTkFrame(config_frame, fg_color="transparent")
+        row_limit.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(row_limit, text="Số video upload:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(0, 8))
+        self._entry_limit = ctk.CTkEntry(row_limit, width=50, height=26, font=("Segoe UI", 11, "bold"), justify="center", fg_color=BG_DARK, border_color=BORDER)
         self._entry_limit.insert(0, "4")
-        self._entry_limit.pack(side="left", padx=(0, 15))
+        self._entry_limit.pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(row_limit, text="video / lần", font=("Segoe UI", 10), text_color=TEXT_MUTED).pack(side="left")
         
-        self._sw_cleanup_upload = ctk.CTkSwitch(row1, text="Dọn dẹp file sau đăng", font=("Segoe UI", 11), text_color=TEXT_MAIN)
+        # Các switch cấu hình - Mỗi switch 1 dòng riêng để không bị đè mất chữ
+        self._sw_cleanup_upload = ctk.CTkSwitch(
+            config_frame, text="Dọn dẹp file sau khi đăng", font=("Segoe UI", 11), text_color=TEXT_MAIN
+        )
         self._sw_cleanup_upload.select()
-        self._sw_cleanup_upload.pack(side="left")
+        self._sw_cleanup_upload.pack(anchor="w", pady=(0, 8))
 
         # Bật/Tắt Hiện Trình Duyệt khi Upload (Headless)
-        row_browser = ctk.CTkFrame(config_frame, fg_color="transparent")
-        row_browser.pack(fill="x", pady=(0, 12))
-
         self._sw_show_browser = ctk.CTkSwitch(
-            row_browser, text="Hiện trình duyệt khi upload ❔", font=("Segoe UI", 11, "bold"),
+            config_frame, text="Hiện trình duyệt khi upload ❔", font=("Segoe UI", 11, "bold"),
             text_color=TEXT_MAIN, cursor="hand2"
         )
         self._sw_show_browser.select() # Mặc định BẬT
-        self._sw_show_browser.pack(side="left")
+        self._sw_show_browser.pack(anchor="w", pady=(0, 4))
         ToolTip(self._sw_show_browser, "BẬT (ON): Mở cửa sổ trình duyệt Chrome để xem trực tiếp quá trình tải video lên TikTok.\nTẮT (OFF): Chạy ẩn ngầm (Headless) tiết kiệm tối đa RAM & CPU, không mở cửa sổ làm phiền màn hình làm việc.")
 
         # Khôi phục cấu hình trước đó nếu có
@@ -2147,168 +2163,180 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
 
         # --- Nền tảng Đăng ---
-        ctk.CTkLabel(config_frame, text="Nền tảng Upload", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
+        ctk.CTkLabel(config_frame, text="Nền tảng Upload", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 6))
         
-        row2 = ctk.CTkFrame(config_frame, fg_color="transparent")
-        row2.pack(fill="x", pady=(0, 12))
+        row2 = ctk.CTkFrame(config_frame, fg_color=BG_DARK, corner_radius=8, border_width=1, border_color=BORDER)
+        row2.pack(fill="x", pady=(0, 6), ipady=4)
+        row2.grid_columnconfigure((0, 1, 2), weight=1)
         
-        self._sw_platform_tt = ctk.CTkSwitch(row2, text="TikTok", font=("Segoe UI", 11))
+        self._sw_platform_tt = ctk.CTkSwitch(row2, text="TikTok", font=("Segoe UI", 11, "bold"))
         self._sw_platform_tt.select()
-        self._sw_platform_tt.pack(side="left", padx=(0, 20))
+        self._sw_platform_tt.grid(row=0, column=0, padx=(10, 4), pady=4, sticky="w")
         
-        self._sw_platform_yt = ctk.CTkSwitch(row2, text="YouTube", font=("Segoe UI", 11))
+        self._sw_platform_yt = ctk.CTkSwitch(row2, text="YouTube", font=("Segoe UI", 11, "bold"))
         self._sw_platform_yt.select()
-        self._sw_platform_yt.pack(side="left", padx=(0, 20))
+        self._sw_platform_yt.grid(row=0, column=1, padx=(4, 4), pady=4, sticky="w")
         
-        self._sw_platform_fb = ctk.CTkSwitch(row2, text="Facebook", font=("Segoe UI", 11))
+        self._sw_platform_fb = ctk.CTkSwitch(row2, text="Facebook", font=("Segoe UI", 11, "bold"))
         self._sw_platform_fb.select()
-        self._sw_platform_fb.pack(side="left")
+        self._sw_platform_fb.grid(row=0, column=2, padx=(4, 6), pady=4, sticky="w")
 
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
 
         # --- Phân bổ tự động (Dải đều video) ---
-        ctk.CTkLabel(config_frame, text="⚡ Phân bổ tự động (Dải đều nick)", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
+        ctk.CTkLabel(config_frame, text="⚡ Phân bổ tự động (Dải đều nick)", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 6))
         
         row_dist = ctk.CTkFrame(config_frame, fg_color="transparent")
         row_dist.pack(fill="x", pady=(0, 8))
         
-        ctk.CTkLabel(row_dist, text="Số video / nick:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(0, 5))
-        self._entry_vids_per_acc = ctk.CTkEntry(row_dist, width=45, font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
+        ctk.CTkLabel(row_dist, text="Số video / nick:", font=("Segoe UI", 11), text_color=TEXT_DIM).pack(side="left", padx=(0, 6))
+        self._entry_vids_per_acc = ctk.CTkEntry(row_dist, width=45, height=26, font=("Segoe UI", 11, "bold"), justify="center", fg_color=BG_DARK, border_color=BORDER)
         self._entry_vids_per_acc.insert(0, "2")
         self._entry_vids_per_acc.pack(side="left", padx=(0, 10))
         
         self._sw_round_robin = ctk.CTkSwitch(row_dist, text="Lặp vòng", font=("Segoe UI", 11), text_color=TEXT_MAIN)
-        self._sw_round_robin.pack(side="left")
+        self._sw_round_robin.pack(side="right")
         
         self._btn_dist_all = ctk.CTkButton(
-            config_frame, text="🔀 Dải đều tất cả nền tảng", height=28, font=("Segoe UI", 11, "bold"),
+            config_frame, text="🔀 Dải đều tất cả nền tảng", height=30, font=("Segoe UI", 11, "bold"),
             fg_color="#2980b9", hover_color="#3498db", command=self._distribute_all
         )
-        self._btn_dist_all.pack(fill="x", pady=(0, 6))
+        self._btn_dist_all.pack(fill="x", pady=(0, 8))
 
         # --- Cấu hình Đa luồng Upload (Concurrent Threads) ---
         row_threads = ctk.CTkFrame(config_frame, fg_color="transparent")
-        row_threads.pack(fill="x", pady=(2, 6))
+        row_threads.pack(fill="x", pady=(2, 4))
 
-        lbl_threads = ctk.CTkLabel(row_threads, text="🚀 Số luồng up: ❔", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN, cursor="hand2")
+        lbl_threads = ctk.CTkLabel(row_threads, text="🚀 Số luồng upload: ❔", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN, cursor="hand2")
         lbl_threads.pack(side="left", padx=(0, 6))
         ToolTip(lbl_threads, "Số lượng tài khoản / trình duyệt chạy upload đồng thời cùng lúc.\nVí dụ: Nhập 5 thì hệ thống sẽ mở 5 luồng upload song song cho 5 tài khoản thay vì chờ lần lượt từng nick.")
 
-        self._entry_upload_threads = ctk.CTkEntry(row_threads, width=45, font=("Segoe UI", 11, "bold"), fg_color=BG_DARK, border_color=BORDER, justify="center")
+        self._entry_upload_threads = ctk.CTkEntry(row_threads, width=45, height=26, font=("Segoe UI", 11, "bold"), fg_color=BG_DARK, border_color=BORDER, justify="center")
         self._entry_upload_threads.insert(0, "3")
-        self._entry_upload_threads.pack(side="left", padx=(0, 6))
+        self._entry_upload_threads.pack(side="right")
 
-        for t_val in ["1", "3", "5"]:
+        # Nút chọn nhanh số luồng
+        row_thread_btns = ctk.CTkFrame(config_frame, fg_color="transparent")
+        row_thread_btns.pack(fill="x", pady=(2, 6))
+        row_thread_btns.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        for idx, t_val in enumerate(["1", "2", "3", "5"]):
             ctk.CTkButton(
-                row_threads, text=f"{t_val} luồng", width=52, height=24, font=("Segoe UI", 10),
+                row_thread_btns, text=f"{t_val} luồng", height=24, font=("Segoe UI", 10, "bold"),
                 fg_color=BORDER, hover_color=BG_CARD,
                 command=lambda v=t_val: self._set_upload_threads(v)
-            ).pack(side="left", padx=(0, 3))
+            ).grid(row=0, column=idx, padx=2, sticky="ew")
 
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
 
         # --- Tài khoản TikTok ---
-        ctk.CTkLabel(config_frame, text="Tài khoản TikTok mặc định", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
+        ctk.CTkLabel(config_frame, text="🎵 Tài khoản TikTok mặc định", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
         
         row3 = ctk.CTkFrame(config_frame, fg_color="transparent")
-        row3.pack(fill="x", pady=(0, 12))
+        row3.pack(fill="x", pady=(0, 10))
         
         accounts = self._get_tiktok_accounts()
         self._opt_account = ctk.CTkOptionMenu(
             row3, values=accounts, font=("Segoe UI", 11),
             fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
         )
-        self._opt_account.pack(fill="x", pady=(0, 5))
+        self._opt_account.pack(fill="x", pady=(0, 6))
         
         tt_btns = ctk.CTkFrame(row3, fg_color="transparent")
         tt_btns.pack(fill="x")
+        tt_btns.grid_columnconfigure((0, 1, 2), weight=1)
+
         self._btn_apply_acc = ctk.CTkButton(
-            tt_btns, text="Áp dụng All", width=80, height=24, font=("Segoe UI", 11),
+            tt_btns, text="Áp dụng All", height=26, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=self._apply_account_to_all
         )
-        self._btn_apply_acc.pack(side="left", padx=(0, 5))
+        self._btn_apply_acc.grid(row=0, column=0, sticky="ew", padx=(0, 3))
         
         self._btn_dist_acc = ctk.CTkButton(
-            tt_btns, text="🔀 Dải đều", width=75, height=24, font=("Segoe UI", 11, "bold"),
+            tt_btns, text="🔀 Dải đều", height=26, font=("Segoe UI", 11, "bold"),
             fg_color="#2980b9", hover_color="#3498db", command=lambda: self._distribute_single("tiktok")
         )
-        self._btn_dist_acc.pack(side="left", padx=(0, 5))
+        self._btn_dist_acc.grid(row=0, column=1, sticky="ew", padx=3)
         
         self._btn_manage_acc = ctk.CTkButton(
-            tt_btns, text="⚙ Quản lý", width=65, height=24, font=("Segoe UI", 11),
+            tt_btns, text="⚙ Quản lý", height=26, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=lambda: self.app._nav(5)
         )
-        self._btn_manage_acc.pack(side="left")
+        self._btn_manage_acc.grid(row=0, column=2, sticky="ew", padx=(3, 0))
 
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
 
         # --- Tài khoản YouTube ---
-        ctk.CTkLabel(config_frame, text="Tài khoản YouTube mặc định", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
+        ctk.CTkLabel(config_frame, text="🎬 Tài khoản YouTube mặc định", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
         
         row4 = ctk.CTkFrame(config_frame, fg_color="transparent")
-        row4.pack(fill="x", pady=(0, 12))
+        row4.pack(fill="x", pady=(0, 10))
         
         yt_accounts = self._get_youtube_accounts()
         self._opt_account_yt = ctk.CTkOptionMenu(
             row4, values=yt_accounts, font=("Segoe UI", 11),
             fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
         )
-        self._opt_account_yt.pack(fill="x", pady=(0, 5))
+        self._opt_account_yt.pack(fill="x", pady=(0, 6))
         
         yt_btns = ctk.CTkFrame(row4, fg_color="transparent")
         yt_btns.pack(fill="x")
+        yt_btns.grid_columnconfigure((0, 1, 2), weight=1)
+
         self._btn_apply_acc_yt = ctk.CTkButton(
-            yt_btns, text="Áp dụng All", width=80, height=24, font=("Segoe UI", 11),
+            yt_btns, text="Áp dụng All", height=26, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=self._apply_account_to_all_yt
         )
-        self._btn_apply_acc_yt.pack(side="left", padx=(0, 5))
+        self._btn_apply_acc_yt.grid(row=0, column=0, sticky="ew", padx=(0, 3))
         
         self._btn_dist_acc_yt = ctk.CTkButton(
-            yt_btns, text="🔀 Dải đều", width=75, height=24, font=("Segoe UI", 11, "bold"),
+            yt_btns, text="🔀 Dải đều", height=26, font=("Segoe UI", 11, "bold"),
             fg_color="#2980b9", hover_color="#3498db", command=lambda: self._distribute_single("youtube")
         )
-        self._btn_dist_acc_yt.pack(side="left", padx=(0, 5))
+        self._btn_dist_acc_yt.grid(row=0, column=1, sticky="ew", padx=3)
         
         self._btn_manage_acc_yt = ctk.CTkButton(
-            yt_btns, text="⚙ Quản lý", width=65, height=24, font=("Segoe UI", 11),
+            yt_btns, text="⚙ Quản lý", height=26, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=lambda: self.app._nav(5)
         )
-        self._btn_manage_acc_yt.pack(side="left")
+        self._btn_manage_acc_yt.grid(row=0, column=2, sticky="ew", padx=(3, 0))
 
         ctk.CTkFrame(config_frame, height=1, fg_color=BORDER).pack(fill="x", pady=10) # Divider
 
         # --- Tài khoản Facebook ---
-        ctk.CTkLabel(config_frame, text="Tài khoản Facebook mặc định", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
+        ctk.CTkLabel(config_frame, text="📘 Tài khoản Facebook mặc định", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(anchor="w", pady=(0, 5))
         
         row5 = ctk.CTkFrame(config_frame, fg_color="transparent")
-        row5.pack(fill="x", pady=(0, 12))
+        row5.pack(fill="x", pady=(0, 10))
         
         fb_accounts = self._get_facebook_accounts()
         self._opt_account_fb = ctk.CTkOptionMenu(
             row5, values=fb_accounts, font=("Segoe UI", 11),
             fg_color=BG_DARK, button_color=BORDER, button_hover_color=BG_CARD
         )
-        self._opt_account_fb.pack(fill="x", pady=(0, 5))
+        self._opt_account_fb.pack(fill="x", pady=(0, 6))
         
         fb_btns = ctk.CTkFrame(row5, fg_color="transparent")
         fb_btns.pack(fill="x")
+        fb_btns.grid_columnconfigure((0, 1, 2), weight=1)
+
         self._btn_apply_acc_fb = ctk.CTkButton(
-            fb_btns, text="Áp dụng All", width=80, height=24, font=("Segoe UI", 11),
+            fb_btns, text="Áp dụng All", height=26, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=self._apply_account_to_all_fb
         )
-        self._btn_apply_acc_fb.pack(side="left", padx=(0, 5))
+        self._btn_apply_acc_fb.grid(row=0, column=0, sticky="ew", padx=(0, 3))
         
         self._btn_dist_acc_fb = ctk.CTkButton(
-            fb_btns, text="🔀 Dải đều", width=75, height=24, font=("Segoe UI", 11, "bold"),
+            fb_btns, text="🔀 Dải đều", height=26, font=("Segoe UI", 11, "bold"),
             fg_color="#2980b9", hover_color="#3498db", command=lambda: self._distribute_single("facebook")
         )
-        self._btn_dist_acc_fb.pack(side="left", padx=(0, 5))
+        self._btn_dist_acc_fb.grid(row=0, column=1, sticky="ew", padx=3)
         
         self._btn_manage_acc_fb = ctk.CTkButton(
-            fb_btns, text="⚙ Quản lý", width=65, height=24, font=("Segoe UI", 11),
+            fb_btns, text="⚙ Quản lý", height=26, font=("Segoe UI", 11),
             fg_color=BORDER, hover_color=BG_CARD, command=lambda: self.app._nav(5)
         )
-        self._btn_manage_acc_fb.pack(side="left")
+        self._btn_manage_acc_fb.grid(row=0, column=2, sticky="ew", padx=(3, 0))
 
         # Buttons
         btn_row = ctk.CTkFrame(right_frame, fg_color="transparent")
@@ -3889,10 +3917,11 @@ class AutoTab(ctk.CTkFrame, TaskMixin):
         if source_mode == "urls":
             trial_info = auth_client.get_trial_info()
             if not trial_info["is_unlimited"] and trial_info["remaining"] <= 0:
+                max_allowed = trial_info.get("max_allowed", 5)
                 messagebox.showwarning(
-                    "Hết Lượt Dùng Thử",
-                    "🎁 Tài khoản dùng thử của bạn đã hoàn thành tối đa 4 video render.\n\n"
-                    "Vui lòng nâng cấp gói bản quyền tại tab [Cài đặt ➔ Bản Quyền] để tiếp tục sử dụng Auto Pipeline không giới hạn!"
+                    "Hết Lượt Dùng Thử Trong Ngày",
+                    f"🎁 Tài khoản dùng thử của bạn đã hoàn thành tối đa {max_allowed} video render trong ngày hôm nay.\n\n"
+                    "Hạn mức sẽ được làm mới vào ngày mai. Vui lòng nâng cấp gói bản quyền tại tab [Cài đặt ➔ Bản Quyền] để tiếp tục sử dụng Auto Pipeline không giới hạn!"
                 )
                 return
 
@@ -5325,9 +5354,7 @@ class SettingsTab(ctk.CTkFrame):
             widget.destroy()
             
         from auth_client import auth_client
-        role = auth_client.user_info.get("role", "user") if auth_client.user_info else "user"
-        
-        if role in ("admin", "super_admin"):
+        if auth_client.is_admin():
             self._build_admin()
         else:
             self._build_user()
@@ -5409,14 +5436,46 @@ class SettingsTab(ctk.CTkFrame):
         ai_frame.grid_columnconfigure(1, weight=1)
 
         import os
+        import json
         from dotenv import load_dotenv
         load_dotenv()
-        current_provider = (PROCESSOR_CONFIG.get("ai_provider") or os.getenv("AI_PROVIDER", "ollama_first")).lower()
-        existing_key = os.getenv("GEMINI_API_KEY", "")
-        if not existing_key and PROCESSOR_CONFIG.get("gemini_api_keys"):
-            existing_key = ",".join(PROCESSOR_CONFIG["gemini_api_keys"])
+        from auth_client import auth_client
+        from config.settings import COOKIES_DIR
+        
+        user_is_free = not auth_client.is_paid_user() and not auth_client.is_admin()
+        username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
+        user_clean = username.replace("@", "_").replace(".", "_")
+        user_settings_file = COOKIES_DIR / user_clean / "settings.json"
+
+        user_custom_key = ""
+        user_custom_model = "gemini-3.6-flash-high"
+        user_saved_provider = None
         ollama_url_val = os.getenv("OLLAMA_URL", "http://localhost:11434")
         ollama_model_val = os.getenv("OLLAMA_MODEL", "qwen2.5")
+
+        if user_settings_file.exists():
+            try:
+                with open(user_settings_file, "r", encoding="utf-8") as f:
+                    u_cfg = json.load(f)
+                    user_custom_key = u_cfg.get("gemini_api_key", "").strip()
+                    user_saved_provider = u_cfg.get("ai_provider")
+                    if u_cfg.get("ollama_url"):
+                        ollama_url_val = u_cfg.get("ollama_url")
+                    if u_cfg.get("ollama_model"):
+                        ollama_model_val = u_cfg.get("ollama_model")
+                    if u_cfg.get("custom_ai_model"):
+                        user_custom_model = u_cfg.get("custom_ai_model")
+            except Exception:
+                pass
+
+        saved_provider = user_saved_provider or PROCESSOR_CONFIG.get("ai_provider")
+        if user_is_free and not saved_provider:
+            current_provider = "cloud_first"
+        else:
+            current_provider = (saved_provider or os.getenv("AI_PROVIDER", "cloud_first")).lower()
+
+        # Kiểm tra quyền hạn Cloud AI hệ thống
+        has_shared_ai = auth_client.user_info.get("is_ai_enabled", True) if auth_client.user_info else True
 
         ctk.CTkLabel(ai_frame, text="Nhà cung cấp AI:", font=("Segoe UI", 13, "bold")).grid(row=0, column=0, padx=16, pady=(16, 8), sticky="w")
         
@@ -5437,9 +5496,9 @@ class SettingsTab(ctk.CTkFrame):
         elif current_provider in ("gemini", "groq", "vilao"):
             default_choice = "Cloud API trước ➔ Dự phòng Ollama"
         elif current_provider == "ollama":
-            default_choice = "Ollama trước ➔ Dự phòng Cloud API" if existing_key else "Chỉ dùng Ollama (Offline)"
+            default_choice = "Ollama trước ➔ Dự phòng Cloud API" if user_custom_key else "Chỉ dùng Ollama (Offline)"
         else:
-            default_choice = "Cloud API trước ➔ Dự phòng Ollama" if existing_key else "Ollama trước ➔ Dự phòng Cloud API"
+            default_choice = "Cloud API trước ➔ Dự phòng Ollama"
 
         self._opt_provider_user = ctk.CTkOptionMenu(
             ai_frame, values=provider_options, font=("Segoe UI", 12),
@@ -5489,37 +5548,65 @@ class SettingsTab(ctk.CTkFrame):
         self._frame_cloud_user = ctk.CTkFrame(ai_frame, fg_color="transparent")
         self._frame_cloud_user.grid_columnconfigure(1, weight=1)
 
-        self._lbl_key_title_user = ctk.CTkLabel(self._frame_cloud_user, text="API Key:", font=("Segoe UI", 12), text_color=TEXT_DIM)
-        self._lbl_key_title_user.grid(row=0, column=0, sticky="w", padx=(0, 12), pady=6)
+        # Thông báo trạng thái AI hệ thống
+        if has_shared_ai:
+            card_system_ai = ctk.CTkFrame(self._frame_cloud_user, fg_color="#0F291E", corner_radius=8, border_width=1, border_color="#10B981")
+            card_system_ai.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+            ctk.CTkLabel(
+                card_system_ai,
+                text="✨ Tài khoản được cấp quyền dùng Cloud AI Máy Chủ Hệ Thống (Bảo mật - Tự động kết nối).",
+                font=("Segoe UI", 11, "bold"), text_color="#34D399"
+            ).pack(anchor="w", padx=12, pady=8)
+            placeholder_text = "🔒 Đang dùng AI hệ thống (Chỉ nhập nếu muốn dùng API Key riêng)..."
+        else:
+            card_system_ai = ctk.CTkFrame(self._frame_cloud_user, fg_color="#2D1B00", corner_radius=8, border_width=1, border_color="#F59E0B")
+            card_system_ai.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+            ctk.CTkLabel(
+                card_system_ai,
+                text="⚠️ Gói cước cần tự túc API Key: Vui lòng nhập API Key cá nhân để sử dụng Cloud AI.",
+                font=("Segoe UI", 11, "bold"), text_color="#FBBF24"
+            ).pack(anchor="w", padx=12, pady=8)
+            placeholder_text = "Dán API Key Gemini / Groq cá nhân của bạn vào đây..."
+
+        self._lbl_key_title_user = ctk.CTkLabel(self._frame_cloud_user, text="API Key Cá Nhân:", font=("Segoe UI", 12), text_color=TEXT_DIM)
+        self._lbl_key_title_user.grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
 
         row_key_user = ctk.CTkFrame(self._frame_cloud_user, fg_color="transparent")
-        row_key_user.grid(row=0, column=1, sticky="ew", pady=6)
+        row_key_user.grid(row=1, column=1, sticky="ew", pady=6)
         row_key_user.grid_columnconfigure(0, weight=1)
 
-        self._entry_user_gemini = ctk.CTkEntry(row_key_user, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER, show="*")
-        if existing_key:
-            self._entry_user_gemini.insert(0, existing_key)
+        # KHÔNG nạp token hệ thống vào đây; chỉ nạp user_custom_key nếu chính user tự lưu trước đó
+        self._entry_user_gemini = ctk.CTkEntry(
+            row_key_user, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER,
+            show="*", placeholder_text=placeholder_text
+        )
+        if user_custom_key:
+            self._entry_user_gemini.insert(0, user_custom_key)
         self._entry_user_gemini.grid(row=0, column=0, sticky="ew")
 
-        btn_toggle_user_key = ctk.CTkButton(
-            row_key_user, text="👁", width=30, height=28, fg_color="transparent", hover_color=BG_CARD, text_color=TEXT_DIM,
-            command=lambda: self._entry_user_gemini.configure(show="" if self._entry_user_gemini.cget("show") == "*" else "*")
-        )
-        btn_toggle_user_key.grid(row=0, column=1, padx=(6, 0))
+        # TUYỆT ĐỐI KHÔNG để nút con mắt [👁] cho user thường và chặn copy / cut / chuột phải
+        def _block_action(e):
+            return "break"
+        self._entry_user_gemini.bind("<Control-c>", _block_action)
+        self._entry_user_gemini.bind("<Control-C>", _block_action)
+        self._entry_user_gemini.bind("<<Copy>>", _block_action)
+        self._entry_user_gemini.bind("<Control-x>", _block_action)
+        self._entry_user_gemini.bind("<Control-X>", _block_action)
+        self._entry_user_gemini.bind("<<Cut>>", _block_action)
+        self._entry_user_gemini.bind("<Button-3>", _block_action)
 
         # Model AI (cho Vilao.ai / Groq / Custom)
-        existing_model = os.getenv("CUSTOM_AI_MODEL", "gemini-3.6-flash-high")
-        ctk.CTkLabel(self._frame_cloud_user, text="Model AI:", font=("Segoe UI", 12), text_color=TEXT_DIM).grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
+        ctk.CTkLabel(self._frame_cloud_user, text="Model AI:", font=("Segoe UI", 12), text_color=TEXT_DIM).grid(row=2, column=0, sticky="w", padx=(0, 12), pady=6)
         self._entry_user_model = ctk.CTkEntry(self._frame_cloud_user, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER)
-        self._entry_user_model.insert(0, existing_model)
-        self._entry_user_model.grid(row=1, column=1, sticky="ew", pady=6)
+        self._entry_user_model.insert(0, user_custom_model)
+        self._entry_user_model.grid(row=2, column=1, sticky="ew", pady=6)
 
         self._lbl_cloud_hint_user = ctk.CTkLabel(
             self._frame_cloud_user,
-            text="* Hỗ trợ key Gemini / Groq (gsk_) / Vilao.ai (sk-...). Model mặc định: gemini-3.6-flash-high.",
+            text="* Hệ thống tự động dịch thuật qua Cloud AI. Tài nguyên máy chủ được mã hóa và bảo mật tối đa.",
             font=("Segoe UI", 11, "italic"), text_color=TEXT_DIM
         )
-        self._lbl_cloud_hint_user.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        self._lbl_cloud_hint_user.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
         # Nút Lưu cấu hình
         btn_save_key = ctk.CTkButton(
@@ -5615,18 +5702,18 @@ class SettingsTab(ctk.CTkFrame):
         elif "Chỉ dùng Cloud" in choice:
             self._frame_ollama_user.grid_forget()
             self._frame_cloud_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
-            self._lbl_key_title_user.configure(text="Cloud API Key:")
-            self._lbl_cloud_hint_user.configure(text="* Hỗ trợ key Gemini / Groq (gsk_) / Vilao.ai (sk-...).")
+            self._lbl_key_title_user.configure(text="API Key Cá Nhân:")
+            self._lbl_cloud_hint_user.configure(text="* Tự động dịch thuật qua Cloud AI máy chủ hệ thống.")
         elif "Cloud API trước" in choice:
             self._frame_cloud_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 6))
             self._frame_ollama_user.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
-            self._lbl_key_title_user.configure(text="Cloud API Key:")
-            self._lbl_cloud_hint_user.configure(text="* [ƯU TIÊN #1: CLOUD API] Nếu Cloud API lỗi/hết quota ➔ Tự động chuyển qua Ollama Local dự phòng.")
+            self._lbl_key_title_user.configure(text="API Key Cá Nhân:")
+            self._lbl_cloud_hint_user.configure(text="* [ƯU TIÊN #1: CLOUD AI] Tự động dịch qua Cloud Server. Nếu lỗi/mất mạng sẽ chuyển qua Ollama Local.")
         else: # Ollama trước ➔ Dự phòng Cloud API
             self._frame_ollama_user.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 6))
             self._frame_cloud_user.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 10))
-            self._lbl_key_title_user.configure(text="Cloud API Key:")
-            self._lbl_cloud_hint_user.configure(text="* [ƯU TIÊN #1: OLLAMA LOCAL] Nếu Ollama lỗi/chưa bật ➔ Tự động chuyển qua Cloud API dự phòng.")
+            self._lbl_key_title_user.configure(text="API Key Cá Nhân:")
+            self._lbl_cloud_hint_user.configure(text="* [ƯU TIÊN #1: OLLAMA LOCAL] Chạy máy tính trước. Nếu Ollama lỗi sẽ chuyển qua Cloud Server dự phòng.")
 
     def _test_ollama_user(self):
         url = self._entry_ollama_url_user.get().strip() or "http://localhost:11434"
@@ -5681,38 +5768,46 @@ class SettingsTab(ctk.CTkFrame):
         ollama_url = getattr(self, "_entry_ollama_url_user", ctk.CTkEntry(self)).get().strip() or "http://localhost:11434"
         ollama_model = getattr(self, "_combo_ollama_model_user", ctk.CTkComboBox(self)).get().strip() or "qwen2.5"
         gemini_key = self._entry_user_gemini.get().strip() if hasattr(self, "_entry_user_gemini") else ""
+        custom_model = self._entry_user_model.get().strip() if hasattr(self, "_entry_user_model") else "gemini-3.6-flash-high"
         
         from config.settings import BASE_DIR, PROCESSOR_CONFIG, COOKIES_DIR
-        env_path = BASE_DIR / ".env"
-        from dotenv import set_key
+        from auth_client import auth_client
         import os
-        
-        set_key(env_path, "AI_PROVIDER", provider)
-        set_key(env_path, "OLLAMA_URL", ollama_url)
-        set_key(env_path, "OLLAMA_MODEL", ollama_model)
-        os.environ["AI_PROVIDER"] = provider
-        os.environ["OLLAMA_URL"] = ollama_url
-        os.environ["OLLAMA_MODEL"] = ollama_model
-        
+        import json
+
+        # CHỈ ADMIN mới có quyền ghi đè file .env của hệ thống
+        if auth_client.is_admin():
+            from dotenv import set_key
+            env_path = BASE_DIR / ".env"
+            set_key(env_path, "AI_PROVIDER", provider)
+            set_key(env_path, "OLLAMA_URL", ollama_url)
+            set_key(env_path, "OLLAMA_MODEL", ollama_model)
+            os.environ["AI_PROVIDER"] = provider
+            os.environ["OLLAMA_URL"] = ollama_url
+            os.environ["OLLAMA_MODEL"] = ollama_model
+            if gemini_key:
+                set_key(env_path, "GEMINI_API_KEY", gemini_key)
+                os.environ["GEMINI_API_KEY"] = gemini_key
+            if custom_model:
+                set_key(env_path, "CUSTOM_AI_MODEL", custom_model)
+                os.environ["CUSTOM_AI_MODEL"] = custom_model
+
+        # Cập nhật runtime cho phiên làm việc
         PROCESSOR_CONFIG["ai_provider"] = provider
         PROCESSOR_CONFIG["ollama_url"] = ollama_url
         PROCESSOR_CONFIG["ollama_model"] = ollama_model
-        
-        if gemini_key:
-            set_key(env_path, "GEMINI_API_KEY", gemini_key)
-            os.environ["GEMINI_API_KEY"] = gemini_key
-            PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in gemini_key.split(",") if k.strip()]
-
-        custom_model = self._entry_user_model.get().strip() if hasattr(self, "_entry_user_model") else "gemini-3.6-flash-high"
         if custom_model:
-            set_key(env_path, "CUSTOM_AI_MODEL", custom_model)
-            os.environ["CUSTOM_AI_MODEL"] = custom_model
             PROCESSOR_CONFIG["custom_ai_model"] = custom_model
+            
+        if gemini_key:
+            PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in gemini_key.split(",") if k.strip()]
+        else:
+            # Nếu user không dùng key riêng, nạp key hệ thống nội bộ từ env (không lộ ra UI)
+            raw_env = os.getenv("GEMINI_API_KEY", "")
+            PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in raw_env.split(",") if k.strip()]
 
-        # Lưu cả vào settings.json của user
+        # Lưu riêng vào settings.json của user
         try:
-            from auth_client import auth_client
-            import json
             username = auth_client.user_info.get("username", "default") if auth_client.user_info else "default"
             user_clean = username.replace("@", "_").replace(".", "_")
             user_dir = COOKIES_DIR / user_clean
@@ -5732,6 +5827,9 @@ class SettingsTab(ctk.CTkFrame):
             user_data["ollama_model"] = ollama_model
             if gemini_key:
                 user_data["gemini_api_key"] = gemini_key
+            elif "gemini_api_key" in user_data:
+                del user_data["gemini_api_key"] # User xóa key để dùng lại key hệ thống
+                
             if custom_model:
                 user_data["custom_ai_model"] = custom_model
                 
@@ -5821,10 +5919,50 @@ class SettingsTab(ctk.CTkFrame):
             ]
             
         price_map = {}
+        pkg_detail_map = {}
         for p in paid_packages:
-            price_map[f"{p['name']}  —  {int(p['price']):,} đ"] = (int(p["price"]), p["code"])
+            can_ai = bool(p.get("can_use_ai", True))
+            ai_tag = "  [✨ Sẵn API AI]" if can_ai else "  [⚠️ Tự túc API Key]"
+            label = f"{p['name']}  —  {int(p['price']):,} đ{ai_tag}"
+            price_map[label] = (int(p["price"]), p["code"])
+            pkg_detail_map[label] = p
             
         options = list(price_map.keys())
+
+        # Dropdown chọn gói
+        opt_plan = ctk.CTkOptionMenu(
+            pkg_card, values=options, 
+            height=38, font=("Segoe UI", 13, "bold"),
+            fg_color=ACCENT, button_color=ACCENT_HOVER, button_hover_color="#6D28D9",
+            dropdown_font=("Segoe UI", 12)
+        )
+        opt_plan.pack(fill="x", padx=16, pady=(0, 10))
+
+        # Khung thông tin chi tiết quyền lợi & lưu ý AI API của gói được chọn
+        detail_frame = ctk.CTkFrame(pkg_card, fg_color="#101726", corner_radius=10, border_width=1, border_color="#1E293B")
+        detail_frame.pack(fill="x", padx=16, pady=(0, 14))
+
+        meta_row = ctk.CTkFrame(detail_frame, fg_color="transparent")
+        meta_row.pack(fill="x", padx=12, pady=(10, 4))
+        
+        lbl_pkg_days = ctk.CTkLabel(meta_row, text="⏳ Thời hạn: 30 ngày", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN)
+        lbl_pkg_days.pack(side="left", padx=(0, 16))
+        
+        lbl_pkg_quota = ctk.CTkLabel(meta_row, text="🚀 Hạn mức: Không giới hạn", font=("Segoe UI", 11, "bold"), text_color=CYAN)
+        lbl_pkg_quota.pack(side="left")
+
+        ai_note_card = ctk.CTkFrame(detail_frame, fg_color="#064E3B", corner_radius=8, border_width=1, border_color="#059669")
+        ai_note_card.pack(fill="x", padx=12, pady=(4, 10))
+
+        lbl_ai_note_title = ctk.CTkLabel(ai_note_card, text="✨ BAO GỒM API AI DÙNG CHUNG", font=("Segoe UI", 11, "bold"), text_color="#6EE7B7", anchor="w")
+        lbl_ai_note_title.pack(fill="x", padx=10, pady=(6, 2))
+
+        lbl_ai_note_desc = ctk.CTkLabel(
+            ai_note_card,
+            text="Đã tích hợp sẵn API Key máy chủ. Dịch Vietsub & lồng tiếng AI sẵn sàng sử dụng ngay mà không cần cấu hình thêm.",
+            font=("Segoe UI", 10), text_color="#D1FAE5", justify="left", wraplength=480, anchor="w"
+        )
+        lbl_ai_note_desc.pack(fill="x", padx=10, pady=(0, 6))
         
         # ─── 3. VietQR Card ──────────────────────────────────────────────────────────
         qr_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
@@ -5908,6 +6046,32 @@ class SettingsTab(ctk.CTkFrame):
             amount, package_code = price_map[selected_plan]
             lbl_amount.configure(text=f"{amount:,} đ")
             
+            p_data = pkg_detail_map.get(selected_plan, {})
+            days_val = p_data.get("days", 30)
+            max_daily = p_data.get("max_daily_videos", 9999)
+            can_ai = p_data.get("can_use_ai", True)
+
+            lbl_pkg_days.configure(text=f"⏳ Thời hạn: {days_val} ngày")
+            if max_daily >= 9999:
+                lbl_pkg_quota.configure(text="🚀 Hạn mức: Không giới hạn video/ngày", text_color=SUCCESS)
+            else:
+                lbl_pkg_quota.configure(text=f"📊 Hạn mức: Tối đa {max_daily} video/ngày", text_color=CYAN)
+
+            if can_ai:
+                ai_note_card.configure(fg_color="#064E3B", border_color="#059669")
+                lbl_ai_note_title.configure(text="✨ BAO GỒM API AI DÙNG CHUNG TỪ MÁY CHỦ", text_color="#6EE7B7")
+                lbl_ai_note_desc.configure(
+                    text="Gói này đã tích hợp sẵn API Key máy chủ. Dịch phụ đề Vietsub và lồng tiếng AI sẵn sàng sử dụng ngay mà không cần cấu hình thêm.",
+                    text_color="#D1FAE5"
+                )
+            else:
+                ai_note_card.configure(fg_color="#451A03", border_color="#D97706")
+                lbl_ai_note_title.configure(text="⚠️ LƯU Ý: GÓI TỰ TÚC API KEY (KHÔNG DÙNG API CHUNG)", text_color="#FDE68A")
+                lbl_ai_note_desc.configure(
+                    text="Gói này KHÔNG bao gồm API Key AI dùng chung từ máy chủ. Khách hàng chỉ cần nhập Gemini API Key cá nhân miễn phí (tạo tại aistudio.google.com) hoặc Groq/Ollama tại tab [Cài Đặt] để sử dụng các tính năng AI.",
+                    text_color="#FEF3C7"
+                )
+
             # Cập nhật lại nội dung chuyển khoản chứa Mã gói
             new_syntax = f"{prefix} {username.upper()} {package_code}"
             lbl_syntax_val.configure(text=new_syntax)
@@ -5938,14 +6102,8 @@ class SettingsTab(ctk.CTkFrame):
             import threading
             threading.Thread(target=fetch_qr, daemon=True).start()
 
-        opt_plan = ctk.CTkOptionMenu(
-            pkg_card, values=options, command=_update_qr, 
-            height=38, font=("Segoe UI", 13, "bold"),
-            fg_color=ACCENT, button_color=ACCENT_HOVER, button_hover_color="#6D28D9",
-            dropdown_font=("Segoe UI", 12)
-        )
+        opt_plan.configure(command=_update_qr)
         opt_plan.set(options[0])
-        opt_plan.pack(fill="x", padx=16, pady=(0, 14))
         
         # Load default QR
         _update_qr(options[0])
@@ -6012,6 +6170,8 @@ class SettingsTab(ctk.CTkFrame):
         self.tab_noti.grid_columnconfigure(0, weight=1)
         self.tab_logs = self.tabview.add("Hoạt động")
         self.tab_logs.grid_columnconfigure(0, weight=1)
+        self.tab_feedbacks = self.tabview.add("Đánh giá & Góp ý")
+        self.tab_feedbacks.grid_columnconfigure(0, weight=1)
         
         self._build_admin_system(self.tab_sys)
         self._build_admin_users(self.tab_users)
@@ -6020,6 +6180,7 @@ class SettingsTab(ctk.CTkFrame):
         self._build_admin_packages(self.tab_packages)
         self._build_admin_noti(self.tab_noti)
         self._build_admin_logs(self.tab_logs)
+        self._build_admin_feedbacks(self.tab_feedbacks)
 
         def _on_admin_tab_change():
             curr = self.tabview.get()
@@ -6027,6 +6188,8 @@ class SettingsTab(ctk.CTkFrame):
                 self._fetch_admin_logs()
             elif curr == "Người dùng":
                 self._load_users()
+            elif curr == "Đánh giá & Góp ý" and hasattr(self, "_fetch_admin_feedbacks"):
+                self._fetch_admin_feedbacks()
         self.tabview.configure(command=_on_admin_tab_change)
 
     def _build_admin_system(self, parent):
@@ -6078,7 +6241,7 @@ class SettingsTab(ctk.CTkFrame):
         import os
         from dotenv import load_dotenv
         load_dotenv()
-        current_provider = (PROCESSOR_CONFIG.get("ai_provider") or os.getenv("AI_PROVIDER", "ollama_first")).lower()
+        current_provider = (PROCESSOR_CONFIG.get("ai_provider") or os.getenv("AI_PROVIDER", "cloud_first")).lower()
         existing_key = os.getenv("GEMINI_API_KEY", "")
         if not existing_key and PROCESSOR_CONFIG.get("gemini_api_keys"):
             existing_key = ",".join(PROCESSOR_CONFIG["gemini_api_keys"])
@@ -6108,7 +6271,7 @@ class SettingsTab(ctk.CTkFrame):
         elif current_provider == "ollama":
             default_choice = "Ollama trước ➔ Dự phòng Cloud API" if existing_key else "Chỉ dùng Ollama (Offline)"
         else:
-            default_choice = "Cloud API trước ➔ Dự phòng Ollama" if existing_key else "Ollama trước ➔ Dự phòng Cloud API"
+            default_choice = "Cloud API trước ➔ Dự phòng Ollama"
 
         self._opt_provider_admin = ctk.CTkOptionMenu(
             ai, values=provider_options, font=("Segoe UI", 12),
@@ -6463,46 +6626,197 @@ class SettingsTab(ctk.CTkFrame):
 
     # ── ADMIN: User Management ────────────────────────────────────────────────
     def _build_admin_users(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(2, weight=1)
+
+        # 1. Top Bar
         top_bar = ctk.CTkFrame(parent, fg_color="transparent")
         top_bar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        
-        ctk.CTkLabel(top_bar, text="Danh sách Tài khoản", font=("Segoe UI", 16, "bold"), text_color=TEXT_MAIN).pack(side="left")
-        ctk.CTkButton(top_bar, text="🔄 Làm mới", width=80, height=28, fg_color=BORDER, hover_color=BG_CARD, command=self._load_users).pack(side="right", padx=5)
-        ctk.CTkButton(top_bar, text="➕ Thêm User", width=100, height=28, fg_color=SUCCESS, hover_color="#27ae60", command=self._add_user_dialog).pack(side="right", padx=5)
-        
-        self.user_list_frame = ctk.CTkScrollableFrame(parent, fg_color=BG_DARK, border_color=BORDER, border_width=1, height=350)
-        self.user_list_frame.grid(row=1, column=0, sticky="nsew")
-        parent.grid_rowconfigure(1, weight=1)
-        
+
+        title_box = ctk.CTkFrame(top_bar, fg_color="transparent")
+        title_box.pack(side="left")
+        ctk.CTkLabel(title_box, text="👥 Quản Lý Tài Khoản Người Dùng", font=("Segoe UI", 16, "bold"), text_color=TEXT_MAIN).pack(anchor="w")
+        self._lbl_users_count = ctk.CTkLabel(title_box, text="Xem thông tin chi tiết, gia hạn ngày và mở khóa thiết bị (HWID)", font=("Segoe UI", 11), text_color=TEXT_MUTED)
+        self._lbl_users_count.pack(anchor="w", pady=(1, 0))
+
+        ctk.CTkButton(top_bar, text="➕ Thêm User", width=110, height=32, font=("Segoe UI", 11, "bold"), fg_color=SUCCESS, hover_color="#27ae60", command=self._add_user_dialog).pack(side="right", padx=(6, 0))
+        ctk.CTkButton(top_bar, text="🔄 Làm mới", width=95, height=32, font=("Segoe UI", 11, "bold"), fg_color=BORDER, hover_color=BG_CARD, command=self._load_users).pack(side="right")
+
+        # 2. Filter Bar
+        filter_bar = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        filter_bar.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        fb_inner = ctk.CTkFrame(filter_bar, fg_color="transparent")
+        fb_inner.pack(fill="x", padx=12, pady=8)
+
+        self._entry_search_user = ctk.CTkEntry(fb_inner, placeholder_text="🔍 Tìm kiếm theo Username, Role hoặc gói cước...", height=32, font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_search_user.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        self._opt_filter_user = ctk.CTkOptionMenu(
+            fb_inner, values=["Tất cả User", "Active (Hoạt động)", "Hết hạn", "Quản trị viên (Admin)", "Gói Free"],
+            width=180, height=32, font=("Segoe UI", 11)
+        )
+        self._opt_filter_user.pack(side="left")
+
+        # 3. User List Frame (Scrollable)
+        self.user_list_frame = ctk.CTkScrollableFrame(parent, fg_color=BG_DARK, border_color=BORDER, border_width=1)
+        self.user_list_frame.grid(row=2, column=0, sticky="nsew")
+
+        self._cached_users_list = []
+
+        def _on_filter_changed(e=None):
+            self._render_filtered_users()
+
+        self._entry_search_user.bind("<KeyRelease>", _on_filter_changed)
+        self._opt_filter_user.configure(command=lambda c: self._render_filtered_users())
+
         # Gọi load user
         self.after(200, self._load_users)
 
+    def _render_filtered_users(self):
+        for w in self.user_list_frame.winfo_children():
+            try: w.destroy()
+            except Exception: pass
+
+        query = self._entry_search_user.get().strip().lower() if hasattr(self, "_entry_search_user") else ""
+        filt = self._opt_filter_user.get() if hasattr(self, "_opt_filter_user") else "Tất cả User"
+
+        filtered = []
+        for u in getattr(self, "_cached_users_list", []):
+            u_name = str(u.get("username", "")).lower()
+            role = str(u.get("role", "")).lower()
+            plan = str(u.get("plan_name", "")).lower()
+            is_exp = u.get("is_expired", True)
+
+            if query and (query not in u_name and query not in role and query not in plan):
+                continue
+
+            if filt == "Active (Hoạt động)" and is_exp:
+                continue
+            elif filt == "Hết hạn" and not is_exp:
+                continue
+            elif filt == "Quản trị viên (Admin)" and role not in ("admin", "super_admin"):
+                continue
+            elif filt == "Gói Free" and plan != "free":
+                continue
+
+            filtered.append(u)
+
+        if hasattr(self, "_lbl_users_count"):
+            tot = len(getattr(self, "_cached_users_list", []))
+            self._lbl_users_count.configure(text=f"Hiển thị: {len(filtered)}/{tot} tài khoản • Nhấn vào tài khoản để xem chi tiết thông tin")
+
+        if not filtered:
+            empty_box = ctk.CTkFrame(self.user_list_frame, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+            empty_box.pack(fill="x", pady=20, padx=10)
+            ctk.CTkLabel(empty_box, text="📭 Không tìm thấy tài khoản phù hợp.", font=("Segoe UI", 12), text_color=TEXT_MUTED).pack(pady=24)
+            return
+
+        for u in filtered:
+            card = ctk.CTkFrame(self.user_list_frame, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+            card.pack(fill="x", pady=4, padx=10)
+
+            # Left side
+            left_f = ctk.CTkFrame(card, fg_color="transparent")
+            left_f.pack(side="left", padx=12, pady=10, fill="x", expand=True)
+
+            role = u.get("role", "user")
+            is_adm = role in ("admin", "super_admin")
+            is_exp = u.get("is_expired", True)
+
+            # Row 1: Avatar, Username, Badges
+            r1 = ctk.CTkFrame(left_f, fg_color="transparent")
+            r1.pack(anchor="w")
+
+            u_btn = ctk.CTkButton(
+                r1, text=f"👤 {u['username']}", font=("Segoe UI", 13, "bold"),
+                fg_color="transparent", hover_color=BG_DARK, text_color="#A78BFA" if is_adm else TEXT_MAIN,
+                anchor="w", height=24, command=lambda user_obj=u: self._show_user_detail_dialog(user_obj)
+            )
+            u_btn.pack(side="left")
+
+            # Role chip
+            ctk.CTkLabel(
+                r1, text=f" {'👑 Admin' if is_adm else '👤 User'} ",
+                font=("Segoe UI", 10, "bold"),
+                text_color="#C4B5FD" if is_adm else "#94A3B8",
+                fg_color="#312E81" if is_adm else "#1E293B", corner_radius=6
+            ).pack(side="left", padx=6)
+
+            # Plan chip
+            plan_name = u.get("plan_name", "Free")
+            ctk.CTkLabel(
+                r1, text=f" 💎 {plan_name} ",
+                font=("Segoe UI", 10, "bold"), text_color="#FBBF24",
+                fg_color="#3B2A10", corner_radius=6
+            ).pack(side="left", padx=(0, 6))
+
+            # Status chip
+            stat_str = "Hết hạn" if is_exp else "Active"
+            ctk.CTkLabel(
+                r1, text=f" {stat_str} ",
+                font=("Segoe UI", 10, "bold"),
+                text_color=DANGER if is_exp else SUCCESS,
+                fg_color=DANGER_BG if is_exp else SUCCESS_BG, corner_radius=6
+            ).pack(side="left")
+
+            # Row 2: Sub-info (Expire date, HWID lock status, Created date)
+            r2 = ctk.CTkFrame(left_f, fg_color="transparent")
+            r2.pack(anchor="w", pady=(4, 0))
+
+            exp_d = u.get('expire_date', 'Chưa có')
+            hwid_txt = "🔒 Đã khóa máy" if (u.get("hwid") and "chưa" not in str(u.get("hwid")).lower()) else "🔓 Chưa gán máy"
+            sub_info = f"⏳ Hạn: {exp_d}   •   {hwid_txt}   •   📅 Tạo: {u.get('created_at', 'N/A')}"
+            ctk.CTkLabel(r2, text=sub_info, font=("Segoe UI", 11), text_color=TEXT_MUTED).pack(side="left")
+
+            # Right action buttons
+            btn_box = ctk.CTkFrame(card, fg_color="transparent")
+            btn_box.pack(side="right", padx=12, pady=10)
+
+            ctk.CTkButton(
+                btn_box, text="👁️ Chi tiết", width=75, height=28,
+                font=("Segoe UI", 11, "bold"), fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                command=lambda user_obj=u: self._show_user_detail_dialog(user_obj)
+            ).pack(side="left", padx=3)
+
+            ctk.CTkButton(
+                btn_box, text="✏️ Sửa", width=60, height=28,
+                font=("Segoe UI", 11), fg_color=BORDER, hover_color=BG_CARD,
+                command=lambda user_obj=u: self._edit_user_dialog(user_obj)
+            ).pack(side="left", padx=3)
+
+            ctk.CTkButton(
+                btn_box, text="🗑 Xóa", width=60, height=28,
+                font=("Segoe UI", 11), fg_color=DANGER, hover_color="#c0392b",
+                command=lambda user_id=u['id']: self._delete_user(user_id)
+            ).pack(side="left", padx=3)
+
     def _load_users(self):
         for w in self.user_list_frame.winfo_children():
-            w.destroy()
-            
-        from auth_client import auth_client
-        success, users = auth_client.admin_get_users()
-        if not success:
-            ctk.CTkLabel(self.user_list_frame, text=f"Lỗi: {users}", text_color=DANGER).pack(pady=20)
-            return
-            
-        if not users:
-            ctk.CTkLabel(self.user_list_frame, text="Không có dữ liệu", text_color=TEXT_DIM).pack(pady=20)
-            return
-            
-        for u in users:
-            card = ctk.CTkFrame(self.user_list_frame, fg_color=BG_CARD, corner_radius=8, border_width=1, border_color=BORDER)
-            card.pack(fill="x", pady=4, padx=10)
-            
-            status_text = "Hết hạn" if u.get('is_expired', True) else "Active"
-            info_str = f"👤 {u['username']}  |  🎖️ Role: {u['role']}  |  ⏳ Hết hạn: {u.get('expire_date', 'Chưa có')} ({status_text})"
-            ctk.CTkLabel(card, text=info_str, font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(side="left", padx=15, pady=10)
-            
-            ctk.CTkButton(card, text="🗑 Xóa", width=60, height=26, fg_color=DANGER, hover_color="#c0392b",
-                          command=lambda user_id=u['id']: self._delete_user(user_id)).pack(side="right", padx=(5, 15), pady=10)
-            ctk.CTkButton(card, text="✏️ Sửa", width=60, height=26, fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                          command=lambda user=u: self._edit_user_dialog(user)).pack(side="right", padx=5, pady=10)
+            try: w.destroy()
+            except Exception: pass
+
+        ctk.CTkLabel(self.user_list_frame, text="⏳ Đang tải danh sách tài khoản...", text_color=TEXT_MUTED).pack(pady=20)
+
+        def _worker():
+            from auth_client import auth_client
+            success, users = auth_client.admin_get_users()
+            def _done():
+                if not success:
+                    for w in self.user_list_frame.winfo_children():
+                        try: w.destroy()
+                        except Exception: pass
+                    ctk.CTkLabel(self.user_list_frame, text=f"Lỗi tải danh sách: {users}", text_color=DANGER).pack(pady=20)
+                    return
+                self._cached_users_list = users if isinstance(users, list) else []
+            try:
+                if self.winfo_exists():
+                    self.after(0, _done)
+            except Exception:
+                pass
+
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _add_user_dialog(self):
         self._user_form_dialog()
@@ -6621,6 +6935,349 @@ class SettingsTab(ctk.CTkFrame):
                 self._load_users()
             else:
                 messagebox.showerror("Lỗi", msg)
+
+    def _show_user_detail_dialog(self, user_or_username):
+        """Hiển thị popup xem đầy đủ thông tin chi tiết của tài khoản người dùng."""
+        root_win = self.winfo_toplevel()
+        dlg = ctk.CTkToplevel(root_win)
+        dlg.title("👤 Chi Tiết Tài Khoản Người Dùng")
+        dlg.geometry("580x660")
+        dlg.minsize(540, 560)
+        dlg.configure(fg_color=BG_DARK)
+        dlg.transient(root_win)
+        dlg.grab_set()
+
+        try:
+            rx = root_win.winfo_rootx()
+            ry = root_win.winfo_rooty()
+            rw = root_win.winfo_width()
+            rh = root_win.winfo_height()
+            x = rx + max(0, (rw - 580) // 2)
+            y = ry + max(0, (rh - 660) // 2)
+            dlg.geometry(f"580x660+{x}+{y}")
+        except Exception:
+            pass
+
+        target_user = None
+        if isinstance(user_or_username, dict):
+            target_user = dict(user_or_username)
+        else:
+            u_name = str(user_or_username).strip().lower()
+            cached = getattr(self, "_cached_users_list", [])
+            for u in cached:
+                if str(u.get("username", "")).lower() == u_name:
+                    target_user = dict(u)
+                    break
+            if not target_user:
+                from auth_client import auth_client
+                succ, u_list = auth_client.admin_get_users()
+                if succ and isinstance(u_list, list):
+                    self._cached_users_list = u_list
+                    for u in u_list:
+                        if str(u.get("username", "")).lower() == u_name:
+                            target_user = dict(u)
+                            break
+
+        # Tự động đồng bộ thêm id, hwid, created_at nếu bị thiếu (ví dụ truyền từ Feedback/Logs/Sidebar)
+        u_name = str(target_user.get("username", "") if target_user else user_or_username).strip().lower()
+        if target_user and (not target_user.get("id") or not target_user.get("created_at") or target_user.get("hwid") in (None, "Chưa có dữ liệu")):
+            cached = getattr(self, "_cached_users_list", [])
+            found_c = False
+            for u in cached:
+                if str(u.get("username", "")).lower() == u_name:
+                    target_user = {**u, **target_user}
+                    found_c = True
+                    break
+            if not found_c or not target_user.get("id"):
+                from auth_client import auth_client
+                succ, u_list = auth_client.admin_get_users()
+                if succ and isinstance(u_list, list):
+                    self._cached_users_list = u_list
+                    for u in u_list:
+                        if str(u.get("username", "")).lower() == u_name:
+                            target_user = {**u, **target_user}
+                            break
+
+        if not target_user:
+            target_user = {
+                "id": None,
+                "username": str(user_or_username),
+                "role": "user",
+                "plan_name": "Free",
+                "expire_date": "Chưa có",
+                "is_expired": True,
+                "hwid": "Chưa có dữ liệu",
+                "created_at": "Không xác định",
+                "max_daily_videos": 5,
+                "can_use_ai_script": False
+            }
+
+        # 1. Header Card
+        hdr_card = ctk.CTkFrame(dlg, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        hdr_card.pack(fill="x", padx=20, pady=(16, 10))
+
+        h_row = ctk.CTkFrame(hdr_card, fg_color="transparent")
+        h_row.pack(fill="x", padx=16, pady=12)
+
+        avatar_box = ctk.CTkFrame(h_row, width=48, height=48, corner_radius=12, fg_color="#1E1B4B", border_width=1, border_color="#6366F1")
+        avatar_box.pack(side="left", padx=(0, 12))
+        avatar_box.pack_propagate(False)
+        ctk.CTkLabel(avatar_box, text="👤", font=("Segoe UI", 22)).place(relx=0.5, rely=0.5, anchor="center")
+
+        t_box = ctk.CTkFrame(h_row, fg_color="transparent")
+        t_box.pack(side="left", fill="x", expand=True)
+
+        ctk.CTkLabel(t_box, text=target_user.get("username", "Unknown"), font=("Segoe UI", 16, "bold"), text_color=TEXT_MAIN).pack(anchor="w")
+
+        b_row = ctk.CTkFrame(t_box, fg_color="transparent")
+        b_row.pack(anchor="w", pady=(4, 0))
+
+        role_str = target_user.get("role", "user")
+        is_admin_user = role_str in ("admin", "super_admin")
+        ctk.CTkLabel(
+            b_row, text=f" {'👑 Quản trị viên' if is_admin_user else '👤 Người dùng'} ",
+            font=("Segoe UI", 10, "bold"), text_color="#C4B5FD" if is_admin_user else "#94A3B8",
+            fg_color="#312E81" if is_admin_user else "#1E293B", corner_radius=6
+        ).pack(side="left", padx=(0, 6))
+
+        plan_display = target_user.get("plan_name", "Free")
+        ctk.CTkLabel(
+            b_row, text=f" 💎 Gói {plan_display} ",
+            font=("Segoe UI", 10, "bold"), text_color="#FBBF24",
+            fg_color="#3B2A10", corner_radius=6
+        ).pack(side="left", padx=(0, 6))
+
+        is_exp = target_user.get("is_expired", False)
+        stat_lbl = "❌ Đã hết hạn" if is_exp else "✅ Đang hoạt động"
+        stat_color = DANGER if is_exp else SUCCESS
+        stat_bg = DANGER_BG if is_exp else SUCCESS_BG
+        ctk.CTkLabel(
+            b_row, text=f" {stat_lbl} ",
+            font=("Segoe UI", 10, "bold"), text_color=stat_color,
+            fg_color=stat_bg, corner_radius=6
+        ).pack(side="left")
+
+        # Scrollable content
+        scroll = ctk.CTkScrollableFrame(dlg, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+
+        def _info_row(parent, label, value, val_color=TEXT_MAIN):
+            r = ctk.CTkFrame(parent, fg_color="transparent")
+            r.pack(fill="x", padx=14, pady=3)
+            ctk.CTkLabel(r, text=label, font=("Segoe UI", 11), text_color=TEXT_MUTED, width=150, anchor="w").pack(side="left")
+            ctk.CTkLabel(r, text=str(value), font=("Segoe UI", 11, "bold"), text_color=val_color, anchor="w").pack(side="left", fill="x", expand=True)
+
+        # 2. Box Bản Quyền & Gói Cước
+        p_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        p_card.pack(fill="x", pady=(0, 10))
+
+        p_hdr = ctk.CTkFrame(p_card, fg_color="transparent")
+        p_hdr.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(p_hdr, text="💎 Bản Quyền & Hạn Mức", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(side="left")
+
+        _info_row(p_card, "Gói kích hoạt:", f"Gói {plan_display}", "#FBBF24")
+        _info_row(p_card, "Hạn sử dụng:", target_user.get("expire_date", "Chưa có"), SUCCESS if not is_exp else DANGER)
+        max_vids = target_user.get("max_daily_videos", 5)
+        _info_row(p_card, "Hạn mức xử lý:", f"{max_vids} video/ngày" if max_vids < 9999 else "Không giới hạn (VIP)")
+        can_ai = target_user.get("can_use_ai_script", True if is_admin_user else False)
+        _info_row(p_card, "Tính năng AI Voice/Sub:", "✅ Đầy đủ tính năng" if can_ai else "⚡ Giới hạn gói cơ bản", SUCCESS if can_ai else TEXT_MUTED)
+
+        # Thanh nút gia hạn nhanh ngày sử dụng
+        quick_ext_lbl = ctk.CTkLabel(p_card, text="⚡ Gia hạn nhanh ngày sử dụng:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED)
+        quick_ext_lbl.pack(anchor="w", padx=14, pady=(6, 4))
+        quick_ext_row = ctk.CTkFrame(p_card, fg_color="transparent")
+        quick_ext_row.pack(fill="x", padx=14, pady=(0, 10))
+
+        def _do_quick_extend(days, label_desc):
+            u_id = target_user.get("id")
+            if not u_id:
+                messagebox.showerror("Lỗi", "Không tìm thấy User ID để gia hạn.")
+                return
+            if messagebox.askyesno("Xác nhận", f"Gia hạn thêm {label_desc} cho user '{target_user.get('username')}'?"):
+                from auth_client import auth_client
+                succ, msg = auth_client.admin_update_user(u_id, days_to_add=days)
+                if succ:
+                    messagebox.showinfo("Thành công", f"Đã gia hạn thành công {label_desc} cho tài khoản {target_user.get('username')}!")
+                    dlg.destroy()
+                    self._load_users()
+                else:
+                    messagebox.showerror("Lỗi", msg)
+
+        for days_val, btn_lbl in [(7, "+7 Ngày"), (30, "+30 Ngày"), (90, "+90 Ngày"), (365, "+1 Năm"), (3650, "+Vĩnh Viễn")]:
+            ctk.CTkButton(
+                quick_ext_row, text=btn_lbl, width=82, height=26,
+                font=("Segoe UI", 10, "bold"), fg_color="#1E293B", hover_color=ACCENT, corner_radius=6,
+                command=lambda d=days_val, l=btn_lbl: _do_quick_extend(d, l)
+            ).pack(side="left", padx=2)
+
+        # 3. Box Thiết Bị & Bảo Mật (HWID Lock)
+        dev_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        dev_card.pack(fill="x", pady=(0, 10))
+
+        dev_hdr = ctk.CTkFrame(dev_card, fg_color="transparent")
+        dev_hdr.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(dev_hdr, text="🔒 Thiết Bị & Khóa Máy (HWID Lock)", font=("Segoe UI", 12, "bold"), text_color=CYAN).pack(side="left")
+
+        hwid_val = str(target_user.get("hwid") or "Chưa gán máy")
+        is_locked = bool(hwid_val and "chưa" not in hwid_val.lower() and "không" not in hwid_val.lower())
+        
+        # Row HWID with Copy button
+        hw_r = ctk.CTkFrame(dev_card, fg_color="transparent")
+        hw_r.pack(fill="x", padx=14, pady=3)
+        ctk.CTkLabel(hw_r, text="Mã phần cứng (HWID):", font=("Segoe UI", 11), text_color=TEXT_MUTED, width=150, anchor="w").pack(side="left")
+        ctk.CTkLabel(hw_r, text=hwid_val, font=("Consolas", 11, "bold"), text_color="#38BDF8" if is_locked else TEXT_DIM, anchor="w").pack(side="left", fill="x", expand=True)
+        
+        if is_locked:
+            def _copy_hwid():
+                dlg.clipboard_clear()
+                dlg.clipboard_append(hwid_val)
+                btn_copy_hw.configure(text="✅ Đã chép!")
+                dlg.after(1500, lambda: btn_copy_hw.configure(text="📋 Copy"))
+            btn_copy_hw = ctk.CTkButton(hw_r, text="📋 Copy", width=60, height=22, font=("Segoe UI", 10), fg_color=BORDER, hover_color=BG_DARK, command=_copy_hwid)
+            btn_copy_hw.pack(side="right")
+
+        _info_row(dev_card, "Trạng thái thiết bị:", "🔒 Đã khóa trên máy này" if is_locked else "🔓 Chưa gán máy (Đăng nhập máy bất kỳ)", SUCCESS if is_locked else WARNING)
+        _info_row(dev_card, "Ngày đăng ký / tạo:", target_user.get("created_at", "Không xác định"), TEXT_DIM)
+
+        hwid_btn_row = ctk.CTkFrame(dev_card, fg_color="transparent")
+        hwid_btn_row.pack(fill="x", padx=14, pady=(6, 10))
+
+        def _do_reset_hwid():
+            u_id = target_user.get("id")
+            if not u_id:
+                messagebox.showerror("Lỗi", "Không tìm thấy User ID để reset.")
+                return
+            if messagebox.askyesno("Xác nhận", f"Mở khóa thiết bị cho user '{target_user.get('username')}'?\nUser sẽ có thể đăng nhập trên máy tính mới."):
+                from auth_client import auth_client
+                succ, msg = auth_client.admin_reset_hwid(u_id)
+                if succ:
+                    messagebox.showinfo("Thành công", msg)
+                    dlg.destroy()
+                    self._load_users()
+                else:
+                    messagebox.showerror("Lỗi", msg)
+
+        ctk.CTkButton(
+            hwid_btn_row, text="🔓 Mở Khóa Đổi Máy (Reset HWID)", width=230, height=30,
+            font=("Segoe UI", 11, "bold"), fg_color="#0F2937", hover_color="#0369A1",
+            text_color="#38BDF8", border_width=1, border_color="#0EA5E9",
+            command=_do_reset_hwid
+        ).pack(side="left")
+
+        # 4. Box Hoạt Động Gần Đây
+        act_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        act_card.pack(fill="x", pady=(0, 10))
+
+        act_hdr = ctk.CTkFrame(act_card, fg_color="transparent")
+        act_hdr.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(act_hdr, text="⚡ Hoạt Động Gần Đây", font=("Segoe UI", 12, "bold"), text_color="#67E8F9").pack(side="left")
+
+        def _view_all_logs_of_user():
+            dlg.destroy()
+            if hasattr(self, "tabview"):
+                self.tabview.set("Hoạt động")
+            if hasattr(self, "_filter_logs_by_user"):
+                self._filter_logs_by_user(target_user.get("username", ""))
+
+        btn_view_logs = ctk.CTkButton(
+            act_hdr, text="📜 Xem toàn bộ logs", width=125, height=24,
+            font=("Segoe UI", 10, "bold"), fg_color="#0F2937", hover_color="#0369A1",
+            text_color="#38BDF8", border_width=1, border_color="#0EA5E9",
+            command=_view_all_logs_of_user
+        )
+        btn_view_logs.pack(side="right")
+
+        from auth_client import auth_client
+        _, logs_data = auth_client.admin_get_logs(limit=250)
+        u_logs = [l for l in (logs_data if isinstance(logs_data, list) else []) if str(l.get("username", "")).lower() == u_name][:4]
+
+        if not u_logs:
+            ctk.CTkLabel(act_card, text="Chưa ghi nhận hoạt động nào gần đây từ user này.", font=("Segoe UI", 11), text_color=TEXT_MUTED).pack(padx=14, pady=(0, 10), anchor="w")
+        else:
+            for l in u_logs:
+                l_box = ctk.CTkFrame(act_card, fg_color=BG_DARK, corner_radius=6)
+                l_box.pack(fill="x", padx=14, pady=(0, 6))
+                act = str(l.get("action", "INFO")).upper()
+                dt = str(l.get("details", "")).replace("\n", " ")[:110]
+                is_err = "ERROR" in act or any(w in dt.lower() for w in ["lỗi", "fail", "thất bại", "0 video"])
+                tag_col = DANGER if is_err else (SUCCESS if act == "UPLOAD" else ACCENT_LIGHT)
+                ctk.CTkLabel(l_box, text=f"🕒 [{l.get('time', '')}] {act}", font=("Consolas", 10, "bold"), text_color=tag_col).pack(anchor="w", padx=8, pady=(4, 1))
+                ctk.CTkLabel(l_box, text=dt, font=("Segoe UI", 11), text_color=TEXT_MAIN, wraplength=480, justify="left").pack(anchor="w", padx=8, pady=(0, 5))
+
+        # 5. Box Lịch Sử Góp Ý Của User Này
+        fb_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        fb_card.pack(fill="x", pady=(0, 10))
+
+        fb_hdr = ctk.CTkFrame(fb_card, fg_color="transparent")
+        fb_hdr.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(fb_hdr, text="⭐ Đánh Giá & Góp Ý Từ User Này", font=("Segoe UI", 12, "bold"), text_color="#F59E0B").pack(side="left")
+
+        _, fb_data = auth_client.admin_get_feedbacks()
+        all_fbs = fb_data.get("feedbacks", []) if isinstance(fb_data, dict) else []
+        u_fbs = [f for f in all_fbs if str(f.get("username", "")).lower() == u_name]
+
+        if not u_fbs:
+            ctk.CTkLabel(fb_card, text="Người dùng này chưa gửi đánh giá nào.", font=("Segoe UI", 11), text_color=TEXT_MUTED).pack(padx=14, pady=(0, 10), anchor="w")
+        else:
+            for f in u_fbs[:4]:
+                f_box = ctk.CTkFrame(fb_card, fg_color=BG_DARK, corner_radius=6)
+                f_box.pack(fill="x", padx=14, pady=(0, 6))
+                r = f.get("rating", 5)
+                star_s = "★" * r
+                ctk.CTkLabel(f_box, text=f"⭐ {star_s} ({f.get('category')}) - 🕒 {f.get('created_at')}", font=("Segoe UI", 10, "bold"), text_color="#FDE68A").pack(anchor="w", padx=8, pady=(4, 2))
+                ctk.CTkLabel(f_box, text=f.get("content", ""), font=("Segoe UI", 11), text_color=TEXT_MAIN, wraplength=480, justify="left").pack(anchor="w", padx=8, pady=(0, 6))
+
+        # 6. Bottom Action Buttons
+        bottom_bar = ctk.CTkFrame(dlg, fg_color="transparent")
+        bottom_bar.pack(fill="x", padx=20, pady=(4, 16))
+
+        def _do_edit_from_detail():
+            dlg.destroy()
+            self._edit_user_dialog(target_user)
+
+        def _do_del_from_detail():
+            u_id = target_user.get("id")
+            if u_id:
+                dlg.destroy()
+                self._delete_user(u_id)
+
+        def _do_quick_change_pass():
+            u_id = target_user.get("id")
+            if not u_id:
+                messagebox.showerror("Lỗi", "Không tìm thấy User ID để đổi mật khẩu.")
+                return
+            input_dlg = ctk.CTkInputDialog(text=f"Nhập mật khẩu mới cho user '{target_user.get('username')}':", title="🔑 Đổi Mật Khẩu Nhanh")
+            new_pass = input_dlg.get_input()
+            if new_pass and new_pass.strip():
+                succ, msg = auth_client.admin_update_user(u_id, password=new_pass.strip())
+                if succ:
+                    messagebox.showinfo("Thành công", f"Đã đổi mật khẩu cho user '{target_user.get('username')}' thành công!")
+                else:
+                    messagebox.showerror("Lỗi", msg)
+
+        ctk.CTkButton(
+            bottom_bar, text="✏️ Sửa Nâng Cao", width=125, height=34,
+            font=("Segoe UI", 11, "bold"), fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            command=_do_edit_from_detail
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            bottom_bar, text="🔑 Đổi Password", width=120, height=34,
+            font=("Segoe UI", 11, "bold"), fg_color="#1E293B", hover_color=BG_CARD,
+            command=_do_quick_change_pass
+        ).pack(side="left", padx=6)
+
+        ctk.CTkButton(
+            bottom_bar, text="🗑 Xóa User", width=95, height=34,
+            font=("Segoe UI", 11, "bold"), fg_color=DANGER, hover_color="#c0392b",
+            command=_do_del_from_detail
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            bottom_bar, text="✕ Đóng", width=80, height=34,
+            font=("Segoe UI", 11), fg_color=BORDER, hover_color=BG_CARD,
+            command=dlg.destroy
+        ).pack(side="right")
 
     def _build_admin_stats(self, parent):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -6769,98 +7426,167 @@ class SettingsTab(ctk.CTkFrame):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=20, pady=20)
         
-        self._section(scroll, "💰  Quản Lý Gói (Dynamic Packages)", row=0)
+        self._section(scroll, "💰  Quản Lý & Phân Quyền Các Gói Cước (Package Management)", row=0)
+
+        # Hộp hướng dẫn và giải thích cơ chế
+        hint_card = ctk.CTkFrame(scroll, fg_color="#0F172A", corner_radius=10, border_width=1, border_color="#1E3A8A")
+        hint_card.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        
+        hint_top = ctk.CTkFrame(hint_card, fg_color="transparent")
+        hint_top.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(hint_top, text="💡 HƯỚNG DẪN CẤU HÌNH GÓI & PHÂN BỔ TÀI NGUYÊN API CHUNG:", font=("Segoe UI", 12, "bold"), text_color="#38BDF8").pack(side="left")
+        
+        hint_txt = (
+            "• Gói FREE (Mặc định): Tự động cấp cho mọi tài khoản mới đăng ký. Tùy chỉnh Số ngày dùng thử và Hạn mức video mỗi ngày.\n"
+            "• Các Gói Trả Phí (1M, 3M, 6M, 1Y, LT,...): Tùy chỉnh số ngày, hạn mức video (nhập 9999 để Không giới hạn), giá tiền và quyền AI.\n"
+            "• Phân Quyền 'Dùng AI' (Cực kỳ quan trọng):\n"
+            "   + TÍCH CHỌN [✔]: Gói được cấp quyền dùng chung API Key AI đám mây của máy chủ (Khách hàng không cần tự cài đặt API key).\n"
+            "   + BỎ CHỌN [ ]: Gói 'Tự túc API' - Cắt quyền gọi API chung của máy chủ để tiết kiệm chi phí cho Admin. Khi mua gói này, giao diện VietQR sẽ tự động hiển thị LƯU Ý RÕ RÀNG để khách hàng biết phải tự lấy Gemini API Key miễn phí (hoặc Groq/Ollama) và nhập vào tab [Cài Đặt]."
+        )
+        ctk.CTkLabel(hint_card, text=hint_txt, font=("Segoe UI", 11), text_color=TEXT_MUTED, justify="left", wraplength=950).pack(anchor="w", padx=14, pady=(0, 10))
+
+        # Khung bảng cấu hình gói
         price = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
-        price.grid(row=1, column=0, sticky="ew", pady=(0, 16))
+        price.grid(row=2, column=0, sticky="ew", pady=(0, 16))
         price.grid_columnconfigure(0, weight=1)
         
         from auth_client import auth_client
         import json
         success, configs = auth_client.admin_get_config()
-        if not success: configs = {}
+        if not success or not isinstance(configs, dict):
+            configs = {}
         
         raw_pkgs = configs.get("packages", "")
         packages = []
         if raw_pkgs:
-            try: packages = json.loads(raw_pkgs)
-            except: pass
+            try:
+                packages = json.loads(raw_pkgs) if isinstance(raw_pkgs, str) else raw_pkgs
+            except Exception:
+                pass
+                
+        # Nếu chưa có gói FREE trong danh sách, tự động chèn vào đầu
+        has_free = any(str(p.get("code", "")).strip().upper() == "FREE" for p in packages)
         if not packages:
             packages = [
-                {"code": "1M", "name": "1 Tháng (30 ngày)", "days": 30, "price": int(configs.get("price_1_month", "600000"))},
-                {"code": "3M", "name": "3 Tháng (90 ngày)", "days": 90, "price": int(configs.get("price_3_months", "1500000"))},
-                {"code": "6M", "name": "6 Tháng (180 ngày)", "days": 180, "price": int(configs.get("price_6_months", "2500000"))},
-                {"code": "1Y", "name": "1 Năm (365 ngày)", "days": 365, "price": int(configs.get("price_1_year", "4500000"))},
-                {"code": "LT", "name": "Vĩnh viễn (10 Năm)", "days": 3650, "price": int(configs.get("price_lifetime", "10000000"))}
+                {"code": "FREE", "name": "Miễn Phí Dùng Thử", "days": 10, "max_daily_videos": 5, "price": 0, "can_use_ai": True},
+                {"code": "1M", "name": "1 Tháng (30 ngày)", "days": 30, "max_daily_videos": 50, "price": int(configs.get("price_1_month", "600000")), "can_use_ai": True},
+                {"code": "3M", "name": "3 Tháng (90 ngày)", "days": 90, "max_daily_videos": 100, "price": int(configs.get("price_3_months", "1500000")), "can_use_ai": True},
+                {"code": "6M", "name": "6 Tháng (180 ngày)", "days": 180, "max_daily_videos": 200, "price": int(configs.get("price_6_months", "2500000")), "can_use_ai": True},
+                {"code": "1Y", "name": "1 Năm (365 ngày)", "days": 365, "max_daily_videos": 500, "price": int(configs.get("price_1_year", "4500000")), "can_use_ai": True},
+                {"code": "LT", "name": "Vĩnh viễn (10 Năm)", "days": 3650, "max_daily_videos": 99999, "price": int(configs.get("price_lifetime", "10000000")), "can_use_ai": True}
             ]
+        elif not has_free:
+            packages.insert(0, {"code": "FREE", "name": "Miễn Phí Dùng Thử", "days": 10, "max_daily_videos": 5, "price": 0, "can_use_ai": True})
 
         self._pkg_rows = []
         pkg_container = ctk.CTkFrame(price, fg_color="transparent")
         pkg_container.pack(fill="x", padx=16, pady=10)
         
-        hdr = ctk.CTkFrame(pkg_container, fg_color="transparent")
-        hdr.pack(fill="x")
-        ctk.CTkLabel(hdr, text="Mã Gói (VD: 1M)", width=100, anchor="w", font=("Segoe UI", 12, "bold")).pack(side="left", padx=5)
-        ctk.CTkLabel(hdr, text="Tên Gói", width=180, anchor="w", font=("Segoe UI", 12, "bold")).pack(side="left", padx=5)
-        ctk.CTkLabel(hdr, text="Số Ngày", width=80, anchor="w", font=("Segoe UI", 12, "bold")).pack(side="left", padx=5)
-        ctk.CTkLabel(hdr, text="Giá Tiền (VNĐ)", width=120, anchor="w", font=("Segoe UI", 12, "bold")).pack(side="left", padx=5)
+        # Tiêu đề bảng
+        hdr = ctk.CTkFrame(pkg_container, fg_color="#182032", height=36, corner_radius=6)
+        hdr.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(hdr, text="Mã Gói", width=90, anchor="w", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=6, pady=6)
+        ctk.CTkLabel(hdr, text="Tên Hiển Thị Gói", width=180, anchor="w", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=6, pady=6)
+        ctk.CTkLabel(hdr, text="Số Ngày", width=75, anchor="w", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=6, pady=6)
+        ctk.CTkLabel(hdr, text="Video / Ngày", width=95, anchor="w", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=6, pady=6)
+        ctk.CTkLabel(hdr, text="Giá Tiền (VNĐ)", width=120, anchor="w", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=6, pady=6)
+        ctk.CTkLabel(hdr, text="Dùng AI", width=80, anchor="w", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=6, pady=6)
+        ctk.CTkLabel(hdr, text="Thao Tác", width=70, anchor="center", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=6, pady=6)
 
-        def add_pkg_row(p_code="", p_name="", p_days=0, p_price=0):
-            row_f = ctk.CTkFrame(pkg_container, fg_color="transparent")
-            row_f.pack(fill="x", pady=2)
+        def add_pkg_row(p_code="", p_name="", p_days=0, p_max_daily=5, p_price=0, p_ai=True):
+            is_free_pkg = str(p_code).strip().upper() == "FREE"
+            row_f = ctk.CTkFrame(pkg_container, fg_color="#101522" if is_free_pkg else "transparent", corner_radius=6)
+            row_f.pack(fill="x", pady=3)
             
-            e_code = ctk.CTkEntry(row_f, width=100, font=("Consolas", 12))
+            e_code = ctk.CTkEntry(row_f, width=90, font=("Consolas", 11, "bold"), fg_color=BG_DARK, border_color=BORDER)
             e_code.insert(0, str(p_code))
-            e_code.pack(side="left", padx=5)
+            if is_free_pkg:
+                e_code.configure(state="disabled")
+            e_code.pack(side="left", padx=6, pady=4)
             
-            e_name = ctk.CTkEntry(row_f, width=180)
+            e_name = ctk.CTkEntry(row_f, width=180, font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
             e_name.insert(0, str(p_name))
-            e_name.pack(side="left", padx=5)
+            e_name.pack(side="left", padx=6, pady=4)
             
-            e_days = ctk.CTkEntry(row_f, width=80)
+            e_days = ctk.CTkEntry(row_f, width=75, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER)
             e_days.insert(0, str(p_days))
-            e_days.pack(side="left", padx=5)
+            e_days.pack(side="left", padx=6, pady=4)
+
+            e_max_v = ctk.CTkEntry(row_f, width=95, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER)
+            e_max_v.insert(0, str(p_max_daily))
+            e_max_v.pack(side="left", padx=6, pady=4)
             
-            e_price = ctk.CTkEntry(row_f, width=120)
+            e_price = ctk.CTkEntry(row_f, width=120, font=("Consolas", 11), fg_color=BG_DARK, border_color=BORDER)
             e_price.insert(0, str(p_price))
-            e_price.pack(side="left", padx=5)
+            if is_free_pkg:
+                e_price.configure(state="disabled")
+            e_price.pack(side="left", padx=6, pady=4)
+
+            var_ai = ctk.BooleanVar(value=bool(p_ai))
+            chk_ai = ctk.CTkCheckBox(row_f, text="Cho phép", variable=var_ai, width=80, font=("Segoe UI", 10))
+            chk_ai.pack(side="left", padx=6, pady=4)
             
             def remove():
                 row_f.destroy()
-                self._pkg_rows.remove(row_data)
+                if row_data in self._pkg_rows:
+                    self._pkg_rows.remove(row_data)
                 
-            btn_del = ctk.CTkButton(row_f, text="Xoá", width=50, fg_color=DANGER, hover_color="#c0392b", command=remove)
-            btn_del.pack(side="left", padx=5)
+            if not is_free_pkg:
+                btn_del = ctk.CTkButton(row_f, text="Xoá", width=60, height=26, font=("Segoe UI", 10, "bold"), fg_color=DANGER, hover_color="#c0392b", command=remove)
+                btn_del.pack(side="left", padx=6, pady=4)
+            else:
+                lbl_lock = ctk.CTkLabel(row_f, text="🔒 Cố định", width=60, font=("Segoe UI", 10, "italic"), text_color=TEXT_MUTED)
+                lbl_lock.pack(side="left", padx=6, pady=4)
             
-            row_data = {"code": e_code, "name": e_name, "days": e_days, "price": e_price}
+            row_data = {
+                "code": e_code, "name": e_name, "days": e_days,
+                "max_daily_videos": e_max_v, "price": e_price,
+                "can_use_ai": var_ai, "is_free": is_free_pkg
+            }
             self._pkg_rows.append(row_data)
 
         for pkg in packages:
-            add_pkg_row(pkg.get("code",""), pkg.get("name",""), pkg.get("days",0), pkg.get("price",0))
+            add_pkg_row(
+                p_code=pkg.get("code", ""),
+                p_name=pkg.get("name", ""),
+                p_days=pkg.get("days", 0),
+                p_max_daily=pkg.get("max_daily_videos", 5),
+                p_price=pkg.get("price", 0),
+                p_ai=pkg.get("can_use_ai", True)
+            )
             
-        ctk.CTkButton(price, text="➕ Thêm Gói Mới", fg_color=ACCENT, width=120, command=add_pkg_row).pack(pady=(0, 16))
+        btn_add = ctk.CTkButton(
+            price, text="➕ Thêm Gói Mới", fg_color=BORDER, hover_color=BG_DARK,
+            font=("Segoe UI", 11, "bold"), width=140, height=32,
+            command=lambda: add_pkg_row("NEW", "Gói Mới", 30, 50, 500000, True)
+        )
+        btn_add.pack(anchor="w", padx=16, pady=(4, 16))
         
         def _save_packages():
             new_pkgs = []
             for r in getattr(self, "_pkg_rows", []):
+                c_val = "FREE" if r.get("is_free") else r["code"].get().strip().upper()
                 new_pkgs.append({
-                    "code": r["code"].get().strip(),
+                    "code": c_val,
                     "name": r["name"].get().strip(),
                     "days": int(r["days"].get().strip() or 0),
-                    "price": int(r["price"].get().strip() or 0)
+                    "max_daily_videos": int(r["max_daily_videos"].get().strip() or 5),
+                    "price": 0 if r.get("is_free") else int(r["price"].get().strip() or 0),
+                    "can_use_ai": r["can_use_ai"].get()
                 })
             data = {
-                "packages": json.dumps(new_pkgs),
+                "packages": json.dumps(new_pkgs, ensure_ascii=False),
             }
             from auth_client import auth_client
             succ, msg = auth_client.admin_save_config(data)
             if succ:
-                messagebox.showinfo("Thành công", "Đã lưu Danh sách Gói!")
+                messagebox.showinfo("Thành công", "Đã lưu cấu hình danh sách Gói Dịch Vụ thành công!\nHạn mức và số ngày dùng thử đã được đồng bộ vào hệ thống.")
             else:
                 messagebox.showerror("Lỗi", msg)
                 
-        ctk.CTkButton(scroll, text="💾  Lưu Danh Sách Gói", width=240, command=_save_packages,
+        ctk.CTkButton(scroll, text="💾  Lưu Danh Sách Gói", width=240, height=38, command=_save_packages,
                       fg_color=SUCCESS, hover_color="#27ae60",
-                      font=("Segoe UI", 13, "bold")).grid(row=2, column=0, pady=(8, 24), sticky="w")
+                      font=("Segoe UI", 13, "bold")).grid(row=3, column=0, pady=(8, 24), sticky="w")
 
     def _build_admin_noti(self, parent):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -7024,7 +7750,14 @@ class SettingsTab(ctk.CTkFrame):
             ctk.CTkLabel(info_frame, text=log.get("ip_address", "N/A"), font=("Consolas", 12), text_color=TEXT_MAIN).grid(row=0, column=3, sticky="w", padx=8, pady=2)
 
             ctk.CTkLabel(info_frame, text="👤 Tài khoản:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).grid(row=1, column=0, sticky="w", pady=2)
-            ctk.CTkLabel(info_frame, text=log.get("username", ""), font=("Segoe UI", 12, "bold"), text_color="#A78BFA").grid(row=1, column=1, sticky="w", padx=8, pady=2)
+            u_box = ctk.CTkFrame(info_frame, fg_color="transparent")
+            u_box.grid(row=1, column=1, sticky="w", padx=8, pady=2)
+            ctk.CTkButton(
+                u_box, text=f"👤 {log.get('username', '')} ℹ️", height=24,
+                font=("Segoe UI", 11, "bold"), fg_color="#1E1B4B", hover_color="#312E81",
+                text_color="#C4B5FD", border_width=1, border_color="#6366F1", corner_radius=6,
+                command=lambda u_name=log.get("username"): [dlg.destroy(), self._show_user_detail_dialog(u_name)]
+            ).pack(side="left")
 
             ctk.CTkLabel(info_frame, text="⚡ Trạng thái:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).grid(row=1, column=2, sticky="w", padx=(15, 0), pady=2)
             stat_text = "Phát hiện LỖI / Thất bại" if is_error else "Hoạt động bình thường"
@@ -7274,8 +8007,14 @@ class SettingsTab(ctk.CTkFrame):
         badge_inspect_action = ctk.CTkLabel(exp_top, text=" ACTION ", font=("Segoe UI", 10, "bold"), fg_color=ACCENT_BG, text_color=ACCENT_LIGHT, corner_radius=6)
         badge_inspect_action.pack(side="left")
 
-        lbl_inspect_user = ctk.CTkLabel(exp_top, text="User", font=("Segoe UI", 12, "bold"), text_color="#A78BFA")
+        def _open_user_from_inspector():
+            log = selected_log_ref[0]
+            if log and log.get("username"):
+                self._show_user_detail_dialog(log.get("username"))
+
+        lbl_inspect_user = ctk.CTkLabel(exp_top, text="User", font=("Segoe UI", 12, "bold"), text_color="#A78BFA", cursor="hand2")
         lbl_inspect_user.pack(side="left", padx=(8, 12))
+        lbl_inspect_user.bind("<Button-1>", lambda e: _open_user_from_inspector())
 
         lbl_inspect_time = ctk.CTkLabel(exp_top, text="", font=("Consolas", 11), text_color=TEXT_MUTED)
         lbl_inspect_time.pack(side="left", padx=(0, 12))
@@ -7294,6 +8033,13 @@ class SettingsTab(ctk.CTkFrame):
             fg_color="#2563EB", hover_color="#1D4ED8"
         )
         btn_inspect_popup.pack(side="right", padx=6)
+
+        btn_inspect_user = ctk.CTkButton(
+            exp_top, text="👤 Xem User", width=100, height=22, font=("Segoe UI", 10, "bold"),
+            fg_color="#312E81", hover_color="#4338CA", text_color="#C4B5FD",
+            command=_open_user_from_inspector
+        )
+        btn_inspect_user.pack(side="right", padx=6)
 
         btn_inspect_copy = ctk.CTkButton(
             exp_top, text="📋 Sao chép", width=85, height=22, font=("Segoe UI", 10, "bold"),
@@ -7506,6 +8252,22 @@ class SettingsTab(ctk.CTkFrame):
                 self.after_cancel(search_timer[0])
             search_timer[0] = self.after(250, _apply_filter)
 
+        def _filter_logs_by_user(target_uname):
+            if not target_uname:
+                return
+            entry_search.delete(0, "end")
+            opt_action.set("Tất cả Action")
+            vals = list(opt_user.cget("values"))
+            for v in vals:
+                if str(v).lower() == str(target_uname).lower():
+                    opt_user.set(v)
+                    _apply_filter()
+                    return
+            entry_search.insert(0, target_uname)
+            _apply_filter()
+
+        self._filter_logs_by_user = _filter_logs_by_user
+
         entry_search.bind("<KeyRelease>", _on_search_key)
         opt_user.configure(command=_apply_filter)
         opt_action.configure(command=_apply_filter)
@@ -7548,17 +8310,213 @@ class SettingsTab(ctk.CTkFrame):
                     succ, logs = False, []
                 finally:
                     is_loading[0] = False
-                if scroll.winfo_exists():
-                    scroll.after(0, lambda: [
-                        btn_refresh.configure(state="normal", text="🔄 Làm mới dữ liệu"),
-                        _render_logs(succ, logs)
-                    ])
+                try:
+                    if scroll.winfo_exists():
+                        scroll.after(0, lambda: [
+                            btn_refresh.configure(state="normal", text="🔄 Làm mới dữ liệu"),
+                            _render_logs(succ, logs)
+                        ])
+                except Exception:
+                    pass
             threading.Thread(target=_worker, daemon=True).start()
 
         btn_refresh.configure(command=_fetch_logs)
         self._fetch_admin_logs = _fetch_logs
 
         self.after(300, lambda: _fetch_logs() if self.tabview.get() == "Hoạt động" else None)
+
+    def _build_admin_feedbacks(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(3, weight=1)
+
+        # 1. Top Header
+        top_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        top_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 6))
+
+        title_box = ctk.CTkFrame(top_frame, fg_color="transparent")
+        title_box.pack(side="left")
+        ctk.CTkLabel(title_box, text="⭐ Đánh Giá & Góp Ý Từ Người Dùng", font=("Segoe UI", 18, "bold"), text_color=TEXT_MAIN).pack(anchor="w")
+        ctk.CTkLabel(title_box, text="Thống kê mức độ hài lòng, tổng hợp ý kiến đóng góp và phản hồi lỗi từ người dùng toàn hệ thống", font=("Segoe UI", 11), text_color=TEXT_MUTED).pack(anchor="w", pady=(1, 0))
+
+        btn_refresh = ctk.CTkButton(top_frame, text="🔄 Làm mới dữ liệu", width=135, height=32, font=("Segoe UI", 11, "bold"), fg_color=ACCENT, hover_color=ACCENT_HOVER, corner_radius=8)
+        btn_refresh.pack(side="right")
+
+        # 2. KPI Stat Cards
+        kpi_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        kpi_frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(4, 10))
+        kpi_frame.grid_columnconfigure((0, 1, 2, 3), weight=1, uniform="kpi_fb")
+
+        def _create_kpi_card(col_idx, icon, title, initial_val, text_col):
+            card = ctk.CTkFrame(kpi_frame, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+            card.grid(row=0, column=col_idx, sticky="ew", padx=4 if col_idx not in (0, 3) else (0 if col_idx == 0 else 0))
+            inner = ctk.CTkFrame(card, fg_color="transparent")
+            inner.pack(fill="both", expand=True, padx=12, pady=8)
+            ctk.CTkLabel(inner, text=f"{icon}  {title}", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(anchor="w")
+            lbl_v = ctk.CTkLabel(inner, text=str(initial_val), font=("Segoe UI", 20, "bold"), text_color=text_col)
+            lbl_v.pack(anchor="w", pady=(2, 0))
+            return lbl_v
+
+        lbl_kpi_avg = _create_kpi_card(0, "⭐", "Điểm Đánh Giá TB", "5.0 / 5.0", "#FBBF24")
+        lbl_kpi_total = _create_kpi_card(1, "📊", "Tổng Đánh Giá", "0", ACCENT_LIGHT)
+        lbl_kpi_ideas = _create_kpi_card(2, "💡", "Đề Xuất Mới", "0", CYAN)
+        lbl_kpi_bugs = _create_kpi_card(3, "🐞", "Báo Cáo Sự Cố", "0", DANGER)
+
+        # 3. Filter Row
+        filter_card = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        filter_card.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 10))
+
+        f_inner = ctk.CTkFrame(filter_card, fg_color="transparent")
+        f_inner.pack(fill="x", padx=12, pady=8)
+
+        entry_search = ctk.CTkEntry(f_inner, placeholder_text="🔍 Tìm kiếm theo User hoặc nội dung góp ý...", height=32, font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER)
+        entry_search.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        opt_filter_cat = ctk.CTkOptionMenu(
+            f_inner, values=["Tất cả Danh Mục", "Đánh giá", "Đề xuất", "Báo cáo lỗi", "Góp ý"],
+            width=160, height=32, font=("Segoe UI", 11)
+        )
+        opt_filter_cat.pack(side="left", padx=(0, 8))
+
+        opt_filter_star = ctk.CTkOptionMenu(
+            f_inner, values=["Tất cả Sao", "5 Sao ⭐⭐⭐⭐⭐", "4 Sao ⭐⭐⭐⭐", "3 Sao ⭐⭐⭐", "1-2 Sao ⭐"],
+            width=150, height=32, font=("Segoe UI", 11)
+        )
+        opt_filter_star.pack(side="left")
+
+        # 4. Feedback List Scrollable
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scroll.grid(row=3, column=0, sticky="nsew", padx=20, pady=(0, 16))
+        scroll.grid_columnconfigure(0, weight=1)
+
+        feedbacks_data = []
+        is_loading = [False]
+
+        def _render_feedbacks():
+            if not scroll.winfo_exists():
+                return
+            for w in scroll.winfo_children():
+                try: w.destroy()
+                except Exception: pass
+
+            query = entry_search.get().strip().lower()
+            cat_filter = opt_filter_cat.get()
+            star_filter = opt_filter_star.get()
+
+            filtered = []
+            for item in feedbacks_data:
+                u = str(item.get("username", "")).lower()
+                content = str(item.get("content", "")).lower()
+                cat = str(item.get("category", ""))
+                rating = item.get("rating", 5)
+
+                if query and (query not in u and query not in content):
+                    continue
+
+                if cat_filter != "Tất cả Danh Mục":
+                    if cat_filter.lower() not in cat.lower():
+                        continue
+
+                if star_filter == "5 Sao ⭐⭐⭐⭐⭐" and rating != 5:
+                    continue
+                elif star_filter == "4 Sao ⭐⭐⭐⭐" and rating != 4:
+                    continue
+                elif star_filter == "3 Sao ⭐⭐⭐" and rating != 3:
+                    continue
+                elif star_filter == "1-2 Sao ⭐" and rating > 2:
+                    continue
+
+                filtered.append(item)
+
+            if not filtered:
+                empty_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+                empty_card.pack(fill="x", pady=20)
+                ctk.CTkLabel(empty_card, text="📭 Chưa có đánh giá nào phù hợp với bộ lọc hiện tại.", font=("Segoe UI", 13), text_color=TEXT_MUTED).pack(pady=30)
+                return
+
+            for fb in filtered:
+                rating = fb.get("rating", 5)
+                username = fb.get("username", "Anonymous")
+                category = fb.get("category", "Đánh giá")
+                content = fb.get("content", "")
+                created_at = fb.get("created_at", "")
+
+                card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+                card.pack(fill="x", pady=5)
+
+                top_r = ctk.CTkFrame(card, fg_color="transparent")
+                top_r.pack(fill="x", padx=14, pady=(10, 4))
+
+                u_badge = ctk.CTkButton(
+                    top_r, text=f"👤 {username}  ℹ️", height=26,
+                    font=("Segoe UI", 11, "bold"), fg_color="#1E1B4B", hover_color="#312E81",
+                    text_color="#C4B5FD", border_width=1, border_color="#6366F1", corner_radius=6,
+                    command=lambda u_name=username: self._show_user_detail_dialog(u_name)
+                )
+                u_badge.pack(side="left")
+
+                star_text = "★" * rating + "☆" * (5 - rating)
+                r_badge = ctk.CTkFrame(top_r, fg_color="#3B2A10", corner_radius=6, border_width=1, border_color="#F59E0B")
+                r_badge.pack(side="left", padx=8)
+                ctk.CTkLabel(r_badge, text=f"⭐ {star_text} ({rating}/5)", font=("Segoe UI", 11, "bold"), text_color="#FDE68A").pack(padx=8, pady=3)
+
+                cat_badge = ctk.CTkFrame(top_r, fg_color="#0F2937", corner_radius=6, border_width=1, border_color="#0EA5E9")
+                cat_badge.pack(side="left")
+                ctk.CTkLabel(cat_badge, text=category, font=("Segoe UI", 10, "bold"), text_color="#7DD3FC").pack(padx=8, pady=3)
+
+                ctk.CTkLabel(top_r, text=f"🕒 {created_at}", font=("Segoe UI", 10), text_color=TEXT_MUTED).pack(side="right")
+
+                txt_lbl = ctk.CTkLabel(card, text=content, font=("Segoe UI", 12), text_color=TEXT_MAIN, justify="left", wraplength=950)
+                txt_lbl.pack(anchor="w", padx=14, pady=(4, 12))
+
+        def _update_kpis(data_obj):
+            total = data_obj.get("total", 0)
+            avg = data_obj.get("avg_rating", 5.0)
+            lbl_kpi_total.configure(text=str(total))
+            lbl_kpi_avg.configure(text=f"{avg:.1f} / 5.0")
+
+            fbs = data_obj.get("feedbacks", [])
+            ideas = sum(1 for f in fbs if "đề xuất" in str(f.get("category", "")).lower() or "tính năng" in str(f.get("content", "")).lower())
+            bugs = sum(1 for f in fbs if "lỗi" in str(f.get("category", "")).lower() or f.get("rating", 5) <= 2)
+            lbl_kpi_ideas.configure(text=str(ideas))
+            lbl_kpi_bugs.configure(text=str(bugs))
+
+        def _fetch_feedbacks():
+            if is_loading[0]:
+                return
+            is_loading[0] = True
+            btn_refresh.configure(state="disabled", text="⏳ Đang tải...")
+            def _worker():
+                try:
+                    succ, data = auth_client.admin_get_feedbacks()
+                except Exception:
+                    succ, data = False, {}
+                finally:
+                    is_loading[0] = False
+                try:
+                    if scroll.winfo_exists():
+                        scroll.after(0, lambda: [
+                            btn_refresh.configure(state="normal", text="🔄 Làm mới dữ liệu"),
+                            _on_data_loaded(succ, data)
+                        ])
+                except Exception:
+                    pass
+            threading.Thread(target=_worker, daemon=True).start()
+
+        def _on_data_loaded(succ, data):
+            nonlocal feedbacks_data
+            if not succ or not isinstance(data, dict):
+                return
+            feedbacks_data = data.get("feedbacks", [])
+            _update_kpis(data)
+            _render_feedbacks()
+
+        btn_refresh.configure(command=_fetch_feedbacks)
+        entry_search.bind("<KeyRelease>", lambda e: _render_feedbacks())
+        opt_filter_cat.configure(command=lambda c: _render_feedbacks())
+        opt_filter_star.configure(command=lambda s: _render_feedbacks())
+
+        self._fetch_admin_feedbacks = _fetch_feedbacks
+        self.after(300, lambda: _fetch_feedbacks() if hasattr(self, "tabview") and self.tabview.get() == "Đánh giá & Góp ý" else None)
 
 
 
@@ -7583,9 +8541,9 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("🎬 Douyin → TikTok Auto-Uploader")
-        self.geometry("1100x720")
-        self.minsize(900, 600)
+        self.title("🎬 Douyin → TikTok Auto-Uploader | 🎁 Free 10 Ngày Full AI")
+        self.geometry("1240x760")
+        self.minsize(1050, 650)
         self.configure(fg_color=BG_DARK)
 
         self.grid_columnconfigure(1, weight=1)
@@ -7618,8 +8576,24 @@ class App(ctk.CTk):
                 status = "👑 Quản trị viên"
             else:
                 expire = auth_client.user_info.get("expire_date", "Chưa có")
-                is_expired = auth_client.user_info.get("is_expired", True)
-                status = "❌ Hết hạn" if is_expired else "✅ Hoạt động"
+                is_expired = auth_client.user_info.get("is_expired", False)
+                plan_name = str(auth_client.user_info.get("plan_name") or "Free").strip()
+                days_left = auth_client.user_info.get("days_left")
+                if (days_left is None or days_left == 0) and expire and expire not in ("Chưa có", "Chưa thiết lập", "Vĩnh viễn (Admin)"):
+                    try:
+                        from datetime import datetime
+                        exp_dt = datetime.strptime(expire, "%d/%m/%Y")
+                        days_left = max(0, (exp_dt.date() - datetime.now().date()).days)
+                    except Exception:
+                        days_left = 0
+                        
+                is_free = (plan_name.lower() == "free")
+                if is_expired:
+                    status = "❌ Hết hạn"
+                elif is_free:
+                    status = f"🎁 Gói Free (Còn {days_left} ngày)" if days_left else "🎁 Gói Free"
+                else:
+                    status = f"✅ VIP Hoạt động (Còn {days_left} ngày)" if days_left else "✅ VIP Hoạt động"
                 
             user = auth_client.user_info.get("username", "Unknown")
             
@@ -7669,6 +8643,9 @@ class App(ctk.CTk):
                         if data.get("ai_provider"):
                             PROCESSOR_CONFIG["ai_provider"] = data.get("ai_provider")
                             os.environ["AI_PROVIDER"] = data.get("ai_provider")
+                        else:
+                            PROCESSOR_CONFIG["ai_provider"] = "cloud_first"
+                            os.environ["AI_PROVIDER"] = "cloud_first"
                         if data.get("ollama_url"):
                             PROCESSOR_CONFIG["ollama_url"] = data.get("ollama_url")
                             os.environ["OLLAMA_URL"] = data.get("ollama_url")
@@ -7683,6 +8660,8 @@ class App(ctk.CTk):
             else:
                 raw_env = os.getenv("GEMINI_API_KEY", "")
                 PROCESSOR_CONFIG["gemini_api_keys"] = [k.strip() for k in raw_env.split(",") if k.strip()]
+                PROCESSOR_CONFIG["ai_provider"] = "cloud_first"
+                os.environ["AI_PROVIDER"] = "cloud_first"
             # Cập nhật quyền hạn ở tab Process
             if hasattr(self, "_tab_frames") and len(self._tab_frames) > 2:
                 process_tab = self._tab_frames[2]
@@ -7787,6 +8766,341 @@ class App(ctk.CTk):
             if hasattr(tab_obj, "_show_payment_dialog"):
                 tab_obj._show_payment_dialog()
 
+    def _show_feedback_dialog(self):
+        """Hiển thị modal gửi đánh giá và góp ý của người dùng."""
+        root_win = self.winfo_toplevel()
+        dlg = ctk.CTkToplevel(root_win)
+        dlg.title("⭐ Gửi Đánh Giá & Góp Ý Phát Triển Tool")
+        dlg.geometry("540x550")
+        dlg.minsize(500, 480)
+        dlg.configure(fg_color=BG_DARK)
+        dlg.transient(root_win)
+        dlg.grab_set()
+
+        try:
+            rx = root_win.winfo_rootx()
+            ry = root_win.winfo_rooty()
+            rw = root_win.winfo_width()
+            rh = root_win.winfo_height()
+            x = rx + max(0, (rw - 540) // 2)
+            y = ry + max(0, (rh - 550) // 2)
+            dlg.geometry(f"540x550+{x}+{y}")
+        except Exception:
+            pass
+
+        # Header card
+        hdr_card = ctk.CTkFrame(dlg, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color="#F59E0B")
+        hdr_card.pack(fill="x", padx=20, pady=(16, 12))
+        
+        h_row = ctk.CTkFrame(hdr_card, fg_color="transparent")
+        h_row.pack(fill="x", padx=16, pady=12)
+        
+        star_icon = ctk.CTkFrame(h_row, width=42, height=42, corner_radius=10, fg_color="#3B2A10", border_width=1, border_color="#F59E0B")
+        star_icon.pack(side="left", padx=(0, 12))
+        star_icon.pack_propagate(False)
+        ctk.CTkLabel(star_icon, text="⭐", font=("Segoe UI", 20)).place(relx=0.5, rely=0.5, anchor="center")
+        
+        t_box = ctk.CTkFrame(h_row, fg_color="transparent")
+        t_box.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(t_box, text="Đóng Góp Ý Kiến & Đánh Giá", font=("Segoe UI", 16, "bold"), text_color=TEXT_MAIN).pack(anchor="w")
+        ctk.CTkLabel(t_box, text="Ý kiến của bạn là động lực để đội ngũ cải tiến phần mềm tốt hơn!", font=("Segoe UI", 11), text_color=TEXT_MUTED).pack(anchor="w", pady=(2, 0))
+
+        # Content frame
+        body = ctk.CTkFrame(dlg, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+
+        # 1. Rating Stars selection
+        ctk.CTkLabel(body, text="1. Mức độ hài lòng của bạn:", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(anchor="w", pady=(0, 6))
+        
+        selected_rating = [5]
+        star_buttons = []
+        
+        rating_frame = ctk.CTkFrame(body, fg_color=BG_CARD, corner_radius=8, border_width=1, border_color=BORDER)
+        rating_frame.pack(fill="x", pady=(0, 12))
+        
+        lbl_rating_text = ctk.CTkLabel(rating_frame, text="⭐⭐⭐⭐⭐ 5/5 - Cực kỳ hài lòng & Tool hoạt động rất tốt", font=("Segoe UI", 11, "bold"), text_color="#FBBF24")
+        lbl_rating_text.pack(pady=(8, 4))
+        
+        stars_row = ctk.CTkFrame(rating_frame, fg_color="transparent")
+        stars_row.pack(pady=(0, 8))
+        
+        rating_descs = {
+            1: "⭐ 1/5 - Chưa hài lòng / Cần cải thiện nhiều",
+            2: "⭐⭐ 2/5 - Tạm được / Còn nhiều lỗi",
+            3: "⭐⭐⭐ 3/5 - Khá ổn / Đạt yêu cầu cơ bản",
+            4: "⭐⭐⭐⭐ 4/5 - Hài lòng / Tính năng hữu ích",
+            5: "⭐⭐⭐⭐⭐ 5/5 - Cực kỳ hài lòng & Tool hoạt động rất tốt",
+        }
+        
+        def _set_rating(val):
+            selected_rating[0] = val
+            lbl_rating_text.configure(text=rating_descs.get(val, f"{val} sao"))
+            for i, btn in enumerate(star_buttons, 1):
+                if i <= val:
+                    btn.configure(fg_color="#F59E0B", text_color="#000000")
+                else:
+                    btn.configure(fg_color="#1E293B", text_color="#64748B")
+                    
+        for r in range(1, 6):
+            btn_s = ctk.CTkButton(
+                stars_row, text=f"★ {r}", width=50, height=32,
+                font=("Segoe UI", 12, "bold"),
+                fg_color="#F59E0B" if r <= 5 else "#1E293B",
+                text_color="#000000" if r <= 5 else "#64748B",
+                corner_radius=6,
+                command=lambda v=r: _set_rating(v)
+            )
+            btn_s.pack(side="left", padx=4)
+            star_buttons.append(btn_s)
+
+        # 2. Category selection
+        ctk.CTkLabel(body, text="2. Chủ đề góp ý:", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(anchor="w", pady=(0, 4))
+        opt_category = ctk.CTkOptionMenu(
+            body,
+            values=[
+                "⭐ Đánh giá & Khen ngợi trải nghiệm",
+                "💡 Đề xuất tính năng mới cần có",
+                "🐞 Báo cáo lỗi / Thắc mắc kỹ thuật",
+                "📝 Góp ý giao diện & trải nghiệm khác"
+            ],
+            width=500, height=34, font=("Segoe UI", 12),
+            fg_color=BG_CARD, button_color=ACCENT, button_hover_color=ACCENT_HOVER
+        )
+        opt_category.pack(fill="x", pady=(0, 12))
+
+        # 3. Content Textbox
+        ctk.CTkLabel(body, text="3. Nội dung nhận xét / đề xuất chi tiết:", font=("Segoe UI", 12, "bold"), text_color=TEXT_MAIN).pack(anchor="w", pady=(0, 4))
+        txt_content = ctk.CTkTextbox(body, height=100, font=("Segoe UI", 12), fg_color=BG_CARD, border_width=1, border_color=BORDER, wrap="word")
+        txt_content.pack(fill="both", expand=True, pady=(0, 12))
+
+        # Bottom buttons
+        btn_box = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_box.pack(fill="x", padx=20, pady=(0, 16))
+
+        def _do_submit():
+            text = txt_content.get("1.0", "end").strip()
+            if not text:
+                messagebox.showwarning("Nhắc nhở", "Vui lòng nhập nội dung đánh giá hoặc góp ý trước khi gửi!")
+                return
+            btn_submit.configure(state="disabled", text="⏳ Đang gửi...")
+            def _worker():
+                cat = opt_category.get()
+                succ, msg = auth_client.send_feedback(rating=selected_rating[0], category=cat, content=text)
+                def _done():
+                    if succ:
+                        messagebox.showinfo("Cảm ơn bạn!", msg)
+                        dlg.destroy()
+                    else:
+                        messagebox.showerror("Thông báo", msg)
+                        btn_submit.configure(state="normal", text="🚀 Gửi Đánh Giá Ngay")
+                dlg.after(0, _done)
+            threading.Thread(target=_worker, daemon=True).start()
+
+        btn_cancel = ctk.CTkButton(btn_box, text="Đóng", width=100, height=36, font=("Segoe UI", 11), fg_color=BORDER, hover_color=BG_CARD, command=dlg.destroy)
+        btn_cancel.pack(side="left")
+
+        btn_submit = ctk.CTkButton(
+            btn_box, text="🚀 Gửi Đánh Giá Ngay", width=220, height=36,
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#D97706", hover_color="#B45309", text_color="#FFFFFF",
+            corner_radius=8, command=_do_submit
+        )
+    def show_user_detail(self, user_or_username):
+        """Mở dialog chi tiết user từ bất kỳ vị trí nào trong app."""
+        if hasattr(self, "_tab_frames") and len(self._tab_frames) > 8:
+            settings_tab = self._tab_frames[8]
+            if hasattr(settings_tab, "_show_user_detail_dialog"):
+                settings_tab._show_user_detail_dialog(user_or_username)
+                return
+        self._show_my_account_dialog()
+
+    def _show_my_account_dialog(self):
+        """Hiển thị modal chi tiết tài khoản của chính user đang đăng nhập."""
+        from auth_client import auth_client
+        if not auth_client.user_info:
+            auth_client.get_me()
+        if not auth_client.user_info:
+            messagebox.showinfo("Thông báo", "Bạn chưa đăng nhập hoặc phiên làm việc đã hết hạn.")
+            return
+            
+        role = auth_client.user_info.get("role", "user")
+        if role in ("admin", "super_admin"):
+            if hasattr(self, "_tab_frames") and len(self._tab_frames) > 8:
+                settings_tab = self._tab_frames[8]
+                if hasattr(settings_tab, "_show_user_detail_dialog"):
+                    settings_tab._show_user_detail_dialog(auth_client.user_info)
+                    return
+
+        # Modal thông tin tài khoản cá nhân dành cho người dùng
+        root_win = self
+        dlg = ctk.CTkToplevel(root_win)
+        dlg.title("👤 Thông Tin Tài Khoản & Bản Quyền")
+        dlg.geometry("540x600")
+        dlg.minsize(480, 520)
+        dlg.configure(fg_color=BG_DARK)
+        dlg.transient(root_win)
+        dlg.grab_set()
+
+        try:
+            rx = root_win.winfo_rootx()
+            ry = root_win.winfo_rooty()
+            rw = root_win.winfo_width()
+            rh = root_win.winfo_height()
+            x = rx + max(0, (rw - 540) // 2)
+            y = ry + max(0, (rh - 600) // 2)
+            dlg.geometry(f"540x600+{x}+{y}")
+        except Exception:
+            pass
+
+        u_info = auth_client.user_info or {}
+        username = u_info.get("username", "Unknown")
+        plan_name = str(u_info.get("plan_name") or "Free").strip()
+        expire_date = u_info.get("expire_date", "Chưa có")
+        is_expired = u_info.get("is_expired", False)
+        days_left = u_info.get("days_left")
+        if (days_left is None or days_left == 0) and expire_date and expire_date not in ("Chưa có", "Chưa thiết lập", "Vĩnh viễn (Admin)"):
+            try:
+                from datetime import datetime
+                exp_dt = datetime.strptime(expire_date, "%d/%m/%Y")
+                days_left = max(0, (exp_dt.date() - datetime.now().date()).days)
+            except Exception:
+                days_left = 0
+
+        # 1. Header Card
+        hdr_card = ctk.CTkFrame(dlg, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        hdr_card.pack(fill="x", padx=20, pady=(16, 12))
+
+        h_row = ctk.CTkFrame(hdr_card, fg_color="transparent")
+        h_row.pack(fill="x", padx=16, pady=12)
+
+        avatar_box = ctk.CTkFrame(h_row, width=48, height=48, corner_radius=12, fg_color="#1E1B4B", border_width=1, border_color="#6366F1")
+        avatar_box.pack(side="left", padx=(0, 12))
+        avatar_box.pack_propagate(False)
+        ctk.CTkLabel(avatar_box, text="👤", font=("Segoe UI", 22)).place(relx=0.5, rely=0.5, anchor="center")
+
+        t_box = ctk.CTkFrame(h_row, fg_color="transparent")
+        t_box.pack(side="left", fill="x", expand=True)
+
+        ctk.CTkLabel(t_box, text=username, font=("Segoe UI", 16, "bold"), text_color=TEXT_MAIN).pack(anchor="w")
+
+        b_row = ctk.CTkFrame(t_box, fg_color="transparent")
+        b_row.pack(anchor="w", pady=(4, 0))
+
+        ctk.CTkLabel(
+            b_row, text=f" 💎 Gói {plan_name} ",
+            font=("Segoe UI", 10, "bold"), text_color="#FBBF24",
+            fg_color="#3B2A10", corner_radius=6
+        ).pack(side="left", padx=(0, 6))
+
+        stat_lbl = "❌ Đã hết hạn" if is_expired else "✅ Đang hoạt động"
+        stat_col = DANGER if is_expired else SUCCESS
+        stat_bg = DANGER_BG if is_expired else SUCCESS_BG
+        ctk.CTkLabel(
+            b_row, text=f" {stat_lbl} ",
+            font=("Segoe UI", 10, "bold"), text_color=stat_col,
+            fg_color=stat_bg, corner_radius=6
+        ).pack(side="left")
+
+        # Scrollable content
+        scroll = ctk.CTkScrollableFrame(dlg, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+
+        def _row(parent, label, value, val_color=TEXT_MAIN):
+            r = ctk.CTkFrame(parent, fg_color="transparent")
+            r.pack(fill="x", padx=14, pady=3)
+            ctk.CTkLabel(r, text=label, font=("Segoe UI", 11), text_color=TEXT_MUTED, width=150, anchor="w").pack(side="left")
+            ctk.CTkLabel(r, text=str(value), font=("Segoe UI", 11, "bold"), text_color=val_color, anchor="w").pack(side="left", fill="x", expand=True)
+
+        # Box 1: Bản quyền & thời hạn
+        p_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        p_card.pack(fill="x", pady=(0, 10))
+
+        p_hdr = ctk.CTkFrame(p_card, fg_color="transparent")
+        p_hdr.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(p_hdr, text="💎 Thông Tin Bản Quyền & Thời Hạn", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(side="left")
+
+        _row(p_card, "Tài khoản đăng nhập:", username)
+        _row(p_card, "Gói kích hoạt:", f"Gói {plan_name}", "#FBBF24")
+        _row(p_card, "Hạn sử dụng:", f"{expire_date} (Còn {days_left} ngày)" if not is_expired else f"{expire_date} (Đã hết hạn)", SUCCESS if not is_expired else DANGER)
+
+        # Box 2: Hạn mức render hôm nay
+        trial_info = auth_client.get_trial_info()
+        is_unlimited = trial_info.get("is_unlimited", False)
+        used_count = trial_info.get("used_count", 0)
+        max_vids = trial_info.get("max_allowed", 5)
+        rem = trial_info.get("remaining", 0)
+
+        q_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        q_card.pack(fill="x", pady=(0, 10))
+
+        q_hdr = ctk.CTkFrame(q_card, fg_color="transparent")
+        q_hdr.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(q_hdr, text="📊 Hạn Mức Render Video Hôm Nay", font=("Segoe UI", 12, "bold"), text_color=CYAN).pack(side="left")
+
+        can_ai_user = u_info.get("can_use_ai", True)
+        if is_unlimited:
+            _row(q_card, "Hạn mức hôm nay:", "🚀 Không giới hạn (Gói VIP/Bản quyền)", SUCCESS)
+        else:
+            _row(q_card, "Đã xử lý hôm nay:", f"{used_count} / {max_vids} video", WARNING if used_count >= max_vids else TEXT_MAIN)
+            _row(q_card, "Số lượt còn lại:", f"{rem} video", SUCCESS if rem > 0 else DANGER)
+            
+            # Progress bar
+            prog_f = ctk.CTkFrame(q_card, fg_color="transparent")
+            prog_f.pack(fill="x", padx=14, pady=(6, 12))
+            pct = min(1.0, used_count / max(1, max_vids))
+            bar = ctk.CTkProgressBar(prog_f, height=8, corner_radius=4)
+            bar.pack(fill="x")
+            bar.set(pct)
+            bar.configure(progress_color=DANGER if pct >= 1.0 else ACCENT)
+
+        if can_ai_user:
+            _row(q_card, "Tài nguyên AI:", "✅ Sử dụng API Key AI dùng chung từ hệ thống", SUCCESS)
+        else:
+            _row(q_card, "Tài nguyên AI:", "⚠️ Gói Tự Túc (Cần nhập Gemini API Key tại tab Cài đặt)", WARNING)
+
+        # Box 3: Thiết bị & Bảo mật
+        d_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        d_card.pack(fill="x", pady=(0, 10))
+
+        d_hdr = ctk.CTkFrame(d_card, fg_color="transparent")
+        d_hdr.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(d_hdr, text="🔒 Thiết Bị Đang Sử Dụng (HWID)", font=("Segoe UI", 12, "bold"), text_color="#A78BFA").pack(side="left")
+
+        my_hwid = auth_client.get_hwid()
+        _row(d_card, "Mã máy của bạn:", my_hwid, "#38BDF8")
+        _row(d_card, "Trạng thái:", "🔒 Tài khoản đã được bảo vệ trên thiết bị này", SUCCESS)
+
+        # Bottom actions
+        bot_bar = ctk.CTkFrame(dlg, fg_color="transparent")
+        bot_bar.pack(fill="x", padx=20, pady=(4, 16))
+
+        def _do_open_upgrade():
+            dlg.destroy()
+            self._handle_sidebar_upgrade()
+
+        def _do_open_feedback():
+            dlg.destroy()
+            self._show_feedback_dialog()
+
+        ctk.CTkButton(
+            bot_bar, text="💎 Nâng Cấp VIP", width=140, height=34,
+            font=("Segoe UI", 11, "bold"), fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            command=_do_open_upgrade
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            bot_bar, text="⭐ Góp Ý & Đánh Giá", width=150, height=34,
+            font=("Segoe UI", 11, "bold"), fg_color="#3B2A10", hover_color="#78350F",
+            text_color="#FDE68A", border_width=1, border_color="#F59E0B",
+            command=_do_open_feedback
+        ).pack(side="left", padx=8)
+
+        ctk.CTkButton(
+            bot_bar, text="✕ Đóng", width=80, height=34,
+            font=("Segoe UI", 11), fg_color=BORDER, hover_color=BG_CARD,
+            command=dlg.destroy
+        ).pack(side="right")
+
     # ── Sidebar ──────────────────────────────────────────────────────────────
     def _build_sidebar(self):
         sidebar = ctk.CTkFrame(self, width=224, fg_color=BG_SIDEBAR, corner_radius=0)
@@ -7838,14 +9152,26 @@ class App(ctk.CTk):
         bottom.grid_columnconfigure(0, weight=1)
 
         # Premium User Profile Card
-        self.user_card = ctk.CTkFrame(bottom, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        self.user_card = ctk.CTkFrame(bottom, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER, cursor="hand2")
         self.user_card.grid(row=0, column=0, pady=(8, 6), padx=12, sticky="ew")
         
         self.lbl_user_info = ctk.CTkLabel(
             self.user_card, text="👤  Chưa đăng nhập",
-            font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN, justify="left"
+            font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN, justify="left", cursor="hand2"
         )
-        self.lbl_user_info.pack(padx=12, pady=10, anchor="w")
+        self.lbl_user_info.pack(padx=12, pady=(10, 4), anchor="w")
+
+        # Nút xem thông tin tài khoản
+        self.btn_view_account = ctk.CTkButton(
+            self.user_card, text="ℹ️ Xem Thông Tin Tài Khoản", height=24,
+            font=("Segoe UI", 10, "bold"), fg_color="#1E1B4B", hover_color="#312E81",
+            text_color="#C4B5FD", corner_radius=6,
+            command=self._show_my_account_dialog
+        )
+        self.btn_view_account.pack(padx=12, pady=(0, 8), fill="x")
+
+        self.user_card.bind("<Button-1>", lambda e: self._show_my_account_dialog())
+        self.lbl_user_info.bind("<Button-1>", lambda e: self._show_my_account_dialog())
         
         self.btn_upgrade_sidebar = ctk.CTkButton(
             self.user_card, text="💎 Nâng Cấp VIP", height=32,
@@ -7855,6 +9181,16 @@ class App(ctk.CTk):
         )
         self.btn_upgrade_sidebar.pack(padx=12, pady=(0, 10), fill="x")
 
+        # Nút Đánh giá & Góp ý (Nổi bật màu vàng hổ phách)
+        self.btn_feedback = ctk.CTkButton(
+            bottom, text="⭐ Góp Ý & Đánh Giá", height=36,
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#3B2A10", hover_color="#78350F", text_color="#FDE68A",
+            border_width=1, border_color="#F59E0B", corner_radius=8,
+            command=self._show_feedback_dialog
+        )
+        self.btn_feedback.grid(row=1, column=0, pady=(0, 6), padx=12, sticky="ew")
+
         # Logout button
         btn_logout = ctk.CTkButton(
             bottom, text="🚪 Đăng xuất", height=34,
@@ -7863,12 +9199,12 @@ class App(ctk.CTk):
             border_width=1, border_color="#EF4444", corner_radius=8,
             command=self._do_logout
         )
-        btn_logout.grid(row=1, column=0, pady=(0, 6), padx=12, sticky="ew")
+        btn_logout.grid(row=2, column=0, pady=(0, 6), padx=12, sticky="ew")
 
         # Support info
         import webbrowser
         support_frame = ctk.CTkFrame(bottom, fg_color="transparent")
-        support_frame.grid(row=2, column=0, sticky="ew")
+        support_frame.grid(row=3, column=0, sticky="ew")
         
         ctk.CTkLabel(support_frame, text="📞 Hotline hỗ trợ:", font=("Segoe UI", 10, "bold"), text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(2, 3))
         
@@ -7892,7 +9228,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(
             bottom, text="⚡ v2.0.0 PRO (Obsidian Edition)",
             font=("Segoe UI", 9, "bold"), text_color=TEXT_MUTED,
-        ).grid(row=3, column=0, pady=(4, 10))
+        ).grid(row=4, column=0, pady=(4, 10))
 
     # ── Content area ─────────────────────────────────────────────────────────
     def _build_content(self):

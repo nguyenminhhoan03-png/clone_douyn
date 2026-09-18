@@ -492,9 +492,9 @@ class DatabaseManager:
             query = "SELECT COUNT(*) FROM crawled_videos WHERE DATE(processed_at) = ?"
             params = [today]
             if username:
-                query += " AND username = ?"
-                params.append(username)
-
+                clean_user = username.replace("@", "_").replace(".", "_")
+                query += " AND (username = ? OR username = ?)"
+                params.extend([username, clean_user])
                 
             cursor.execute(query, tuple(params))
             return cursor.fetchone()[0]

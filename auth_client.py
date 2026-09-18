@@ -65,6 +65,7 @@ class AuthClient:
             if resp.status_code == 200:
                 self.token = resp.json().get("access_token")
                 self.save_session()
+                self.get_me()
                 return True, "Success"
             else:
                 return False, resp.json().get("detail", "Login failed")
@@ -120,8 +121,8 @@ class AuthClient:
         Kiểm tra xem user có phải là tài khoản đã mua gói bản quyền hay không.
         - Admin: Mặc định là full, không giới hạn.
         - Role 'vip' hoặc 'pro': Gói trả phí.
-        - Người dùng có thời hạn > 3 ngày (gói 1M, 3M, 6M, 1Y, LT): Đã mua gói.
-        - User từng thanh toán thành công (lưu trong subscription cache): Đã mua gói.
+        - Plan '1M', '3M', '6M', '1Y', 'LT', 'VIP', 'Pro': Gói trả phí.
+        - Gói 'Free': Luôn là gói dùng thử/miễn phí, không phải paid user dù có bao nhiêu ngày.
         """
         if not self.user_info:
             return False
@@ -131,15 +132,23 @@ class AuthClient:
             
         if self.user_info.get("is_expired", True):
             return False
+
+        plan_name = str(self.user_info.get("plan_name") or "Free").strip().lower()
+        role = str(self.user_info.get("role", "user")).strip().lower()
+
+        # Gói Free tuyệt đối không phải là paid_user
+        if plan_name == "free":
+            if role in ("vip", "pro"):
+                return True
+            return False
             
-        role = str(self.user_info.get("role", "user")).lower()
-        if role in ("vip", "pro"):
+        if role in ("vip", "pro") or plan_name in ("vip", "pro", "lt", "trọn đời", "1m", "3m", "6m", "1y"):
             return True
             
         username = self.user_info.get("username", "default")
         clean_user = username.replace("@", "_").replace(".", "_")
         
-        # 1. Kiểm tra cache subscription cục bộ
+        # Kiểm tra cache subscription cục bộ
         from config.settings import COOKIES_DIR
         user_dir = COOKIES_DIR / clean_user
         sub_file = user_dir / "subscription.json"
@@ -147,31 +156,14 @@ class AuthClient:
             try:
                 with open(sub_file, "r", encoding="utf-8") as f:
                     sub_data = json.load(f)
-                    if sub_data.get("is_paid"):
+                    if sub_data.get("is_paid") and str(sub_data.get("plan_name", "")).lower() != "free":
                         return True
-            except Exception:
-                pass
-                
-        # 2. Kiểm tra ngày hết hạn từ server:
-        # Dùng thử chỉ có 1-3 ngày. Gói mua luôn từ 30 ngày trở lên (1M: 30, 3M: 90, 6M: 180, 1Y: 365, LT: 3650).
-        expire_str = self.user_info.get("expire_date")
-        if expire_str and expire_str != "Chưa có":
-            try:
-                from datetime import datetime
-                exp_dt = datetime.strptime(expire_str, "%d/%m/%Y")
-                days_left = (exp_dt.date() - datetime.now().date()).days
-                if days_left > 3:
-                    # Tự động ghi nhớ tài khoản này là tài khoản đã mua gói
-                    user_dir.mkdir(parents=True, exist_ok=True)
-                    with open(sub_file, "w", encoding="utf-8") as f:
-                        json.dump({"username": username, "is_paid": True, "expire_date": expire_str}, f)
-                    return True
             except Exception:
                 pass
                 
         return False
 
-    def mark_user_paid(self, username: str = None):
+    def mark_user_paid(self, username: str = None, plan_name: str = "VIP"):
         """Đánh dấu vĩnh viễn user này đã nâng cấp gói."""
         uname = username or (self.user_info.get("username", "default") if self.user_info else "default")
         clean_user = uname.replace("@", "_").replace(".", "_")
@@ -181,36 +173,38 @@ class AuthClient:
         sub_file = user_dir / "subscription.json"
         try:
             with open(sub_file, "w", encoding="utf-8") as f:
-                json.dump({"username": uname, "is_paid": True}, f)
+                json.dump({"username": uname, "is_paid": True, "plan_name": plan_name}, f)
         except Exception:
             pass
 
     def get_trial_info(self) -> dict:
         """
         Lấy thông tin lượt render của tài khoản:
-        - is_unlimited: True nếu là Admin hoặc User đã mua gói
-        - max_allowed: 4 video đối với tài khoản dùng thử
-        - used_count: tổng số video đã render
-        - remaining: số video còn lại có thể render
+        - is_unlimited: True nếu là Admin hoặc Gói VIP/Trọn Đời (max_daily_videos >= 9999)
+        - max_allowed: số video tối đa mỗi ngày theo cấu hình gói
+        - used_count: tổng số video đã render trong ngày hôm nay
+        - remaining: số video còn lại có thể render hôm nay
         """
-        if self.is_admin() or self.is_paid_user():
+        if self.is_admin():
             return {
                 "is_unlimited": True,
                 "max_allowed": None,
                 "used_count": 0,
                 "remaining": 999999,
-                "plan_type": "Admin (Toàn quyền)" if self.is_admin() else "Gói Bản Quyền (Không giới hạn)"
+                "plan_type": "Admin (Toàn quyền)"
             }
             
         from database.db_manager import DatabaseManager
+        from datetime import datetime
         db = DatabaseManager()
         username = self.user_info.get("username", "default") if self.user_info else "default"
         clean_user = username.replace("@", "_").replace(".", "_")
+        today_str = datetime.now().strftime("%Y-%m-%d")
         
-        # 1. Đếm theo tài khoản trong database
-        user_processed = db.get_total_processed_count(username=username)
+        # 1. Đếm số video đã xử lý hôm nay theo tài khoản trong database
+        user_processed_today = db.get_today_processed_count(username=username)
         
-        # 2. Đếm theo mã máy (HWID) để chống tạo nhiều tài khoản trên 1 máy
+        # 2. Đếm theo mã máy (HWID) hôm nay để chống tạo nhiều tài khoản trên 1 máy
         from config.settings import BASE_DIR
         hw_file = BASE_DIR / "config" / ".hw_trial.json"
         hw_used = 0
@@ -219,28 +213,74 @@ class AuthClient:
             try:
                 with open(hw_file, "r", encoding="utf-8") as f:
                     hw_data = json.load(f)
-                    hw_used = hw_data.get(hwid, 0)
+                    hw_entry = hw_data.get(hwid)
+                    if isinstance(hw_entry, dict):
+                        if hw_entry.get("date") == today_str:
+                            hw_used = hw_entry.get("count", 0)
+                    elif isinstance(hw_entry, int):
+                        hw_used = hw_data.get(f"{hwid}_{today_str}", 0)
             except Exception:
                 pass
                 
-        used_count = max(user_processed, hw_used)
-        max_trial = 4
-        remaining = max(0, max_trial - used_count)
+        used_count = max(user_processed_today, hw_used)
         
+        # 3. Lấy hạn mức cấu hình theo gói
+        plan_name = str(self.user_info.get("plan_name") or "Free").strip() if self.user_info else "Free"
+        role = str(self.user_info.get("role", "user")).strip().lower() if self.user_info else "user"
+        
+        max_daily = None
+        if self.user_info and self.user_info.get("max_daily_videos") is not None:
+            try:
+                max_daily = int(self.user_info["max_daily_videos"])
+            except Exception:
+                pass
+
+        if max_daily is None:
+            # Fallback đọc từ cấu hình packages đã lưu trong hệ thống
+            try:
+                _, configs = self.admin_get_config()
+                if configs and "packages" in configs:
+                    import json
+                    pkgs = json.loads(configs["packages"]) if isinstance(configs["packages"], str) else configs["packages"]
+                    curr_plan = plan_name.upper()
+                    for p in pkgs:
+                        p_code = str(p.get("code", "")).upper()
+                        p_name_upper = str(p.get("name", "")).upper()
+                        if p_code == curr_plan or p_name_upper == curr_plan:
+                            max_daily = int(p.get("max_daily_videos", 5))
+                            break
+            except Exception:
+                pass
+
+        if max_daily is None:
+            max_daily = 5 if plan_name.lower() == "free" else 9999
+
+        if max_daily >= 9999 or role in ("vip", "super_admin"):
+            return {
+                "is_unlimited": True,
+                "max_allowed": None,
+                "used_count": used_count,
+                "remaining": 999999,
+                "plan_type": f"Gói {plan_name} (Không giới hạn)"
+            }
+
+        remaining = max(0, max_daily - used_count)
         return {
             "is_unlimited": False,
-            "max_allowed": max_trial,
+            "max_allowed": max_daily,
             "used_count": used_count,
             "remaining": remaining,
-            "plan_type": "Dùng thử (Free Trial)"
+            "plan_type": f"Gói {plan_name} ({max_daily} video/ngày)"
         }
 
     def record_trial_render(self, count: int = 1):
-        """Ghi nhận số lượng video đã render vào hồ sơ máy tính (HWID)."""
+        """Ghi nhận số lượng video đã render hôm nay vào hồ sơ máy tính (HWID)."""
         if self.is_admin() or self.is_paid_user():
             return
             
         from config.settings import BASE_DIR
+        from datetime import datetime
+        today_str = datetime.now().strftime("%Y-%m-%d")
         hw_file = BASE_DIR / "config" / ".hw_trial.json"
         hw_file.parent.mkdir(parents=True, exist_ok=True)
         hwid = self.get_hwid()
@@ -252,8 +292,17 @@ class AuthClient:
             except Exception:
                 pass
                 
-        current = hw_data.get(hwid, 0)
-        hw_data[hwid] = current + count
+        hw_entry = hw_data.get(hwid)
+        if isinstance(hw_entry, dict) and hw_entry.get("date") == today_str:
+            current = hw_entry.get("count", 0)
+        else:
+            current = 0
+            
+        hw_data[hwid] = {
+            "date": today_str,
+            "count": current + count
+        }
+        hw_data[f"{hwid}_{today_str}"] = current + count
         try:
             with open(hw_file, "w", encoding="utf-8") as f:
                 json.dump(hw_data, f)
@@ -596,23 +645,116 @@ class AuthClient:
         except Exception as e:
             return False, str(e)
 
+    def admin_reset_hwid(self, user_id):
+        """Mở khóa thiết bị máy tính (Reset HWID) cho người dùng."""
+        if not self.token: return False, "Not logged in"
+        # 1. Thử gọi Cloud API
+        try:
+            resp = requests.post(f"{API_BASE_URL}/admin/users/{user_id}/reset_hwid", 
+                                headers={"Authorization": f"Bearer {self.token}"}, timeout=8)
+            if resp.status_code == 200:
+                return True, resp.json().get("message", "Reset HWID thành công!")
+        except Exception:
+            pass
+        # 2. Fallback local DB
+        try:
+            from pathlib import Path
+            import sys
+            backend_dir = Path(__file__).parent / "backend"
+            if str(backend_dir) not in sys.path:
+                sys.path.insert(0, str(backend_dir))
+            import models
+            models.init_db()
+            db = models.SessionLocal()
+            u = db.query(models.User).filter(models.User.id == user_id).first()
+            if u:
+                u.hwid = None
+                db.commit()
+                db.close()
+                return True, f"Đã mở khóa thiết bị (Reset HWID) thành công cho '{u.username}'."
+            db.close()
+            return False, "Không tìm thấy User."
+        except Exception as e:
+            return False, str(e)
+
     def admin_get_config(self):
         if not self.token: return False, "Not logged in"
+        # 1. Cloud API
         try:
             resp = requests.get(f"{API_BASE_URL}/admin/config", 
                               headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
             if resp.status_code == 200: return True, resp.json()
-            return False, resp.json().get("detail", "Error")
+        except Exception:
+            pass
+        # 2. Local fallback
+        try:
+            from pathlib import Path
+            import sys
+            backend_dir = Path(__file__).parent / "backend"
+            if str(backend_dir) not in sys.path:
+                sys.path.insert(0, str(backend_dir))
+            import models
+            models.init_db()
+            db = models.SessionLocal()
+            configs = db.query(models.SystemConfig).all()
+            res = {c.key: c.value for c in configs}
+            db.close()
+            return True, res
         except Exception as e:
             return False, str(e)
 
     def admin_save_config(self, data):
         if not self.token: return False, "Not logged in"
+        # 1. Cloud API
         try:
             resp = requests.put(f"{API_BASE_URL}/admin/config", json=data,
-                              headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
-            if resp.status_code == 200: return True, resp.json()
-            return False, resp.json().get("detail", "Error")
+                              headers={"Authorization": f"Bearer {self.token}"}, timeout=8)
+            if resp.status_code == 200: return True, resp.json().get("message", "Đã lưu thành công!")
+        except Exception:
+            pass
+        # 2. Local fallback
+        try:
+            from pathlib import Path
+            import sys
+            backend_dir = Path(__file__).parent / "backend"
+            if str(backend_dir) not in sys.path:
+                sys.path.insert(0, str(backend_dir))
+            import models
+            models.init_db()
+            db = models.SessionLocal()
+            for k, v in data.items():
+                val_str = str(v) if not isinstance(v, str) else v
+                cfg = db.query(models.SystemConfig).filter(models.SystemConfig.key == k).first()
+                if cfg: cfg.value = val_str
+                else: db.add(models.SystemConfig(key=k, value=val_str))
+            
+            # Đồng bộ bảng plans
+            if "packages" in data:
+                try:
+                    import json
+                    pkgs = json.loads(data["packages"]) if isinstance(data["packages"], str) else data["packages"]
+                    for p in pkgs:
+                        p_code = str(p.get("code", "")).strip()
+                        p_name = str(p.get("name", "")).strip()
+                        p_max = int(p.get("max_daily_videos", 5))
+                        p_ai = bool(p.get("can_use_ai", True))
+                        p_price = float(p.get("price", 0))
+
+                        plan_name_target = "Free" if p_code.upper() == "FREE" else p_name
+                        plan = db.query(models.Plan).filter(models.Plan.name == plan_name_target).first()
+                        if not plan and p_code.upper() != "FREE":
+                            plan = db.query(models.Plan).filter(models.Plan.name == p_code).first()
+                        if plan:
+                            plan.max_daily_videos = p_max
+                            plan.can_use_ai_script = p_ai
+                            plan.price = p_price
+                        else:
+                            db.add(models.Plan(name=plan_name_target, max_daily_videos=p_max, can_use_ai_script=p_ai, price=p_price))
+                except Exception:
+                    pass
+            db.commit()
+            db.close()
+            return True, "Đã lưu cấu hình vào hệ thống thành công!"
         except Exception as e:
             return False, str(e)
 
@@ -639,6 +781,91 @@ class AuthClient:
             resp = requests.get(f"{API_BASE_URL}/payment/info", timeout=5)
             if resp.status_code == 200: return True, resp.json()
             return False, "Error fetching payment info"
+        except Exception as e:
+            return False, str(e)
+
+    def send_feedback(self, rating: int = 5, category: str = "Đánh giá", content: str = ""):
+        """Gửi đánh giá & góp ý của người dùng lên server (hỗ trợ fallback local database)."""
+        if not self.token:
+            return False, "Bạn chưa đăng nhập! Vui lòng đăng nhập để gửi góp ý."
+        # 1. Thử gửi lên Cloud API
+        try:
+            resp = requests.post(f"{API_BASE_URL}/api/feedback", json={
+                "rating": rating,
+                "category": category,
+                "content": content
+            }, headers={"Authorization": f"Bearer {self.token}"}, timeout=8)
+            if resp.status_code == 200:
+                return True, resp.json().get("message", "Gửi góp ý thành công!")
+        except Exception:
+            pass
+
+        # 2. Fallback: Lưu trực tiếp vào SQLite database cục bộ (nếu Cloud API VPS chưa cập nhật endpoint)
+        try:
+            import sys
+            from datetime import datetime
+            backend_dir = Path(__file__).parent / "backend"
+            if str(backend_dir) not in sys.path:
+                sys.path.insert(0, str(backend_dir))
+            import models
+            models.init_db()
+            db = models.SessionLocal()
+            u_name = self.user_info.get("username", "anonymous") if self.user_info else "anonymous"
+            new_fb = models.Feedback(
+                username=u_name,
+                rating=max(1, min(5, rating)),
+                category=category or "Đánh giá",
+                content=content.strip(),
+                created_at=datetime.utcnow()
+            )
+            db.add(new_fb)
+            db.commit()
+            db.close()
+            return True, "Cảm ơn bạn đã gửi đánh giá & góp ý! Ý kiến của bạn đã được ghi nhận."
+        except Exception as e:
+            return False, f"Lỗi lưu đánh giá: {e}"
+
+    def admin_get_feedbacks(self):
+        """Lấy danh sách đánh giá & thống kê cho Admin (hỗ trợ fallback local database)."""
+        if not self.token:
+            return False, "Not logged in"
+        # 1. Thử lấy từ Cloud API
+        try:
+            resp = requests.get(f"{API_BASE_URL}/admin/feedbacks", headers={"Authorization": f"Bearer {self.token}"}, timeout=8)
+            if resp.status_code == 200:
+                return True, resp.json()
+        except Exception:
+            pass
+
+        # 2. Fallback: Đọc từ SQLite database cục bộ
+        try:
+            import sys
+            from datetime import datetime
+            backend_dir = Path(__file__).parent / "backend"
+            if str(backend_dir) not in sys.path:
+                sys.path.insert(0, str(backend_dir))
+            import models
+            models.init_db()
+            db = models.SessionLocal()
+            feedbacks = db.query(models.Feedback).order_by(models.Feedback.created_at.desc()).all()
+            total = len(feedbacks)
+            avg_rating = round(sum(f.rating for f in feedbacks) / total, 1) if total > 0 else 5.0
+            results = []
+            for f in feedbacks:
+                results.append({
+                    "id": f.id,
+                    "username": f.username,
+                    "rating": f.rating,
+                    "category": f.category,
+                    "content": f.content,
+                    "created_at": f.created_at.strftime("%d/%m/%Y %H:%M") if f.created_at else ""
+                })
+            db.close()
+            return True, {
+                "total": total,
+                "avg_rating": avg_rating,
+                "feedbacks": results
+            }
         except Exception as e:
             return False, str(e)
 

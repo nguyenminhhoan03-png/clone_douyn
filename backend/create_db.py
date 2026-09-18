@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.models import init_db, SessionLocal, User, Plan
 from backend.auth import get_password_hash
+from datetime import datetime, timedelta
 
 def main():
     print("Khởi tạo Database...")
@@ -31,6 +32,11 @@ def main():
             db.add(plan)
             db.commit()
             db.refresh(plan)
+        else:
+            plan.max_daily_videos = config["max_daily_videos"]
+            plan.can_use_ai_script = config["can_use_ai_script"]
+            db.commit()
+            db.refresh(plan)
         db_plans[name] = plan
 
     admin = db.query(User).filter(User.username == "admin").first()
@@ -51,18 +57,21 @@ def main():
         
     test_user = db.query(User).filter(User.username == "test_user").first()
     if not test_user:
-        print("Tạo tài khoản test_user (gói Free)...")
+        print("Tạo tài khoản test_user (gói Free 10 ngày)...")
         new_test = User(
             username="test_user",
             hashed_password=get_password_hash("123456"),
             role="user",
-            plan_id=db_plans["Free"].id
+            plan_id=db_plans["Free"].id,
+            plan_expires_at=datetime.utcnow() + timedelta(days=10)
         )
         db.add(new_test)
     else:
         # Update existing test_user
         if test_user.plan_id is None:
             test_user.plan_id = db_plans["Free"].id
+        if test_user.plan_expires_at is None:
+            test_user.plan_expires_at = datetime.utcnow() + timedelta(days=10)
         
     db.commit()
     db.close()

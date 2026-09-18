@@ -111,8 +111,8 @@ class RegisterWindow(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
         
-        self.title("Đăng ký Tài khoản")
-        self.geometry("400x350")
+        self.title("🎁 Đăng ký (Free 10 Ngày Full AI)")
+        self.geometry("440x420")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         
@@ -120,25 +120,32 @@ class RegisterWindow(ctk.CTkToplevel):
         self.grab_set()
         
         ctk.CTkLabel(
-            self, text="Tạo Tài Khoản",
-            font=("Segoe UI", 28, "bold"), text_color=TEXT_MAIN
-        ).pack(pady=(30, 20))
+            self, text="Tạo Tài Khoản Mới",
+            font=("Segoe UI", 24, "bold"), text_color=TEXT_MAIN
+        ).pack(pady=(20, 6))
+
+        promo_box = ctk.CTkFrame(self, fg_color="#271E08", border_width=1, border_color="#D97706", corner_radius=8)
+        promo_box.pack(padx=24, pady=(0, 12), fill="x")
+        ctk.CTkLabel(
+            promo_box, text="🎁 Tặng 10 ngày dùng thử Full tính năng AI!",
+            font=("Segoe UI", 11, "bold"), text_color="#FDE68A", justify="center"
+        ).pack(padx=10, pady=8)
         
-        self.entry_user = ctk.CTkEntry(self, placeholder_text="Tên đăng nhập", width=250)
-        self.entry_user.pack(pady=10)
+        self.entry_user = ctk.CTkEntry(self, placeholder_text="Tên đăng nhập", width=270)
+        self.entry_user.pack(pady=8)
         
-        self.entry_pass = ctk.CTkEntry(self, placeholder_text="Mật khẩu", show="*", width=250)
-        self.entry_pass.pack(pady=10)
+        self.entry_pass = ctk.CTkEntry(self, placeholder_text="Mật khẩu", show="*", width=270)
+        self.entry_pass.pack(pady=8)
         
-        self.entry_pass_confirm = ctk.CTkEntry(self, placeholder_text="Xác nhận Mật khẩu", show="*", width=250)
-        self.entry_pass_confirm.pack(pady=10)
+        self.entry_pass_confirm = ctk.CTkEntry(self, placeholder_text="Xác nhận Mật khẩu", show="*", width=270)
+        self.entry_pass_confirm.pack(pady=8)
         
         self.btn_register = ctk.CTkButton(
-            self, text="Đăng ký", width=250, height=40,
-            command=self._do_register, font=("Segoe UI", 14, "bold"),
+            self, text="🎉 Đăng ký nhận 10 ngày Free", width=270, height=40,
+            command=self._do_register, font=("Segoe UI", 13, "bold"),
             fg_color=SUCCESS, hover_color="#059669"
         )
-        self.btn_register.pack(pady=20)
+        self.btn_register.pack(pady=(14, 10))
         
     def _do_register(self):
         user = self.entry_user.get().strip()
@@ -163,12 +170,11 @@ class RegisterWindow(ctk.CTkToplevel):
         
     def _handle_result(self, success, msg):
         if success:
-            messagebox.showinfo("Thành công", msg)
-            self.grab_release()
+            messagebox.showinfo("Thành công", "Đăng ký thành công!\n🎁 Kích hoạt 10 ngày dùng thử Free Full tính năng AI.")
             self.destroy()
         else:
             messagebox.showerror("Lỗi", msg)
-            self.btn_register.configure(state="normal", text="Đăng ký")
+            self.btn_register.configure(state="normal", text="🎉 Đăng ký nhận 10 ngày Free")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -179,8 +185,8 @@ class LoginWindow(ctk.CTkToplevel):
         super().__init__(master)
         self.on_success = on_success
         
-        self.title("Đăng nhập Hệ thống")
-        self.geometry("400x380")
+        self.title("🎬 DouyinBot | Đăng Nhập (🎁 Free 10 Ngày)")
+        self.geometry("440x420")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
         
@@ -188,25 +194,32 @@ class LoginWindow(ctk.CTkToplevel):
         
         ctk.CTkLabel(
             self, text="DouyinBot SaaS",
-            font=("Segoe UI", 28, "bold"), text_color=TEXT_MAIN
-        ).pack(pady=(30, 20))
+            font=("Segoe UI", 26, "bold"), text_color=TEXT_MAIN
+        ).pack(pady=(20, 6))
+
+        promo_box = ctk.CTkFrame(self, fg_color="#271E08", border_width=1, border_color="#D97706", corner_radius=8)
+        promo_box.pack(padx=24, pady=(0, 12), fill="x")
+        ctk.CTkLabel(
+            promo_box, text="🎁 Đăng ký mới nhận ngay 10 ngày dùng thử Full AI!",
+            font=("Segoe UI", 11, "bold"), text_color="#FDE68A", justify="center"
+        ).pack(padx=10, pady=8)
         
-        self.entry_user = ctk.CTkEntry(self, placeholder_text="Tên đăng nhập", width=250)
-        self.entry_user.pack(pady=10)
+        self.entry_user = ctk.CTkEntry(self, placeholder_text="Tên đăng nhập", width=270)
+        self.entry_user.pack(pady=8)
         
-        self.entry_pass = ctk.CTkEntry(self, placeholder_text="Mật khẩu", show="*", width=250)
-        self.entry_pass.pack(pady=10)
+        self.entry_pass = ctk.CTkEntry(self, placeholder_text="Mật khẩu", show="*", width=270)
+        self.entry_pass.pack(pady=8)
         
         self.btn_login = ctk.CTkButton(
-            self, text="Đăng nhập", width=250, height=40,
-            command=self._do_login, font=("Segoe UI", 14, "bold")
+            self, text="Đăng nhập", width=270, height=38,
+            command=self._do_login, font=("Segoe UI", 13, "bold")
         )
-        self.btn_login.pack(pady=20)
+        self.btn_login.pack(pady=(14, 8))
         
         self.btn_register = ctk.CTkButton(
-            self, text="Chưa có tài khoản? Đăng ký ngay", width=250, height=30,
-            command=self._open_register, font=("Segoe UI", 12),
-            fg_color="transparent", text_color=ACCENT, hover_color=BG_CARD
+            self, text="🎁 Chưa có tài khoản? Đăng ký nhận 10 ngày Free", width=300, height=30,
+            command=self._open_register, font=("Segoe UI", 12, "bold"),
+            fg_color="transparent", text_color="#FBBF24", hover_color=BG_CARD
         )
         self.btn_register.pack(pady=0)
         
