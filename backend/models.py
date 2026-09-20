@@ -62,6 +62,16 @@ class SystemConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     key = Column(String, unique=True, index=True)
     value = Column(String)
+
+class TelemetryLog(Base):
+    __tablename__ = "telemetry_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, index=True)
+    action = Column(String)
+    details = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
     
 # Khởi tạo Database SQLite
 DB_DIR = os.path.dirname(os.path.abspath(__file__))

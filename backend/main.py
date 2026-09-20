@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
@@ -37,6 +38,7 @@ class Token(BaseModel):
 
 class TrackRequest(BaseModel):
     action_type: str
+    details: str = None
 
 # Helper to get current user
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -64,9 +66,29 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Username already registered")
         
     if user.hwid:
-        existing_hwid = db.query(models.User).filter(models.User.hwid == user.hwid).first()
-        if existing_hwid:
-            raise HTTPException(status_code=400, detail="Thiết bị này đã đăng ký tài khoản dùng thử trước đó. Mỗi máy chỉ được đăng ký 1 tài khoản!")
+        # 1. Kiểm tra nếu HWID nằm trong Blacklist (bị Admin chặn)
+        bl_cfg = db.query(models.SystemConfig).filter(models.SystemConfig.key == "blacklisted_hwids").first()
+        if bl_cfg and bl_cfg.value:
+            try:
+                import json
+                bl_list = json.loads(bl_cfg.value)
+                if isinstance(bl_list, list) and user.hwid in bl_list:
+                    raise HTTPException(status_code=403, detail="Thiết bị này đã bị khóa/chặn tạo tài khoản bởi Quản trị viên!")
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
+        # 2. Kiểm tra nếu bật chống trùng thiết bị khi đăng ký Free
+        enforce_hwid = True
+        hw_cfg = db.query(models.SystemConfig).filter(models.SystemConfig.key == "enforce_hwid_register").first()
+        if hw_cfg and str(hw_cfg.value).strip().lower() == "false":
+            enforce_hwid = False
+
+        if enforce_hwid:
+            existing_hwid = db.query(models.User).filter(models.User.hwid == user.hwid).first()
+            if existing_hwid:
+                raise HTTPException(status_code=400, detail="Thiết bị này đã đăng ký tài khoản dùng thử trước đó. Mỗi máy chỉ được đăng ký 1 tài khoản!")
     
     free_plan = db.query(models.Plan).filter(models.Plan.name == "Free").first()
     if not free_plan:
@@ -154,9 +176,26 @@ def read_users_me(current_user: models.User = Depends(get_current_user), db: Ses
             days_left = max(0, (current_user.plan_expires_at.date() - now.date()).days)
         expire_date = current_user.plan_expires_at.strftime("%d/%m/%Y")
     else:
-        expire_date = "Chưa có"
+        # Nếu user chưa có ngày hết hạn: đọc số ngày dùng thử gói Free từ cấu hình Admin cài đặt
+        free_days = 10
+        pkg_cfg = db.query(models.SystemConfig).filter(models.SystemConfig.key == "packages").first()
+        if pkg_cfg and pkg_cfg.value:
+            try:
+                import json
+                pkgs = json.loads(pkg_cfg.value)
+                for p in pkgs:
+                    if str(p.get("code", "")).strip().upper() == "FREE":
+                        free_days = int(p.get("days", 10))
+                        break
+            except Exception:
+                pass
+
+        now = datetime.utcnow()
+        current_user.plan_expires_at = now + timedelta(days=free_days)
+        db.commit()
+        expire_date = current_user.plan_expires_at.strftime("%d/%m/%Y")
         is_expired = False
-        days_left = 0
+        days_left = free_days
 
     return {
         "username": current_user.username,
@@ -334,8 +373,166 @@ def admin_reset_hwid(user_id: int, admin: models.User = Depends(get_admin_user),
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.hwid = None
+    
+    # Ghi nhận Telemetry Log hệ thống
+    try:
+        t_log = models.TelemetryLog(
+            username=admin.username,
+            action="RESET_HWID",
+            details=f"Admin '{admin.username}' đã mở khóa thiết bị (Reset HWID) thành công cho tài khoản '{user.username}'",
+            ip_address=None
+        )
+        db.add(t_log)
+    except Exception:
+        pass
+        
     db.commit()
     return {"message": f"Đã mở khóa thiết bị (Reset HWID) thành công cho tài khoản '{user.username}'."}
+
+# ==============================================================================
+# Admin Device / HWID Management APIs
+# ==============================================================================
+class DeviceAction(BaseModel):
+    hwid: str
+    user_id: int = None
+
+@app.get("/admin/devices")
+def admin_get_devices(admin: models.User = Depends(get_admin_user), db: Session = Depends(get_db)):
+    import json
+    # Lấy danh sách blacklist
+    bl_cfg = db.query(models.SystemConfig).filter(models.SystemConfig.key == "blacklisted_hwids").first()
+    bl_list = []
+    if bl_cfg and bl_cfg.value:
+        try:
+            bl_list = json.loads(bl_cfg.value)
+            if not isinstance(bl_list, list): bl_list = []
+        except Exception:
+            bl_list = []
+
+    # Lấy danh sách users có gán HWID
+    users_with_hwid = db.query(models.User).filter(models.User.hwid.isnot(None), models.User.hwid != "").all()
+    devices = []
+    seen_hwids = set()
+
+    for u in users_with_hwid:
+        hw = str(u.hwid).strip()
+        if not hw: continue
+        seen_hwids.add(hw)
+        is_blocked = hw in bl_list
+        devices.append({
+            "hwid": hw,
+            "username": u.username,
+            "user_id": u.id,
+            "role": u.role,
+            "plan_name": u.plan.name if u.plan else "Free",
+            "created_at": u.created_at.strftime("%d/%m/%Y %H:%M") if u.created_at else "",
+            "is_blocked": is_blocked,
+            "status": "blocked" if is_blocked else "active"
+        })
+
+    # Thêm các HWID trong blacklist nhưng chưa hoặc không còn gán vào user nào
+    for hw in bl_list:
+        if hw and hw not in seen_hwids:
+            devices.append({
+                "hwid": hw,
+                "username": "(Không có user)",
+                "user_id": None,
+                "role": "",
+                "plan_name": "-",
+                "created_at": "-",
+                "is_blocked": True,
+                "status": "blocked"
+            })
+
+    return {
+        "total": len(devices),
+        "blacklisted_count": len(bl_list),
+        "devices": devices
+    }
+
+@app.post("/admin/devices/unlock")
+def admin_unlock_device(req: DeviceAction, admin: models.User = Depends(get_admin_user), db: Session = Depends(get_db)):
+    hwid = req.hwid.strip()
+    if not hwid:
+        raise HTTPException(status_code=400, detail="Mã HWID không hợp lệ")
+
+    # 1. Gỡ HWID khỏi tất cả user đang gán mã này
+    users = db.query(models.User).filter(models.User.hwid == hwid).all()
+    cleared_names = []
+    for u in users:
+        u.hwid = None
+        cleared_names.append(u.username)
+
+    # 2. Gỡ khỏi blacklist nếu có
+    import json
+    bl_cfg = db.query(models.SystemConfig).filter(models.SystemConfig.key == "blacklisted_hwids").first()
+    if bl_cfg and bl_cfg.value:
+        try:
+            bl_list = json.loads(bl_cfg.value)
+            if hwid in bl_list:
+                bl_list.remove(hwid)
+                bl_cfg.value = json.dumps(bl_list)
+        except Exception:
+            pass
+
+    # Ghi nhận Telemetry Log
+    try:
+        details = f"Admin '{admin.username}' đã gỡ khóa thiết bị [{hwid[:12]}...]"
+        if cleared_names:
+            details += f" (tài khoản: {', '.join(cleared_names)})"
+        t_log = models.TelemetryLog(username=admin.username, action="RESET_HWID", details=details)
+        db.add(t_log)
+    except Exception:
+        pass
+
+    db.commit()
+    return {"message": "Đã gỡ khóa thiết bị thành công! Máy này có thể đăng ký tài khoản mới ngay."}
+
+@app.post("/admin/devices/toggle_block")
+def admin_toggle_block_device(req: DeviceAction, admin: models.User = Depends(get_admin_user), db: Session = Depends(get_db)):
+    import json
+    hwid = req.hwid.strip()
+    if not hwid:
+        raise HTTPException(status_code=400, detail="Mã HWID không hợp lệ")
+
+    bl_cfg = db.query(models.SystemConfig).filter(models.SystemConfig.key == "blacklisted_hwids").first()
+    bl_list = []
+    if bl_cfg and bl_cfg.value:
+        try:
+            bl_list = json.loads(bl_cfg.value)
+            if not isinstance(bl_list, list): bl_list = []
+        except Exception:
+            bl_list = []
+    else:
+        if not bl_cfg:
+            bl_cfg = models.SystemConfig(key="blacklisted_hwids", value="[]")
+            db.add(bl_cfg)
+
+    is_blocked = False
+    if hwid in bl_list:
+        bl_list.remove(hwid)
+        action_msg = "Đã bỏ chặn thiết bị."
+        is_blocked = False
+    else:
+        bl_list.append(hwid)
+        action_msg = "Đã khóa/chặn thiết bị vào Blacklist thành công!"
+        is_blocked = True
+
+    bl_cfg.value = json.dumps(bl_list)
+
+    # Ghi nhận Telemetry Log
+    try:
+        t_log = models.TelemetryLog(
+            username=admin.username,
+            action="BLOCK_DEVICE" if is_blocked else "UNBLOCK_DEVICE",
+            details=f"Admin '{admin.username}' {'đã chặn thiết bị' if is_blocked else 'đã bỏ chặn thiết bị'} [{hwid[:12]}...]"
+        )
+        db.add(t_log)
+    except Exception:
+        pass
+
+    db.commit()
+    return {"message": action_msg, "is_blocked": is_blocked}
 
 @app.post("/admin/users")
 def admin_create_user(user: AdminUserCreate, admin: models.User = Depends(get_admin_user), db: Session = Depends(get_db)):
@@ -555,5 +752,301 @@ def get_payment_info(db: Session = Depends(get_db)):
             pass
             
     return res
+
+# ==============================================================================
+# SePay Webhook Auto-Payment Activation APIs
+# ==============================================================================
+@app.get("/webhook/sepay")
+@app.get("/api/webhook/sepay")
+def sepay_webhook_status():
+    return {
+        "status": "ready",
+        "gateway": "SePay VietQR Webhook Listener",
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    }
+
+@app.post("/webhook/sepay")
+@app.post("/api/webhook/sepay")
+async def sepay_webhook_handler(request: Request, db: Session = Depends(get_db)):
+    """
+    Xử lý Webhook tự động từ SePay (https://sepay.vn).
+    Tự động đối soát nội dung chuyển khoản, kích hoạt hoặc gia hạn VIP ngay lập tức.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return {"success": False, "message": "Invalid JSON body"}
+
+    import json, re
+
+    # 1. Xác thực Webhook Token (nếu cấu hình)
+    cfg_token = db.query(models.SystemConfig).filter(models.SystemConfig.key == "webhook_token").first()
+    if cfg_token and cfg_token.value and cfg_token.value.strip():
+        secret_token = cfg_token.value.strip()
+        auth_header = request.headers.get("Authorization", "")
+        key_header = request.headers.get("x-sepay-api-key", "")
+        param_token = request.query_params.get("token", "")
+        # Nếu có gửi token xác thực thì phải khớp
+        if auth_header or key_header or param_token:
+            if secret_token not in auth_header and key_header != secret_token and param_token != secret_token:
+                raise HTTPException(status_code=401, detail="Unauthorized SePay Token")
+
+    # 2. Kiểm tra loại giao dịch
+    transfer_type = str(data.get("transferType", "in")).lower()
+    if transfer_type == "out":
+        return {"success": True, "message": "Ignored outgoing transaction"}
+
+    content = str(data.get("content", "") or data.get("description", "")).strip()
+    try:
+        amount = float(data.get("transferAmount", 0))
+    except Exception:
+        amount = 0.0
+
+    sepay_id = str(data.get("id") or "")
+    ref_code = str(data.get("referenceCode") or sepay_id)
+
+    # 3. Chống cộng trùng giao dịch (Idempotency)
+    if ref_code:
+        existing_log = db.query(models.TelemetryLog).filter(
+            models.TelemetryLog.action == "PAYMENT_SUCCESS",
+            models.TelemetryLog.details.like(f"%REF:{ref_code}%")
+        ).first()
+        if existing_log:
+            return {"success": True, "message": f"Transaction {ref_code} already processed previously"}
+
+    # 4. Lấy tiền tố và danh sách gói cước từ cấu hình
+    prefix_cfg = db.query(models.SystemConfig).filter(models.SystemConfig.key == "payment_prefix").first()
+    payment_prefix = prefix_cfg.value.strip().upper() if (prefix_cfg and prefix_cfg.value) else "TOOLVIP"
+
+    pkgs_cfg = db.query(models.SystemConfig).filter(models.SystemConfig.key == "packages").first()
+    packages = []
+    if pkgs_cfg and pkgs_cfg.value:
+        try:
+            packages = json.loads(pkgs_cfg.value) if isinstance(pkgs_cfg.value, str) else pkgs_cfg.value
+        except Exception:
+            packages = []
+
+    # 5. Đối soát tài khoản từ nội dung chuyển khoản
+    # Cú pháp mẫu: "{prefix} {username} {package_code}" (VD: "TOOLVIP EQR 1M")
+    content_upper = content.upper()
+    words = re.findall(r'[A-Za-z0-9_]+', content_upper)
+    all_users = db.query(models.User).all()
+    target_user = None
+
+    # Ưu tiên 1: Từ đứng ngay sau tiền tố (VD: TOOLVIP EQR -> EQR)
+    if payment_prefix in words:
+        p_idx = words.index(payment_prefix)
+        if p_idx + 1 < len(words):
+            cand = words[p_idx + 1].lower()
+            for u in all_users:
+                if u.username.lower() == cand:
+                    target_user = u
+                    break
+
+    # Ưu tiên 2: Khớp từ nguyên vẹn với username trong database (sắp xếp độ dài giảm dần)
+    if not target_user:
+        matched_cands = []
+        for u in all_users:
+            if u.username.upper() in words:
+                matched_cands.append(u)
+        if matched_cands:
+            matched_cands.sort(key=lambda x: len(x.username), reverse=True)
+            target_user = matched_cands[0]
+
+    # Ưu tiên 3: Tìm chuỗi con (nếu tên nick >= 3 ký tự)
+    if not target_user:
+        for u in sorted(all_users, key=lambda x: len(x.username), reverse=True):
+            if len(u.username) >= 3 and u.username.upper() in content_upper:
+                target_user = u
+                break
+
+    if not target_user:
+        unresolved_log = models.TelemetryLog(
+            username="sepay_webhook",
+            action="PAYMENT_UNRESOLVED",
+            details=f"Nhận {amount:,.0f}đ nhưng không tìm thấy username trong: '{content}'. REF:{ref_code}",
+            ip_address=request.client.host if request.client else None
+        )
+        db.add(unresolved_log)
+        db.commit()
+        return {
+            "success": True,
+            "message": f"Payment {amount:,.0f}đ received, but no username matched in content '{content}'"
+        }
+
+    # 6. Xác định gói VIP và số ngày cộng thêm
+    matched_pkg = None
+    # Cách 1: Khớp mã gói (code) trong nội dung
+    for p in packages:
+        p_code = str(p.get("code", "")).strip().upper()
+        if p_code and p_code != "FREE" and p_code in words:
+            matched_pkg = p
+            break
+
+    # Cách 2: Khớp theo số tiền chuyển (price)
+    if not matched_pkg and amount > 0:
+        for p in packages:
+            p_price = float(p.get("price", 0))
+            if p_price > 0 and abs(amount - p_price) < 1.0:
+                matched_pkg = p
+                break
+
+    # Cách 3: Chọn gói cao nhất có giá <= số tiền nhận được
+    if not matched_pkg and amount > 0:
+        valid_pkgs = [p for p in packages if float(p.get("price", 0)) > 0 and float(p.get("price", 0)) <= amount]
+        if valid_pkgs:
+            valid_pkgs.sort(key=lambda p: float(p.get("price", 0)), reverse=True)
+            matched_pkg = valid_pkgs[0]
+
+    if matched_pkg:
+        days_to_add = int(matched_pkg.get("days", 30))
+        max_daily = int(matched_pkg.get("max_daily_videos", 50))
+        can_ai = bool(matched_pkg.get("can_use_ai", True))
+        pkg_name = matched_pkg.get("name") or matched_pkg.get("code", "VIP")
+    else:
+        days_to_add = 30
+        max_daily = 50
+        can_ai = True
+        pkg_name = "Gói VIP (30 Ngày)"
+
+    # 7. Cập nhật hoặc tạo Plan tương ứng
+    plan = db.query(models.Plan).filter(models.Plan.name == pkg_name).first()
+    if not plan:
+        plan = db.query(models.Plan).filter(models.Plan.name == "VIP").first()
+    if not plan:
+        plan = models.Plan(
+            name=pkg_name,
+            max_daily_videos=max_daily,
+            can_use_ai_script=can_ai,
+            price=amount
+        )
+        db.add(plan)
+        db.commit()
+        db.refresh(plan)
+
+    # 8. Gia hạn thời gian sử dụng tài khoản
+    now_dt = datetime.utcnow()
+    current_exp = target_user.plan_expires_at
+    if current_exp and current_exp > now_dt:
+        target_user.plan_expires_at = current_exp + timedelta(days=days_to_add)
+    else:
+        target_user.plan_expires_at = now_dt + timedelta(days=days_to_add)
+
+    target_user.plan_id = plan.id
+    if target_user.role not in ("admin", "super_admin"):
+        target_user.role = "vip"
+
+    # 9. Ghi nhận Telemetry Log
+    succ_log = models.TelemetryLog(
+        username=target_user.username,
+        action="PAYMENT_SUCCESS",
+        details=f"⚡ SePay Auto: Kích hoạt thành công gói '{pkg_name}' (+{days_to_add} ngày) với số tiền {amount:,.0f}đ. Hạn mới: {target_user.plan_expires_at.strftime('%d/%m/%Y')}. REF:{ref_code}",
+        ip_address=request.client.host if request.client else None
+    )
+    db.add(succ_log)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Kích hoạt thành công gói '{pkg_name}' (+{days_to_add} ngày) cho người dùng '{target_user.username}'",
+        "username": target_user.username,
+        "days_added": days_to_add,
+        "new_expire": target_user.plan_expires_at.strftime("%d/%m/%Y %H:%M:%S")
+    }
+
+# ==============================================================================
+# Telemetry & Admin Activity Logs APIs
+# ==============================================================================
+@app.post("/api/telemetry")
+def log_telemetry(req: TrackRequest, request: Request, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    client_ip = request.client.host if request.client else None
+    if "x-forwarded-for" in request.headers:
+        client_ip = request.headers["x-forwarded-for"].split(",")[0].strip()
+        
+    log = models.TelemetryLog(
+        username=current_user.username,
+        action=req.action_type,
+        details=req.details,
+        ip_address=client_ip
+    )
+    db.add(log)
+    db.commit()
+    return {"status": "ok"}
+
+@app.get("/api/admin/logs")
+def get_admin_logs(limit: int = 100, admin: models.User = Depends(get_admin_user), db: Session = Depends(get_db)):
+    logs = db.query(models.TelemetryLog).order_by(models.TelemetryLog.id.desc()).limit(limit).all()
+    res = []
+    for l in logs:
+        time_str = l.created_at.strftime("%Y-%m-%d %H:%M:%S") if l.created_at else ""
+        res.append({
+            "id": l.id,
+            "username": l.username,
+            "action": l.action,
+            "details": l.details,
+            "ip_address": l.ip_address,
+            "time": time_str
+        })
+    return res
+
+@app.get("/admin/logs_view", response_class=HTMLResponse)
+def view_admin_logs_html(token: str, db: Session = Depends(get_db)):
+    # Xác thực token admin
+    try:
+        payload = auth.jwt.decode(token, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+        username: str = payload.get("sub")
+        role: str = payload.get("role")
+        if role != "admin":
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    logs = db.query(models.TelemetryLog).order_by(models.TelemetryLog.id.desc()).limit(200).all()
+    rows_html = ""
+    for l in logs:
+        time_str = l.created_at.strftime("%H:%M:%S %d/%m/%Y") if l.created_at else ""
+        act = (l.action or "INFO").upper()
+        act_color = "#89b4fa"
+        if act == "UPLOAD": act_color = "#a6e3a1"
+        elif act in ("PROCESS", "CRAWL"): act_color = "#f9e2af"
+        elif act == "LOGIN": act_color = "#cba6f7"
+        elif act == "RESET_HWID": act_color = "#38bdf8"
+        elif "ERROR" in act: act_color = "#f38ba8"
+
+        rows_html += f"""
+        <tr>
+            <td style="color: #9399b2; font-size: 0.9em;">{time_str}</td>
+            <td style="font-weight: bold; color: #cdd6f4;">{l.username}</td>
+            <td><span class="badge" style="background: {act_color}; color: #11111b;">{act}</span></td>
+            <td>{l.details or ''}</td>
+            <td style="color: #6c7086; font-family: monospace;">{l.ip_address or '-'}</td>
+        </tr>
+        """
+
+    return f"""
+    <html>
+    <head>
+        <title>User Activity Logs</title>
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e2e; color: #cdd6f4; margin: 20px; }}
+            h1 {{ color: #89b4fa; }}
+            table {{ border-collapse: collapse; width: 100%; background: #181825; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-radius: 8px; overflow: hidden; }}
+            th, td {{ padding: 12px 15px; text-align: left; border-bottom: 1px solid #313244; }}
+            th {{ background-color: #313244; color: #a6adc8; font-weight: 600; text-transform: uppercase; font-size: 0.85em; }}
+            tr:hover {{ background-color: #2a2b3c; }}
+            .badge {{ padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; }}
+        </style>
+        <meta http-equiv="refresh" content="30">
+    </head>
+    <body>
+        <h1>🔥 Live Activity Monitor</h1>
+        <p>Auto-refresh every 30 seconds. Showing last 200 actions.</p>
+        <table>
+            <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th><th>IP Address</th></tr>
+            {rows_html}
+        </table>
+    </body>
+    </html>
+    """
 
 

@@ -13,6 +13,15 @@ if not API_BASE_URL:
     API_BASE_URL = "http://douyn-api.muabanwebsite.io.vn"
 SESSION_FILE = Path(__file__).parent / "config" / "session.json"
 
+def _safe_log(msg: str):
+    try:
+        print(msg)
+    except Exception:
+        try:
+            print(str(msg).encode("ascii", "replace").decode("ascii"))
+        except Exception:
+            pass
+
 class AuthClient:
     def __init__(self):
         self.token = None
@@ -309,6 +318,35 @@ class AuthClient:
         except Exception:
             pass
 
+    def get_public_packages(self) -> list:
+        """Lấy danh sách các gói cước từ Server (Công khai, tự động cập nhật theo Admin setup)."""
+        cached = getattr(self, "_cached_packages", None)
+        if cached:
+            return cached
+        try:
+            resp = requests.get(f"{API_BASE_URL}/payment/info", timeout=5)
+            if resp.status_code == 200:
+                pkgs = resp.json().get("packages", [])
+                if pkgs:
+                    self._cached_packages = pkgs
+                    return pkgs
+        except Exception:
+            pass
+        return []
+
+    def get_free_plan_info(self) -> dict:
+        """Lấy thông tin gói FREE cấu hình động từ Server (Số ngày, hạn mức...). Không hardcode!"""
+        pkgs = self.get_public_packages()
+        for p in pkgs:
+            if str(p.get("code", "")).strip().upper() == "FREE":
+                return {
+                    "days": int(p.get("days", 10)),
+                    "max_daily_videos": int(p.get("max_daily_videos", 8)),
+                    "can_use_ai": bool(p.get("can_use_ai", True)),
+                    "name": str(p.get("name", "Miễn Phí Dùng Thử"))
+                }
+        return {"days": 10, "max_daily_videos": 8, "can_use_ai": True, "name": "Miễn Phí Dùng Thử"}
+
     def get_me(self):
         if not self.token:
             return False, "Not logged in"
@@ -320,6 +358,30 @@ class AuthClient:
             
             if resp.status_code == 200:
                 self.user_info = resp.json()
+                if isinstance(self.user_info, dict):
+                    role = str(self.user_info.get("role", "")).lower()
+                    plan = str(self.user_info.get("plan_name", "Free")).lower()
+                    
+                    if role in ("admin", "super_admin"):
+                        self.user_info["is_expired"] = False
+                        self.user_info["expire_date"] = "Vĩnh viễn (Admin)"
+                        self.user_info["days_left"] = 9999
+                    else:
+                        # Lấy cấu hình gói Free động từ Admin cài đặt trên server
+                        free_cfg = self.get_free_plan_info()
+                        dynamic_days = free_cfg.get("days", 10)
+                        dynamic_max_vids = free_cfg.get("max_daily_videos", 8)
+                        
+                        # Fallback bảo đảm nếu server chưa gán ngày hoặc trả về 'Chưa có'
+                        if self.user_info.get("expire_date") in ("Chưa có", None) or "is_expired" not in self.user_info:
+                            if plan == "free":
+                                self.user_info["is_expired"] = False
+                                self.user_info["expire_date"] = f"Dùng thử ({dynamic_days} Ngày)"
+                                self.user_info["days_left"] = dynamic_days
+                                if not self.user_info.get("max_daily_videos"):
+                                    self.user_info["max_daily_videos"] = dynamic_max_vids
+                            else:
+                                self.user_info["is_expired"] = False
                 # Tự động đồng bộ trạng thái gói đã mua nếu hợp lệ
                 if not self.is_admin():
                     self.is_paid_user()
@@ -645,18 +707,55 @@ class AuthClient:
         except Exception as e:
             return False, str(e)
 
-    def admin_reset_hwid(self, user_id):
+    def admin_reset_hwid(self, user_id, username: str = None):
         """Mở khóa thiết bị máy tính (Reset HWID) cho người dùng."""
-        if not self.token: return False, "Not logged in"
+        if not self.token: return False, "Chưa đăng nhập! Vui lòng đăng nhập tài khoản Admin."
+        
+        target_name = username or f"User #{user_id}"
+        _safe_log(f"[AUTH_CLIENT] [RESET_HWID] Bat dau yeu cau Reset HWID cho '{target_name}' (ID: {user_id})...")
+        
         # 1. Thử gọi Cloud API
+        cloud_err = None
         try:
-            resp = requests.post(f"{API_BASE_URL}/admin/users/{user_id}/reset_hwid", 
-                                headers={"Authorization": f"Bearer {self.token}"}, timeout=8)
+            url = f"{API_BASE_URL}/admin/users/{user_id}/reset_hwid"
+            _safe_log(f"[AUTH_CLIENT] [REQUEST] Dang gui POST request toi: {url}")
+            resp = requests.post(url, headers={"Authorization": f"Bearer {self.token}"}, timeout=8)
+            _safe_log(f"[AUTH_CLIENT] [RESPONSE] Phan hoi tu Server: HTTP {resp.status_code}")
+            
             if resp.status_code == 200:
-                return True, resp.json().get("message", "Reset HWID thành công!")
-        except Exception:
-            pass
-        # 2. Fallback local DB
+                msg = resp.json().get("message", f"Đã mở khóa thiết bị (Reset HWID) thành công cho '{target_name}'.")
+                _safe_log(f"[AUTH_CLIENT] [SUCCESS] {msg}")
+                # Ghi nhận Telemetry Log hoạt động
+                self.send_telemetry("RESET_HWID", f"Admin đã mở khóa thiết bị (Reset HWID) thành công cho tài khoản '{target_name}'")
+                return True, msg
+            elif resp.status_code == 404:
+                cloud_err = (
+                    f"Máy chủ Cloud ({API_BASE_URL}) chưa có API Reset HWID (Mã 404 Not Found).\n\n"
+                    f"💡 Khắc phục: Bạn chỉ cần đồng bộ lại thư mục 'backend' lên VPS và restart lại container 'douyin_backend':\n"
+                    f"   1. scp -r backend root@103.77.242.146:~/clone_douyn/\n"
+                    f"   2. docker restart douyin_backend"
+                )
+            elif resp.status_code in (401, 403):
+                cloud_err = f"Không có quyền Admin hoặc phiên đăng nhập đã hết hạn (HTTP {resp.status_code})."
+            else:
+                try:
+                    cloud_err = resp.json().get("detail", f"Lỗi máy chủ (HTTP {resp.status_code})")
+                except Exception:
+                    cloud_err = f"Lỗi máy chủ: HTTP {resp.status_code}"
+        except requests.exceptions.ConnectionError:
+            cloud_err = f"Không thể kết nối đến Máy chủ Cloud ({API_BASE_URL})."
+        except Exception as e:
+            cloud_err = f"Lỗi kết nối Cloud API: {str(e)}"
+
+        # Nếu Cloud API trả về mã lỗi cụ thể (như 404, 401, 403...) khi đang kết nối server thật,
+        # báo thẳng lỗi Cloud thay vì âm thầm fallback sang DB Local gây lỗi sai lệch "Không tìm thấy User"!
+        is_remote_api = "localhost" not in API_BASE_URL and "127.0.0.1" not in API_BASE_URL
+        if is_remote_api and cloud_err and "Không thể kết nối" not in cloud_err:
+            _safe_log(f"[AUTH_CLIENT] [ERROR] {cloud_err}")
+            return False, cloud_err
+
+        # 2. Fallback local DB (khi chạy local hoặc mất mạng hoàn toàn)
+        _safe_log(f"[AUTH_CLIENT] [FALLBACK] Dang thu fallback kiem tra SQLite Local DB (saas.db)...")
         try:
             from pathlib import Path
             import sys
@@ -667,13 +766,173 @@ class AuthClient:
             models.init_db()
             db = models.SessionLocal()
             u = db.query(models.User).filter(models.User.id == user_id).first()
+            if not u and username:
+                u = db.query(models.User).filter(models.User.username == username).first()
             if u:
                 u.hwid = None
                 db.commit()
                 db.close()
+                _safe_log(f"[AUTH_CLIENT] [SUCCESS] Da reset HWID thanh cong tren Local DB cho '{u.username}'")
+                self.send_telemetry("RESET_HWID", f"Admin đã mở khóa thiết bị (Reset HWID) thành công cho tài khoản '{u.username}' (Local DB)")
                 return True, f"Đã mở khóa thiết bị (Reset HWID) thành công cho '{u.username}'."
             db.close()
-            return False, "Không tìm thấy User."
+            
+            if cloud_err:
+                return False, f"{cloud_err}\n\n(Đồng thời không tìm thấy User '{target_name}' trong Local DB saas.db)."
+            return False, f"Không tìm thấy User '{target_name}' trong cơ sở dữ liệu."
+        except Exception as e:
+            _safe_log(f"[AUTH_CLIENT] [ERROR] Loi thao tac Local DB: {e}")
+            if cloud_err:
+                return False, f"{cloud_err}\n\n(Lỗi Local DB: {str(e)})"
+            return False, str(e)
+
+    def admin_get_devices(self):
+        """Lấy danh sách thiết bị (HWID) đã đăng ký và trạng thái khóa/chặn."""
+        if not self.token: return False, "Chưa đăng nhập!"
+        
+        # 1. Thử gọi Cloud API
+        try:
+            resp = requests.get(f"{API_BASE_URL}/admin/devices",
+                                headers={"Authorization": f"Bearer {self.token}"}, timeout=6)
+            if resp.status_code == 200:
+                return True, resp.json()
+        except Exception:
+            pass
+
+        # 2. Fallback tự động tổng hợp từ danh sách users và config
+        try:
+            succ, users = self.admin_get_users()
+            if not succ:
+                return False, "Không thể tải danh sách thiết bị."
+
+            succ_cfg, configs = self.admin_get_config()
+            bl_list = []
+            if succ_cfg and configs and "blacklisted_hwids" in configs:
+                try:
+                    bl_raw = configs["blacklisted_hwids"]
+                    bl_list = json.loads(bl_raw) if isinstance(bl_raw, str) else bl_raw
+                    if not isinstance(bl_list, list): bl_list = []
+                except Exception:
+                    bl_list = []
+
+            devices = []
+            seen_hwids = set()
+
+            for u in users:
+                hw = str(u.get("hwid") or "").strip()
+                if not hw or hw in ("Chưa khóa thiết bị", "None", "null"):
+                    continue
+                seen_hwids.add(hw)
+                is_blocked = hw in bl_list
+                devices.append({
+                    "hwid": hw,
+                    "username": u.get("username", "Unknown"),
+                    "user_id": u.get("id"),
+                    "role": u.get("role", "user"),
+                    "plan_name": u.get("plan_name", "Free"),
+                    "created_at": u.get("created_at", ""),
+                    "is_blocked": is_blocked,
+                    "status": "blocked" if is_blocked else "active"
+                })
+
+            for hw in bl_list:
+                if hw and hw not in seen_hwids:
+                    devices.append({
+                        "hwid": hw,
+                        "username": "(Không có user)",
+                        "user_id": None,
+                        "role": "",
+                        "plan_name": "-",
+                        "created_at": "-",
+                        "is_blocked": True,
+                        "status": "blocked"
+                    })
+
+            return True, {
+                "total": len(devices),
+                "blacklisted_count": len(bl_list),
+                "devices": devices
+            }
+        except Exception as e:
+            return False, str(e)
+
+    def admin_unlock_device(self, hwid: str, user_id: int = None, username: str = None):
+        """Mở khóa thiết bị (giải phóng HWID để máy đó đăng ký tiếp hoặc đổi máy)."""
+        if not self.token: return False, "Chưa đăng nhập!"
+        
+        # 1. Thử gọi Cloud API
+        try:
+            resp = requests.post(f"{API_BASE_URL}/admin/devices/unlock", json={
+                "hwid": hwid,
+                "user_id": user_id
+            }, headers={"Authorization": f"Bearer {self.token}"}, timeout=6)
+            if resp.status_code == 200:
+                self.send_telemetry("RESET_HWID", f"Admin đã mở khóa thiết bị [{hwid[:12]}...]")
+                return True, resp.json().get("message", "Đã mở khóa thiết bị thành công!")
+        except Exception:
+            pass
+
+        # 2. Fallback: Nếu có user_id -> reset HWID của user đó + gỡ khỏi blacklist trong config
+        try:
+            succ = False
+            msg = "Đã gỡ khóa thiết bị."
+            if user_id:
+                succ, msg = self.admin_reset_hwid(user_id, username=username)
+
+            # Gỡ khỏi blacklisted_hwids nếu có
+            _, configs = self.admin_get_config()
+            if configs and "blacklisted_hwids" in configs:
+                bl_raw = configs["blacklisted_hwids"]
+                bl_list = json.loads(bl_raw) if isinstance(bl_raw, str) else bl_raw
+                if isinstance(bl_list, list) and hwid in bl_list:
+                    bl_list.remove(hwid)
+                    self.admin_save_config({"blacklisted_hwids": json.dumps(bl_list)})
+
+            self.send_telemetry("RESET_HWID", f"Admin đã mở khóa thiết bị [{hwid[:12]}...]")
+            return True, msg or "Đã mở khóa thiết bị thành công! Máy này có thể đăng ký tài khoản mới."
+        except Exception as e:
+            return False, str(e)
+
+    def admin_toggle_block_device(self, hwid: str):
+        """Khóa hoặc Bỏ chặn thiết bị (Blacklist HWID)."""
+        if not self.token: return False, "Chưa đăng nhập!"
+        
+        # 1. Thử gọi Cloud API
+        try:
+            resp = requests.post(f"{API_BASE_URL}/admin/devices/toggle_block", json={
+                "hwid": hwid
+            }, headers={"Authorization": f"Bearer {self.token}"}, timeout=6)
+            if resp.status_code == 200:
+                is_bl = resp.json().get("is_blocked", False)
+                action = "BLOCK_DEVICE" if is_bl else "UNBLOCK_DEVICE"
+                self.send_telemetry(action, f"Admin {'đã chặn thiết bị' if is_bl else 'đã bỏ chặn thiết bị'} [{hwid[:12]}...]")
+                return True, resp.json().get("message", "Thao tác thành công!")
+        except Exception:
+            pass
+
+        # 2. Fallback qua cấu hình SystemConfig
+        try:
+            _, configs = self.admin_get_config()
+            bl_list = []
+            if configs and "blacklisted_hwids" in configs:
+                bl_raw = configs["blacklisted_hwids"]
+                bl_list = json.loads(bl_raw) if isinstance(bl_raw, str) else bl_raw
+                if not isinstance(bl_list, list): bl_list = []
+
+            is_blocked = False
+            if hwid in bl_list:
+                bl_list.remove(hwid)
+                msg = f"Đã bỏ chặn thiết bị [{hwid[:12]}...]"
+                is_blocked = False
+            else:
+                bl_list.append(hwid)
+                msg = f"Đã chặn thiết bị [{hwid[:12]}...] vào Blacklist thành công!"
+                is_blocked = True
+
+            self.admin_save_config({"blacklisted_hwids": json.dumps(bl_list)})
+            action = "BLOCK_DEVICE" if is_blocked else "UNBLOCK_DEVICE"
+            self.send_telemetry(action, f"Admin {'đã chặn thiết bị' if is_blocked else 'đã bỏ chặn thiết bị'} [{hwid[:12]}...]")
+            return True, msg
         except Exception as e:
             return False, str(e)
 

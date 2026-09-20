@@ -5347,14 +5347,25 @@ class SettingsTab(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.app = app
         self.grid_columnconfigure(0, weight=1)
+        self._built_role = None
         self.refresh_ui()
 
-    def refresh_ui(self):
-        for widget in self.winfo_children():
-            widget.destroy()
-            
+    def refresh_ui(self, force=False):
         from auth_client import auth_client
-        if auth_client.is_admin():
+        is_adm = auth_client.is_admin()
+        
+        # Nếu đã dựng giao diện đúng phân quyền và không ép buộc (force), giữ nguyên không reset tab của người dùng
+        if not force and self._built_role == is_adm and len(self.winfo_children()) > 0:
+            return
+
+        self._built_role = is_adm
+        for widget in self.winfo_children():
+            try:
+                widget.destroy()
+            except Exception:
+                pass
+            
+        if is_adm:
             self._build_admin()
         else:
             self._build_user()
@@ -6108,8 +6119,10 @@ class SettingsTab(ctk.CTkFrame):
         # Load default QR
         _update_qr(options[0])
 
-        # ─── 7. Auto Payment Verification Loop ─────────────────────────────────────
+        # ─── 7. Auto Payment Verification Loop (Real-time 2s) ───────────────────────
         original_expire = auth_client.user_info.get("expire_date") if auth_client.user_info else None
+        original_role = auth_client.user_info.get("role") if auth_client.user_info else None
+        original_plan = auth_client.user_info.get("plan_name") if auth_client.user_info else None
         check_job = None
         
         def _check_payment():
@@ -6118,19 +6131,37 @@ class SettingsTab(ctk.CTkFrame):
                 return
             try:
                 success, data = auth_client.get_me()
-                if success:
+                if success and data:
                     new_expire = data.get("expire_date")
-                    if new_expire and new_expire != original_expire:
-                        auth_client.mark_user_paid(username=username)
-                        messagebox.showinfo("🎉 Nâng Cấp Thành Công", f"Chúc mừng bạn!\nTài khoản đã được kích hoạt VIP thành công.\nHạn dùng đến: {new_expire}\n\nToàn bộ tính năng không giới hạn render video đã sẵn sàng!")
+                    new_role = data.get("role")
+                    new_plan = data.get("plan_name")
+                    is_upgraded = (
+                        (new_expire and new_expire != original_expire) or
+                        (new_role == "vip" and original_role != "vip") or
+                        (new_plan and str(new_plan).lower() != "free" and str(original_plan).lower() == "free")
+                    )
+                    if is_upgraded:
+                        try:
+                            auth_client.mark_user_paid(username=username)
+                        except Exception:
+                            pass
+                        messagebox.showinfo(
+                            "🎉 Nâng Cấp Thành Công",
+                            f"Chúc mừng bạn!\nTài khoản '{username}' đã được kích hoạt VIP thành công.\n"
+                            f"Gói: {new_plan}\nHạn dùng đến: {new_expire}\n\n"
+                            "Toàn bộ tính năng không giới hạn render video đã sẵn sàng!"
+                        )
                         win.destroy()
-                        self.app._update_user_ui()
+                        if hasattr(self, "app") and hasattr(self.app, "_update_user_ui"):
+                            self.app._update_user_ui()
+                        elif hasattr(self, "_update_user_ui"):
+                            self._update_user_ui()
                         return
             except Exception:
                 pass
-            check_job = win.after(4000, _check_payment)
+            check_job = win.after(2000, _check_payment)
             
-        check_job = win.after(4000, _check_payment)
+        check_job = win.after(2000, _check_payment)
         
         def _on_close():
             if check_job:
@@ -6160,6 +6191,8 @@ class SettingsTab(ctk.CTkFrame):
         self.tab_sys.grid_rowconfigure(0, weight=1)
         self.tab_users = self.tabview.add("Người dùng")
         self.tab_users.grid_columnconfigure(0, weight=1)
+        self.tab_devices = self.tabview.add("Thiết bị (HWID)")
+        self.tab_devices.grid_columnconfigure(0, weight=1)
         self.tab_stats = self.tabview.add("Thống kê")
         self.tab_stats.grid_columnconfigure(0, weight=1)
         self.tab_payment = self.tabview.add("Ngân hàng")
@@ -6175,6 +6208,7 @@ class SettingsTab(ctk.CTkFrame):
         
         self._build_admin_system(self.tab_sys)
         self._build_admin_users(self.tab_users)
+        self._build_admin_devices(self.tab_devices)
         self._build_admin_stats(self.tab_stats)
         self._build_admin_payment(self.tab_payment)
         self._build_admin_packages(self.tab_packages)
@@ -6188,6 +6222,8 @@ class SettingsTab(ctk.CTkFrame):
                 self._fetch_admin_logs()
             elif curr == "Người dùng":
                 self._load_users()
+            elif curr == "Thiết bị (HWID)" and hasattr(self, "_load_admin_devices"):
+                self._load_admin_devices()
             elif curr == "Đánh giá & Góp ý" and hasattr(self, "_fetch_admin_feedbacks"):
                 self._fetch_admin_feedbacks()
         self.tabview.configure(command=_on_admin_tab_change)
@@ -6656,6 +6692,7 @@ class SettingsTab(ctk.CTkFrame):
             fb_inner, values=["Tất cả User", "Active (Hoạt động)", "Hết hạn", "Quản trị viên (Admin)", "Gói Free"],
             width=180, height=32, font=("Segoe UI", 11)
         )
+        self._opt_filter_user.set("Tất cả User")
         self._opt_filter_user.pack(side="left")
 
         # 3. User List Frame (Scrollable)
@@ -6792,11 +6829,13 @@ class SettingsTab(ctk.CTkFrame):
             ).pack(side="left", padx=3)
 
     def _load_users(self):
-        for w in self.user_list_frame.winfo_children():
-            try: w.destroy()
-            except Exception: pass
-
-        ctk.CTkLabel(self.user_list_frame, text="⏳ Đang tải danh sách tài khoản...", text_color=TEXT_MUTED).pack(pady=20)
+        if getattr(self, "_cached_users_list", None):
+            self._render_filtered_users()
+        else:
+            for w in self.user_list_frame.winfo_children():
+                try: w.destroy()
+                except Exception: pass
+            ctk.CTkLabel(self.user_list_frame, text="⏳ Đang tải danh sách tài khoản...", text_color=TEXT_MUTED).pack(pady=20)
 
         def _worker():
             from auth_client import auth_client
@@ -6809,6 +6848,8 @@ class SettingsTab(ctk.CTkFrame):
                     ctk.CTkLabel(self.user_list_frame, text=f"Lỗi tải danh sách: {users}", text_color=DANGER).pack(pady=20)
                     return
                 self._cached_users_list = users if isinstance(users, list) else []
+                self._render_filtered_users()
+
             try:
                 if self.winfo_exists():
                     self.after(0, _done)
@@ -7047,10 +7088,27 @@ class SettingsTab(ctk.CTkFrame):
             fg_color="#3B2A10", corner_radius=6
         ).pack(side="left", padx=(0, 6))
 
+        exp_raw = target_user.get("expire_date", "Chưa có")
         is_exp = target_user.get("is_expired", False)
-        stat_lbl = "❌ Đã hết hạn" if is_exp else "✅ Đang hoạt động"
-        stat_color = DANGER if is_exp else SUCCESS
-        stat_bg = DANGER_BG if is_exp else SUCCESS_BG
+        if exp_raw == "Chưa có":
+            stat_lbl = "⚠️ Chưa kích hoạt ngày"
+            stat_color = WARNING
+            stat_bg = "#451A03"
+            exp_display = "Chưa kích hoạt (Bấm gia hạn bên dưới)"
+            exp_col = WARNING
+        elif is_exp:
+            stat_lbl = "❌ Đã hết hạn"
+            stat_color = DANGER
+            stat_bg = DANGER_BG
+            exp_display = exp_raw
+            exp_col = DANGER
+        else:
+            stat_lbl = "✅ Đang hoạt động"
+            stat_color = SUCCESS
+            stat_bg = SUCCESS_BG
+            exp_display = exp_raw
+            exp_col = SUCCESS
+
         ctk.CTkLabel(
             b_row, text=f" {stat_lbl} ",
             font=("Segoe UI", 10, "bold"), text_color=stat_color,
@@ -7075,12 +7133,42 @@ class SettingsTab(ctk.CTkFrame):
         p_hdr.pack(fill="x", padx=14, pady=(10, 6))
         ctk.CTkLabel(p_hdr, text="💎 Bản Quyền & Hạn Mức", font=("Segoe UI", 12, "bold"), text_color=ACCENT).pack(side="left")
 
+        # Tra cứu hạn mức và quyền AI chuẩn xác theo cấu hình Packages hiện tại
+        max_vids = target_user.get("max_daily_videos")
+        can_ai = target_user.get("can_use_ai_script")
+        if max_vids is None or can_ai is None or max_vids == 5:
+            cached_pkgs = getattr(self, "_cached_packages_list", None)
+            if not cached_pkgs:
+                try:
+                    from auth_client import auth_client
+                    _, cfg = auth_client.admin_get_config()
+                    if cfg and "packages" in cfg:
+                        import json
+                        cached_pkgs = json.loads(cfg["packages"]) if isinstance(cfg["packages"], str) else cfg["packages"]
+                        self._cached_packages_list = cached_pkgs
+                except Exception:
+                    cached_pkgs = []
+            if cached_pkgs:
+                for p in cached_pkgs:
+                    p_code = str(p.get("code", "")).strip().upper()
+                    p_name = str(p.get("name", "")).strip().upper()
+                    target_plan_upper = str(plan_display).strip().upper()
+                    if p_code == target_plan_upper or p_name == target_plan_upper or (target_plan_upper == "FREE" and p_code == "FREE"):
+                        if max_vids is None or max_vids == 5:
+                            max_vids = int(p.get("max_daily_videos", 8))
+                        if can_ai is None:
+                            can_ai = bool(p.get("can_use_ai", True))
+                        break
+
+        if max_vids is None:
+            max_vids = 8 if str(plan_display).lower() == "free" else 9999
+        if can_ai is None:
+            can_ai = True
+
         _info_row(p_card, "Gói kích hoạt:", f"Gói {plan_display}", "#FBBF24")
-        _info_row(p_card, "Hạn sử dụng:", target_user.get("expire_date", "Chưa có"), SUCCESS if not is_exp else DANGER)
-        max_vids = target_user.get("max_daily_videos", 5)
+        _info_row(p_card, "Hạn sử dụng:", exp_display, exp_col)
         _info_row(p_card, "Hạn mức xử lý:", f"{max_vids} video/ngày" if max_vids < 9999 else "Không giới hạn (VIP)")
-        can_ai = target_user.get("can_use_ai_script", True if is_admin_user else False)
-        _info_row(p_card, "Tính năng AI Voice/Sub:", "✅ Đầy đủ tính năng" if can_ai else "⚡ Giới hạn gói cơ bản", SUCCESS if can_ai else TEXT_MUTED)
+        _info_row(p_card, "Tính năng AI Voice/Sub:", "✅ Được cấp quyền AI Cloud" if can_ai else "⚠️ Tự túc API Key", SUCCESS if can_ai else WARNING)
 
         # Thanh nút gia hạn nhanh ngày sử dụng
         quick_ext_lbl = ctk.CTkLabel(p_card, text="⚡ Gia hạn nhanh ngày sử dụng:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED)
@@ -7103,9 +7191,10 @@ class SettingsTab(ctk.CTkFrame):
                 else:
                     messagebox.showerror("Lỗi", msg)
 
-        for days_val, btn_lbl in [(7, "+7 Ngày"), (30, "+30 Ngày"), (90, "+90 Ngày"), (365, "+1 Năm"), (3650, "+Vĩnh Viễn")]:
+        # Danh sách nút gia hạn nhanh (có thêm +10 Ngày Free)
+        for days_val, btn_lbl in [(10, "+10 Ngày Free"), (30, "+30 Ngày"), (90, "+90 Ngày"), (365, "+1 Năm"), (3650, "+Vĩnh Viễn")]:
             ctk.CTkButton(
-                quick_ext_row, text=btn_lbl, width=82, height=26,
+                quick_ext_row, text=btn_lbl, width=86, height=26,
                 font=("Segoe UI", 10, "bold"), fg_color="#1E293B", hover_color=ACCENT, corner_radius=6,
                 command=lambda d=days_val, l=btn_lbl: _do_quick_extend(d, l)
             ).pack(side="left", padx=2)
@@ -7147,15 +7236,16 @@ class SettingsTab(ctk.CTkFrame):
             if not u_id:
                 messagebox.showerror("Lỗi", "Không tìm thấy User ID để reset.")
                 return
-            if messagebox.askyesno("Xác nhận", f"Mở khóa thiết bị cho user '{target_user.get('username')}'?\nUser sẽ có thể đăng nhập trên máy tính mới."):
+            u_name_val = target_user.get("username", "")
+            if messagebox.askyesno("Xác nhận", f"Mở khóa thiết bị cho user '{u_name_val}'?\nUser sẽ có thể đăng nhập trên máy tính mới."):
                 from auth_client import auth_client
-                succ, msg = auth_client.admin_reset_hwid(u_id)
+                succ, msg = auth_client.admin_reset_hwid(u_id, username=u_name_val)
                 if succ:
                     messagebox.showinfo("Thành công", msg)
                     dlg.destroy()
                     self._load_users()
                 else:
-                    messagebox.showerror("Lỗi", msg)
+                    messagebox.showerror("Lỗi Reset HWID", msg)
 
         ctk.CTkButton(
             hwid_btn_row, text="🔓 Mở Khóa Đổi Máy (Reset HWID)", width=230, height=30,
@@ -7188,11 +7278,18 @@ class SettingsTab(ctk.CTkFrame):
         btn_view_logs.pack(side="right")
 
         from auth_client import auth_client
-        _, logs_data = auth_client.admin_get_logs(limit=250)
-        u_logs = [l for l in (logs_data if isinstance(logs_data, list) else []) if str(l.get("username", "")).lower() == u_name][:4]
+        _, logs_data = auth_client.admin_get_logs(limit=500)
+        u_logs = [
+            l for l in (logs_data if isinstance(logs_data, list) else [])
+            if str(l.get("username", "")).lower() == u_name or f"'{u_name}'" in str(l.get("details", "")).lower() or f" {u_name} " in f" {str(l.get('details', '')).lower()} "
+        ][:5]
 
         if not u_logs:
-            ctk.CTkLabel(act_card, text="Chưa ghi nhận hoạt động nào gần đây từ user này.", font=("Segoe UI", 11), text_color=TEXT_MUTED).pack(padx=14, pady=(0, 10), anchor="w")
+            ctk.CTkLabel(
+                act_card,
+                text="ℹ️ Chưa ghi nhận hoạt động nào (Tài khoản này chưa từng đăng nhập vào app GUI hoặc chưa có thao tác Crawl / Process / Upload nào).",
+                font=("Segoe UI", 11, "italic"), text_color=TEXT_MUTED, justify="left", wraplength=480
+            ).pack(padx=14, pady=(0, 10), anchor="w")
         else:
             for l in u_logs:
                 l_box = ctk.CTkFrame(act_card, fg_color=BG_DARK, corner_radius=6)
@@ -7200,8 +7297,16 @@ class SettingsTab(ctk.CTkFrame):
                 act = str(l.get("action", "INFO")).upper()
                 dt = str(l.get("details", "")).replace("\n", " ")[:110]
                 is_err = "ERROR" in act or any(w in dt.lower() for w in ["lỗi", "fail", "thất bại", "0 video"])
-                tag_col = DANGER if is_err else (SUCCESS if act == "UPLOAD" else ACCENT_LIGHT)
-                ctk.CTkLabel(l_box, text=f"🕒 [{l.get('time', '')}] {act}", font=("Consolas", 10, "bold"), text_color=tag_col).pack(anchor="w", padx=8, pady=(4, 1))
+                if is_err:
+                    tag_col = DANGER
+                elif act == "UPLOAD":
+                    tag_col = SUCCESS
+                elif act == "RESET_HWID":
+                    tag_col = "#38BDF8"
+                else:
+                    tag_col = ACCENT_LIGHT
+                tag_icon = "🔓 " if act == "RESET_HWID" else "🕒 "
+                ctk.CTkLabel(l_box, text=f"{tag_icon}[{l.get('time', '')}] {act}", font=("Consolas", 10, "bold"), text_color=tag_col).pack(anchor="w", padx=8, pady=(4, 1))
                 ctk.CTkLabel(l_box, text=dt, font=("Segoe UI", 11), text_color=TEXT_MAIN, wraplength=480, justify="left").pack(anchor="w", padx=8, pady=(0, 5))
 
         # 5. Box Lịch Sử Góp Ý Của User Này
@@ -7278,6 +7383,278 @@ class SettingsTab(ctk.CTkFrame):
             font=("Segoe UI", 11), fg_color=BORDER, hover_color=BG_CARD,
             command=dlg.destroy
         ).pack(side="right")
+
+    # ── ADMIN: Device Management (HWID) ───────────────────────────────────────
+    def _build_admin_devices(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(3, weight=1)
+
+        # 1. Top Bar
+        top_bar = ctk.CTkFrame(parent, fg_color="transparent")
+        top_bar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+
+        title_box = ctk.CTkFrame(top_bar, fg_color="transparent")
+        title_box.pack(side="left")
+        ctk.CTkLabel(title_box, text="💻 Quản Lý Thiết Bị Phần Cứng (HWID Lock)", font=("Segoe UI", 16, "bold"), text_color=TEXT_MAIN).pack(anchor="w")
+        self._lbl_devices_count = ctk.CTkLabel(title_box, text="Theo dõi máy đã đăng ký, mở khóa cho phép tạo nick mới hoặc chặn thiết bị vi phạm", font=("Segoe UI", 11), text_color=TEXT_MUTED)
+        self._lbl_devices_count.pack(anchor="w", pady=(1, 0))
+
+        btn_box = ctk.CTkFrame(top_bar, fg_color="transparent")
+        btn_box.pack(side="right")
+        
+        def _manual_block_dialog():
+            input_dlg = ctk.CTkInputDialog(
+                text="Nhập mã HWID (Machine GUID) cần đưa vào Blacklist:",
+                title="🚫 Chặn Thiết Bị Thủ Công"
+            )
+            hw_input = input_dlg.get_input()
+            if hw_input and hw_input.strip():
+                from auth_client import auth_client
+                succ, msg = auth_client.admin_toggle_block_device(hw_input.strip())
+                if succ:
+                    messagebox.showinfo("Thành công", msg)
+                    self._load_admin_devices()
+                else:
+                    messagebox.showerror("Lỗi", msg)
+
+        ctk.CTkButton(btn_box, text="🚫 Chặn HWID Thủ Công", width=160, height=32, font=("Segoe UI", 11, "bold"),
+                      fg_color=DANGER, hover_color="#c0392b", command=_manual_block_dialog).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(btn_box, text="🔄 Làm mới", width=95, height=32, font=("Segoe UI", 11, "bold"),
+                      fg_color=BORDER, hover_color=BG_CARD, command=self._load_admin_devices).pack(side="left")
+
+        # 2. Stats Bar
+        stats_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        stats_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        stats_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+        def make_stat_card(master, col, title, initial_val, color):
+            c = ctk.CTkFrame(master, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+            c.grid(row=0, column=col, sticky="ew", padx=4)
+            ctk.CTkLabel(c, text=title, font=("Segoe UI", 11), text_color=TEXT_MUTED).pack(pady=(8, 0))
+            lbl = ctk.CTkLabel(c, text=initial_val, font=("Segoe UI", 18, "bold"), text_color=color)
+            lbl.pack(pady=(0, 8))
+            return lbl
+
+        self._stat_devices_total = make_stat_card(stats_frame, 0, "📱 Tổng Thiết Bị Ghi Nhận", "0", TEXT_MAIN)
+        self._stat_devices_active = make_stat_card(stats_frame, 1, "🟢 Đang Liên Kết Tài Khoản", "0", SUCCESS)
+        self._stat_devices_blocked = make_stat_card(stats_frame, 2, "🚫 Bị Chặn (Blacklist)", "0", DANGER)
+
+        # 3. Filter Bar
+        filter_bar = ctk.CTkFrame(parent, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER)
+        filter_bar.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+
+        fb_inner = ctk.CTkFrame(filter_bar, fg_color="transparent")
+        fb_inner.pack(fill="x", padx=12, pady=8)
+
+        self._entry_search_device = ctk.CTkEntry(
+            fb_inner, placeholder_text="🔍 Tìm kiếm theo Mã máy HWID, Tên tài khoản hoặc Gói...",
+            height=32, font=("Segoe UI", 11), fg_color=BG_DARK, border_color=BORDER
+        )
+        self._entry_search_device.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        self._opt_filter_device = ctk.CTkOptionMenu(
+            fb_inner, values=["Tất cả thiết bị", "🟢 Đang liên kết", "🚫 Bị chặn (Blacklist)"],
+            width=200, height=32, font=("Segoe UI", 11)
+        )
+        self._opt_filter_device.set("Tất cả thiết bị")
+        self._opt_filter_device.pack(side="left")
+
+        # 4. Scrollable Frame for Devices List
+        self.devices_list_frame = ctk.CTkScrollableFrame(parent, fg_color=BG_DARK, border_color=BORDER, border_width=1)
+        self.devices_list_frame.grid(row=3, column=0, sticky="nsew")
+
+        self._cached_devices_list = []
+
+        def _on_device_filter_changed(e=None):
+            self._render_filtered_devices()
+
+        self._entry_search_device.bind("<KeyRelease>", _on_device_filter_changed)
+        self._opt_filter_device.configure(command=lambda c: self._render_filtered_devices())
+
+        # Load devices when user switches to tab (handled by _on_admin_tab_change)
+
+    def _load_admin_devices(self):
+        def _fetch():
+            try:
+                from auth_client import auth_client
+                succ, data = auth_client.admin_get_devices()
+            except Exception:
+                succ, data = False, {}
+            devs = data.get("devices", []) if (succ and isinstance(data, dict)) else []
+            bl_count = data.get("blacklisted_count", 0) if (succ and isinstance(data, dict)) else 0
+
+            def _apply():
+                try:
+                    if self.winfo_exists():
+                        self._apply_devices_data(devs, bl_count)
+                except Exception:
+                    pass
+
+            for _ in range(30):
+                try:
+                    if not self.winfo_exists():
+                        return
+                    self.after(0, _apply)
+                    return
+                except (RuntimeError, Exception):
+                    import time
+                    time.sleep(0.1)
+
+        import threading
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _apply_devices_data(self, devices, bl_count):
+        self._cached_devices_list = devices
+        total = len(devices)
+        active = sum(1 for d in devices if not d.get("is_blocked"))
+        blocked = sum(1 for d in devices if d.get("is_blocked"))
+
+        if hasattr(self, "_stat_devices_total"): self._stat_devices_total.configure(text=str(total))
+        if hasattr(self, "_stat_devices_active"): self._stat_devices_active.configure(text=str(active))
+        if hasattr(self, "_stat_devices_blocked"): self._stat_devices_blocked.configure(text=str(blocked))
+        if hasattr(self, "_lbl_devices_count"): self._lbl_devices_count.configure(text=f"Đang quản lý {total} thiết bị ({active} hoạt động, {blocked} bị chặn)")
+
+        self._render_filtered_devices()
+
+    def _render_filtered_devices(self):
+        if not hasattr(self, "devices_list_frame"):
+            return
+        try:
+            if not self.devices_list_frame.winfo_exists():
+                return
+        except Exception:
+            return
+
+        for w in self.devices_list_frame.winfo_children():
+            try: w.destroy()
+            except Exception: pass
+
+        query = self._entry_search_device.get().strip().lower() if hasattr(self, "_entry_search_device") else ""
+        filt = self._opt_filter_device.get() if hasattr(self, "_opt_filter_device") else "Tất cả thiết bị"
+
+        filtered = []
+        for d in getattr(self, "_cached_devices_list", []):
+            hw = str(d.get("hwid", "")).lower()
+            u_name = str(d.get("username", "")).lower()
+            plan = str(d.get("plan_name", "")).lower()
+            is_bl = d.get("is_blocked", False)
+
+            if query and (query not in hw and query not in u_name and query not in plan):
+                continue
+
+            if filt == "🟢 Đang liên kết" and is_bl:
+                continue
+            if filt == "🚫 Đang bị chặn (Blacklist)" and not is_bl:
+                continue
+
+            filtered.append(d)
+
+        if not filtered:
+            ctk.CTkLabel(
+                self.devices_list_frame, text="Không tìm thấy thiết bị nào phù hợp.",
+                font=("Segoe UI", 12, "italic"), text_color=TEXT_MUTED
+            ).pack(pady=40)
+            return
+
+        for dev in filtered:
+            self._render_device_item(dev)
+
+    def _render_device_item(self, dev):
+        hwid = dev.get("hwid", "")
+        username = dev.get("username", "Unknown")
+        user_id = dev.get("user_id")
+        plan = dev.get("plan_name", "Free")
+        created = dev.get("created_at", "")
+        is_blocked = dev.get("is_blocked", False)
+
+        card = ctk.CTkFrame(self.devices_list_frame, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color="#EF4444" if is_blocked else BORDER)
+        card.pack(fill="x", padx=6, pady=4)
+
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=12, pady=10)
+
+        # Icon
+        icon_box = ctk.CTkFrame(row, width=42, height=42, fg_color="#1E293B" if not is_blocked else "#4C0519", corner_radius=8)
+        icon_box.pack(side="left", padx=(0, 12))
+        icon_box.pack_propagate(False)
+        ctk.CTkLabel(icon_box, text="💻" if not is_blocked else "🚫", font=("Segoe UI", 18)).pack(expand=True)
+
+        # Info Box
+        info = ctk.CTkFrame(row, fg_color="transparent")
+        info.pack(side="left", fill="x", expand=True)
+
+        # HWID line
+        hw_row = ctk.CTkFrame(info, fg_color="transparent")
+        hw_row.pack(anchor="w", fill="x")
+
+        # Rút gọn HWID để hiển thị đẹp
+        hw_short = f"{hwid[:10]}...{hwid[-8:]}" if len(hwid) > 20 else hwid
+        ctk.CTkLabel(hw_row, text=f"HWID: {hw_short}", font=("Consolas", 12, "bold"), text_color="#38BDF8").pack(side="left")
+
+        def _copy_hw():
+            self.clipboard_clear()
+            self.clipboard_append(hwid)
+            messagebox.showinfo("Đã sao chép", f"Đã sao chép mã HWID đầy đủ vào Clipboard:\n{hwid}")
+
+        ctk.CTkButton(hw_row, text="📋 Copy", width=55, height=22, font=("Segoe UI", 10), fg_color=BORDER, hover_color="#334155", command=_copy_hw).pack(side="left", padx=(8, 0))
+
+        # Sub line: User, Plan, Created
+        sub_row = ctk.CTkFrame(info, fg_color="transparent")
+        sub_row.pack(anchor="w", fill="x", pady=(3, 0))
+
+        ctk.CTkLabel(sub_row, text=f"👤 Tài khoản: {username}", font=("Segoe UI", 11, "bold"), text_color=TEXT_MAIN).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(sub_row, text=f"💎 Gói: {plan}", font=("Segoe UI", 11), text_color="#FBBF24").pack(side="left", padx=(0, 8))
+        if created:
+            ctk.CTkLabel(sub_row, text=f"🕒 Tạo: {created}", font=("Segoe UI", 10), text_color=TEXT_MUTED).pack(side="left")
+
+        # Right Column: Badge & Actions
+        right = ctk.CTkFrame(row, fg_color="transparent")
+        right.pack(side="right")
+
+        # Status badge
+        badge_text = "🚫 Đang bị chặn (Blacklist)" if is_blocked else "🟢 Đang liên kết"
+        badge_color = DANGER if is_blocked else SUCCESS
+        badge_bg = "#4C0519" if is_blocked else "#064E3B"
+        ctk.CTkLabel(right, text=f" {badge_text} ", font=("Segoe UI", 10, "bold"), text_color=badge_color, fg_color=badge_bg, corner_radius=6).pack(side="left", padx=(0, 10))
+
+        # Nút Mở Khóa Cho Tạo Nick Mới
+        def _do_unlock():
+            if messagebox.askyesno("Mở Khóa Thiết Bị", f"Mở khóa thiết bị [{hw_short}]?\n\n• Thao tác này sẽ gỡ mã máy khỏi tài khoản '{username}' (nếu có).\n• Máy tính này sẽ có thể đăng ký tài khoản mới hoặc đổi sang máy khác."):
+                from auth_client import auth_client
+                succ, msg = auth_client.admin_unlock_device(hwid, user_id=user_id, username=username)
+                if succ:
+                    messagebox.showinfo("Thành công 🎉", msg)
+                    self._load_admin_devices()
+                else:
+                    messagebox.showerror("Lỗi", msg)
+
+        ctk.CTkButton(
+            right, text="🔓 Mở Khóa Đổi Máy", width=140, height=30,
+            font=("Segoe UI", 11, "bold"), fg_color="#0284C7", hover_color="#0369A1",
+            command=_do_unlock
+        ).pack(side="left", padx=(0, 6))
+
+        # Nút Chặn / Bỏ Chặn
+        def _do_toggle_block():
+            prompt_msg = f"Gỡ bỏ chặn cho thiết bị [{hw_short}]?" if is_blocked else f"Chặn thiết bị [{hw_short}] vào Blacklist?\n(Thiết bị này sẽ KHÔNG THỂ tạo bất kỳ tài khoản nào nữa)."
+            if messagebox.askyesno("Xác nhận", prompt_msg):
+                from auth_client import auth_client
+                succ, msg = auth_client.admin_toggle_block_device(hwid)
+                if succ:
+                    messagebox.showinfo("Thành công", msg)
+                    self._load_admin_devices()
+                else:
+                    messagebox.showerror("Lỗi", msg)
+
+        btn_block_text = "✅ Bỏ Chặn" if is_blocked else "🚫 Chặn Máy"
+        btn_block_color = SUCCESS if is_blocked else DANGER
+        btn_block_hover = "#059669" if is_blocked else "#b91c1c"
+
+        ctk.CTkButton(
+            right, text=btn_block_text, width=95, height=30,
+            font=("Segoe UI", 11, "bold"), fg_color=btn_block_color, hover_color=btn_block_hover,
+            command=_do_toggle_block
+        ).pack(side="left")
 
     def _build_admin_stats(self, parent):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -7562,6 +7939,34 @@ class SettingsTab(ctk.CTkFrame):
         )
         btn_add.pack(anchor="w", padx=16, pady=(4, 16))
         
+        # ── Khung cấu hình chống spam HWID ──
+        hwid_card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        hwid_card.grid(row=3, column=0, sticky="ew", pady=(0, 16))
+        hwid_card.grid_columnconfigure(0, weight=1)
+
+        hw_top = ctk.CTkFrame(hwid_card, fg_color="transparent")
+        hw_top.pack(fill="x", padx=16, pady=(12, 6))
+        ctk.CTkLabel(hw_top, text="🛡️  CẤU HÌNH KHÓA THIẾT BỊ & CHỐNG SPAM (HWID LOCK)", font=("Segoe UI", 12, "bold"), text_color="#38BDF8").pack(side="left")
+
+        hw_val = str(configs.get("enforce_hwid_register", "true")).lower() != "false"
+        self._var_enforce_hwid = ctk.BooleanVar(value=hw_val)
+        chk_hwid = ctk.CTkCheckBox(
+            hwid_card,
+            text="Bật chặn thiết bị khi đăng ký Free (Chống spam: Mỗi máy chỉ được đăng ký 1 tài khoản Free)",
+            variable=self._var_enforce_hwid,
+            font=("Segoe UI", 12, "bold"),
+            text_color=TEXT_MAIN,
+            fg_color=ACCENT, hover_color=ACCENT_HOVER
+        )
+        chk_hwid.pack(anchor="w", padx=16, pady=(4, 6))
+
+        ctk.CTkLabel(
+            hwid_card,
+            text="• BẬT (Khuyến nghị khi mở tool cho khách): Mỗi máy tính chỉ được tự tạo 1 nick Free 10 ngày để tránh bị bào bản quyền.\n"
+                 "• TẮT (Khi Admin đang kiểm thử hoặc chạy sự kiện): Cho phép 1 máy có thể tự do bấm Đăng Ký thêm nhiều tài khoản Free liên tiếp.",
+            font=("Segoe UI", 11), text_color=TEXT_MUTED, justify="left"
+        ).pack(anchor="w", padx=16, pady=(0, 14))
+
         def _save_packages():
             new_pkgs = []
             for r in getattr(self, "_pkg_rows", []):
@@ -7576,17 +7981,18 @@ class SettingsTab(ctk.CTkFrame):
                 })
             data = {
                 "packages": json.dumps(new_pkgs, ensure_ascii=False),
+                "enforce_hwid_register": "true" if getattr(self, "_var_enforce_hwid", None) and self._var_enforce_hwid.get() else "false"
             }
             from auth_client import auth_client
             succ, msg = auth_client.admin_save_config(data)
             if succ:
-                messagebox.showinfo("Thành công", "Đã lưu cấu hình danh sách Gói Dịch Vụ thành công!\nHạn mức và số ngày dùng thử đã được đồng bộ vào hệ thống.")
+                messagebox.showinfo("Thành công", "Đã lưu cấu hình danh sách Gói Dịch Vụ và Cài đặt Khóa máy thành công!\nHạn mức, quyền hạn và chế độ chống spam đã được đồng bộ.")
             else:
                 messagebox.showerror("Lỗi", msg)
                 
-        ctk.CTkButton(scroll, text="💾  Lưu Danh Sách Gói", width=240, height=38, command=_save_packages,
+        ctk.CTkButton(scroll, text="💾  Lưu Cấu Hình Gói & Khóa Máy", width=280, height=38, command=_save_packages,
                       fg_color=SUCCESS, hover_color="#27ae60",
-                      font=("Segoe UI", 13, "bold")).grid(row=3, column=0, pady=(8, 24), sticky="w")
+                      font=("Segoe UI", 13, "bold")).grid(row=4, column=0, pady=(8, 24), sticky="w")
 
     def _build_admin_noti(self, parent):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -7698,6 +8104,8 @@ class SettingsTab(ctk.CTkFrame):
                 return "📥 CRAWL", CYAN_BG, "#67E8F9", False
             elif action_up == "LOGIN":
                 return "🔑 LOGIN", ACCENT_BG, "#C4B5FD", False
+            elif action_up == "RESET_HWID":
+                return "🔓 RESET_HWID", "#0C4A6E", "#38BDF8", False
             else:
                 return f"ℹ️ {action_up}", "#1E293B", "#CBD5E1", False
 
@@ -7886,7 +8294,7 @@ class SettingsTab(ctk.CTkFrame):
         ctk.CTkLabel(row_filter, text="⚡ Hành động:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=(0, 5))
         opt_action = ctk.CTkOptionMenu(
             row_filter,
-            values=["Tất cả Action", "⚠️ Chỉ xem LỖI / 0 video", "UPLOAD", "PROCESS", "CRAWL", "LOGIN"],
+            values=["Tất cả Action", "⚠️ Chỉ xem LỖI / 0 video", "UPLOAD", "PROCESS", "CRAWL", "LOGIN", "RESET_HWID"],
             width=175, height=30, font=("Segoe UI", 11), fg_color=BG_DARK, button_color=BORDER, corner_radius=8
         )
         opt_action.pack(side="left", padx=(0, 12))
@@ -8561,9 +8969,40 @@ class App(ctk.CTk):
             self.after(100, lambda: self.state("zoomed"))  # Full màn hình sau khi load xong
             import threading
             threading.Thread(target=auth_client.sync_douyin_cookie, daemon=True).start()
+            self.after(5000, self._auto_sync_user_status)
         else:
             self.withdraw() # Ẩn main window
             LoginWindow(self, self._on_login_success)
+
+    def _auto_sync_user_status(self):
+        """Đồng bộ trạng thái bản quyền/VIP theo thời gian thực từ Cloud không cần khởi động lại app."""
+        def _bg():
+            from auth_client import auth_client
+            if getattr(auth_client, "token", None):
+                succ, data = auth_client.get_me()
+                if succ and isinstance(data, dict):
+                    last_exp = getattr(self, "_cached_exp_sync", None)
+                    last_role = getattr(self, "_cached_role_sync", None)
+                    last_plan = getattr(self, "_cached_plan_sync", None)
+                    cur_exp = data.get("expire_date")
+                    cur_role = data.get("role")
+                    cur_plan = data.get("plan_name")
+                    if cur_exp != last_exp or cur_role != last_role or cur_plan != last_plan:
+                        self._cached_exp_sync = cur_exp
+                        self._cached_role_sync = cur_role
+                        self._cached_plan_sync = cur_plan
+                        try:
+                            if self.winfo_exists():
+                                self.after(0, self._update_user_ui)
+                        except Exception:
+                            pass
+        import threading
+        threading.Thread(target=_bg, daemon=True).start()
+        try:
+            if self.winfo_exists():
+                self.after(10000, self._auto_sync_user_status)
+        except Exception:
+            pass
 
     def _update_user_ui(self):
         # Cập nhật UI theo trạng thái bản quyền
@@ -8609,11 +9048,14 @@ class App(ctk.CTk):
                     if hasattr(self, "btn_upgrade_sidebar"):
                         self.btn_upgrade_sidebar.pack(padx=12, pady=(0, 10), fill="x")
                         
-            # Force refresh SettingsTab
-            if hasattr(self, "_tab_frames") and len(self._tab_frames) > 7:
-                for i, tab in enumerate(self._tab_frames):
-                    if hasattr(tab, "refresh_ui") and tab.__class__.__name__ == "SettingsTab":
-                        tab.refresh_ui()
+            # Chỉ làm mới SettingsTab nếu phân quyền (role) thay đổi
+            prev_role = getattr(self, "_last_ui_role", None)
+            if prev_role != role:
+                self._last_ui_role = role
+                if hasattr(self, "_tab_frames") and len(self._tab_frames) > 7:
+                    for i, tab in enumerate(self._tab_frames):
+                        if hasattr(tab, "refresh_ui") and tab.__class__.__name__ == "SettingsTab":
+                            tab.refresh_ui(force=True)
                 
                 # Hiển thị toàn bộ các tab cho cả Admin và User
                 nav_container = getattr(self, "_nav_scroll", None)
@@ -8724,6 +9166,7 @@ class App(ctk.CTk):
         
         import threading
         threading.Thread(target=auth_client.sync_douyin_cookie, daemon=True).start()
+        self.after(5000, self._auto_sync_user_status)
         
         # Hiện toast thông báo nếu có
         def _show_noti_after_login():
