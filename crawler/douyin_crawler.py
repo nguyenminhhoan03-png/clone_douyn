@@ -5,6 +5,7 @@ Sử dụng yt-dlp - công cụ download chuyên dụng hỗ trợ Douyin native
 import asyncio
 import random
 import re
+import sys
 import time
 import threading
 from pathlib import Path
@@ -66,15 +67,20 @@ class DouyinCrawler:
         return url
 
     async def resolve_short_url(self, short_url: str) -> Optional[str]:
-        """Resolve Douyin short URL thành full URL."""
+        """Resolve Douyin hoặc TikTok short URL thành full URL."""
+        m = re.search(r'https?://[^\s]+', short_url)
+        target_url = m.group(0) if m else short_url
+
         async with httpx.AsyncClient(
             follow_redirects=True,
-            headers=self.headers,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            },
             proxy=self.proxy,
             timeout=15.0
         ) as client:
             try:
-                resp = await client.get(short_url)
+                resp = await client.get(target_url)
                 final_url = str(resp.url)
                 logger.debug(f"Resolved: {short_url} → {final_url}")
                 return final_url
@@ -141,6 +147,12 @@ class DouyinCrawler:
 
         if self.proxy:
             opts["proxy"] = self.proxy
+
+        try:
+            from yt_dlp.networking.impersonate import ImpersonateTarget
+            opts["impersonate"] = ImpersonateTarget(client="chrome", os="windows")
+        except Exception:
+            pass
 
         return opts
 
@@ -242,7 +254,7 @@ class DouyinCrawler:
         original_url = video_url
 
         # Resolve short URL để lấy video_id
-        if "v.douyin.com" in video_url:
+        if any(s in video_url for s in ["v.douyin.com", "vt.tiktok.com", "vm.tiktok.com", "tiktok.com/t/"]):
             resolved = await self.resolve_short_url(video_url)
             if not resolved: return None
             video_url = resolved
@@ -267,11 +279,11 @@ class DouyinCrawler:
             return None
 
         # Lấy sẵn title nếu có thể
-        real_title = await self._fetch_douyin_title(video_url)
+        real_title = await self._fetch_douyin_title(video_url) if "douyin.com" in video_url else ""
         default_title = real_title if real_title else f"Video {video_id}"
 
         # URL ngắn gọn nhất để truyền vào API
-        api_url = original_url if "v.douyin.com" in original_url else video_url
+        api_url = original_url if any(s in original_url for s in ["v.douyin.com", "vt.tiktok.com", "vm.tiktok.com", "tiktok.com/t/"]) else video_url
 
         async with httpx.AsyncClient(
             headers={
@@ -283,10 +295,50 @@ class DouyinCrawler:
             verify=False,
         ) as client:
 
+            # ── API 0: tikwm.com (Hỗ trợ cực tốt cho TikTok và Douyin) ────────
+            try:
+                logger.info("[1/5] tikwm.com...")
+                resp = await client.post(
+                    "https://www.tikwm.com/api/",
+                    data={"url": api_url, "hd": 1},
+                    headers={
+                        "Origin": "https://www.tikwm.com",
+                        "Referer": "https://www.tikwm.com/",
+                    }
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("code") == 0 and data.get("data"):
+                        vdata = data["data"]
+                        dl_url = vdata.get("hdplay") or vdata.get("play")
+                        if dl_url:
+                            if dl_url.startswith("/"):
+                                dl_url = "https://www.tikwm.com" + dl_url
+                            title = vdata.get("title") or default_title
+                            author = vdata.get("author", {}).get("unique_id") or "unknown"
+                            music = vdata.get("music_info", {}).get("title") or ""
+                            duration = vdata.get("duration", 0)
+                            tags = " ".join(re.findall(r"#\w+", title))
+                            logger.info("✅ tikwm.com success!")
+                            return {
+                                "video_id": video_id,
+                                "source_url": video_url,
+                                "title": title[:200],
+                                "author": author,
+                                "music_title": music,
+                                "tags": tags,
+                                "no_watermark_url": dl_url,
+                                "duration": duration,
+                                "_ytdlp_url": api_url,
+                            }
+                    logger.debug(f"tikwm fail: {data.get('msg')}")
+            except Exception as e:
+                logger.debug(f"tikwm error: {e}")
+
             # ── API 1: musicaldown.com ────────────────────────────────────────
             # Hỗ trợ TikTok + Douyin, không cần key
             try:
-                logger.info(f"[1/4] musicaldown.com...")
+                logger.info(f"[2/5] musicaldown.com...")
                 # Bước 1: Lấy token từ trang chủ
                 resp0 = await client.get("https://musicaldown.com/en")
                 token = ""
@@ -489,12 +541,13 @@ class DouyinCrawler:
         # ── Cách 1: Direct download từ URL trả về bởi web API ─────────────────
         if direct_url and direct_url.startswith("http"):
             logger.info(f"Downloading {video_id} via direct URL...")
+            referer = "https://www.tiktok.com/" if ("tiktok" in direct_url or "tiktok" in str(ytdlp_url)) else "https://www.douyin.com/"
             try:
                 async with httpx.AsyncClient(
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                                       "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                        "Referer": "https://www.douyin.com/",
+                        "Referer": referer,
                     },
                     timeout=120.0,
                     follow_redirects=True,
@@ -558,9 +611,9 @@ class DouyinCrawler:
             try:
                 from uploader.google_drive_uploader import GoogleDriveUploader
                 uploader = GoogleDriveUploader(self.current_username or "default")
-                # Xóa local luôn theo yêu cầu
-                drive_download_id = uploader.upload_file(download_path, delete_after=True, folder_name=video_info.get("author", "Unknown"))
-                download_path = "" # Không còn file local
+                if uploader.token_path.exists():
+                    drive_download_id = uploader.upload_file(download_path, delete_after=True, folder_name=video_info.get("author", "Unknown"))
+                    download_path = "" # Không còn file local
             except Exception as e:
                 logger.error(f"Lỗi upload Drive khi crawl: {e}")
 
@@ -607,24 +660,221 @@ class DouyinCrawler:
         logger.info(f"Crawled {len(results)}/{total} videos successfully")
         return results
 
+    async def crawl_tiktok_profile(self, user_url: str, max_videos: int = None) -> list:
+        """Crawl video từ profile TikTok (Việt Nam, Quốc tế) sử dụng Fast Embed + Playwright."""
+        max_videos = max_videos or DOUYIN_CONFIG.get("max_videos_per_session", 1000)
+
+        # 1. Trích xuất username
+        match = re.search(r"@([a-zA-Z0-9_.-]+)", user_url)
+        if match:
+            username = match.group(1)
+        else:
+            clean = user_url.strip("/").split("?")[0].split("/")[-1].lstrip("@")
+            username = clean if clean else user_url
+
+        profile_url = f"https://www.tiktok.com/@{username}"
+        logger.info(f"Crawling TikTok profile: @{username} (max {max_videos} videos)")
+
+        collected_urls = []
+        embed_videos_data = {}
+
+        # 2. Bước 1: Fast Embed check (tải nhanh 10-15 video đầu tiên)
+        try:
+            embed_url = f"https://www.tiktok.com/embed/@{username}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Referer": "https://www.tiktok.com/",
+            }
+            async with httpx.AsyncClient(headers=headers, timeout=12.0, follow_redirects=True) as client:
+                resp = await client.get(embed_url)
+                if resp.status_code == 200:
+                    import json
+                    m = re.search(r'<script[^>]+id=[\x27\x22]__FRONTITY_CONNECT_STATE__[\x27\x22][^>]*>(.*?)</script>', resp.text)
+                    if m:
+                        data = json.loads(m.group(1))
+                        path = f"/embed/@{username}"
+                        embed_item = data.get("source", {}).get("data", {}).get(path, {})
+                        vlist = embed_item.get("videoList", [])
+                        for v in vlist:
+                            vid_id = str(v.get("id"))
+                            v_url = f"https://www.tiktok.com/@{username}/video/{vid_id}"
+                            if v_url not in collected_urls:
+                                collected_urls.append(v_url)
+                                if v.get("playAddr"):
+                                    embed_videos_data[vid_id] = {
+                                        "video_id": vid_id,
+                                        "source_url": v_url,
+                                        "title": v.get("desc", f"Video {vid_id}")[:200],
+                                        "author": v.get("authorUniqueId") or username,
+                                        "music_title": "",
+                                        "tags": " ".join(re.findall(r"#\w+", v.get("desc", ""))),
+                                        "no_watermark_url": v.get("playAddr"),
+                                        "duration": 0,
+                                        "_ytdlp_url": v_url,
+                                    }
+                        if collected_urls:
+                            logger.info(f"Fast Embed tìm thấy {len(collected_urls)} video từ @{username}")
+        except Exception as e:
+            logger.debug(f"Fast Embed failed for @{username}: {e}")
+
+        # 3. Bước 2: Playwright Headless Browser (nếu cần thêm video)
+        if len(collected_urls) < max_videos:
+            logger.info(f"Đang mở trình duyệt ngầm để cuộn lấy thêm video (mục tiêu: {max_videos})...")
+            try:
+                from playwright.async_api import async_playwright
+                stealth_path = Path(__file__).resolve().parent.parent / "uploader" / "stealth.js"
+                stealth_js = ""
+                if stealth_path.exists():
+                    stealth_js = stealth_path.read_text(encoding="utf-8")
+
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(
+                        headless=True,
+                        args=[
+                            "--disable-blink-features=AutomationControlled",
+                            "--no-sandbox",
+                            "--disable-setuid-sandbox",
+                            "--disable-dev-shm-usage",
+                        ]
+                    )
+                    context = await browser.new_context(
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                        viewport={"width": 1280, "height": 800},
+                        locale="vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+                    )
+                    if stealth_js:
+                        await context.add_init_script(stealth_js)
+
+                    page = await context.new_page()
+                    await page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(2.0)
+
+                    no_new_count = 0
+                    max_scrolls = 100
+                    scroll_idx = 0
+
+                    while len(collected_urls) < max_videos and no_new_count < 3 and scroll_idx < max_scrolls:
+                        scroll_idx += 1
+                        links = await page.eval_on_selector_all(
+                            "a[href*='/video/']",
+                            "els => els.map(e => e.href)"
+                        )
+                        prev_count = len(collected_urls)
+                        for l in links:
+                            if "/video/" in l:
+                                clean_l = l.split("?")[0]
+                                if clean_l not in collected_urls:
+                                    collected_urls.append(clean_l)
+                                    if len(collected_urls) >= max_videos:
+                                        break
+                        if len(collected_urls) == prev_count:
+                            no_new_count += 1
+                        else:
+                            no_new_count = 0
+                            logger.info(f"Cuộn trang: Đã tìm thấy {len(collected_urls)}/{max_videos} video...")
+
+                        if len(collected_urls) >= max_videos:
+                            break
+
+                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        await asyncio.sleep(1.8)
+
+                    await browser.close()
+            except Exception as e:
+                logger.error(f"Lỗi Playwright khi cào profile TikTok: {e}")
+
+        if not collected_urls:
+            self.last_error = f"Không tìm thấy video nào trên kênh TikTok @{username}. Kênh có thể là riêng tư hoặc không có video."
+            logger.warning(self.last_error)
+            return []
+
+        logger.info(f"Bắt đầu tải {min(len(collected_urls), max_videos)} video từ profile TikTok @{username}...")
+
+        # 4. Bước 3: Tải từng video
+        results = []
+        for v_url in collected_urls[:max_videos]:
+            video_id = self._extract_video_id(v_url)
+            if not video_id:
+                continue
+
+            unique_vid = f"{self.current_username}_{video_id}" if self.current_username else video_id
+            if self.db.is_duplicate(unique_vid, username=self.current_username):
+                logger.info(f"Video đã cào trước đó, bỏ qua: {video_id}")
+                continue
+
+            video_data = embed_videos_data.get(video_id)
+            if not video_data:
+                video_data = await self.get_video_info(v_url)
+
+            if not video_data:
+                logger.warning(f"Không lấy được thông tin video: {v_url}")
+                continue
+
+            download_path = await self.download_video(video_data)
+            if download_path:
+                from config.settings import GOOGLE_DRIVE_CONFIG
+                drive_download_id = None
+                
+                if GOOGLE_DRIVE_CONFIG.get("auto_backup"):
+                    try:
+                        from uploader.google_drive_uploader import GoogleDriveUploader
+                        uploader = GoogleDriveUploader(self.current_username or "default")
+                        if uploader.token_path.exists():
+                            drive_download_id = uploader.upload_file(download_path, delete_after=True, folder_name=video_data.get("author", "Unknown"))
+                            download_path = ""
+                    except Exception as e:
+                        logger.error(f"Lỗi upload Drive khi crawl profile TikTok: {e}")
+
+                self.db.add_crawled_video(
+                    video_id=unique_vid,
+                    source_url=video_data["source_url"],
+                    title=video_data["title"],
+                    author=video_data["author"],
+                    music_title=video_data["music_title"],
+                    tags=video_data["tags"],
+                    download_path=download_path,
+                    duration=video_data["duration"],
+                    username=self.current_username,
+                    drive_download_id=drive_download_id
+                )
+                self.db.update_video_status(unique_vid, "downloaded")
+                video_data["video_id"] = unique_vid
+                video_data["download_path"] = download_path
+                video_data["drive_download_id"] = drive_download_id
+                results.append(video_data)
+                logger.info(f"[{len(results)}/{min(len(collected_urls), max_videos)}] Đã tải thành công: {video_data['title'][:40]}")
+            await self._async_random_delay()
+
+        logger.info(f"Hoàn thành crawl profile TikTok: Đã tải {len(results)}/{len(collected_urls)} video")
+        return results
+
     async def crawl_user_profile(self, user_url: str, max_videos: int = None) -> list:
-        """Crawl video từ profile Douyin user thông qua Web API."""
+        """Crawl video từ profile Douyin hoặc TikTok user (Việt Nam, Quốc tế)."""
         logger.warning("Crawl user profile without cookies might fail if Douyin blocks the request.")
         max_videos = max_videos or DOUYIN_CONFIG["max_videos_per_session"]
 
-        if "v.douyin.com" in user_url:
+        if any(s in user_url for s in ["v.douyin.com", "vt.tiktok.com", "vm.tiktok.com", "tiktok.com/t/"]):
             user_url = await self.resolve_short_url(user_url)
             if not user_url:
                 self.last_error = f"Không phân giải được short URL profile: {user_url}"
                 return []
 
+        # Tự động nhận diện profile TikTok
+        is_tiktok = (
+            "tiktok.com" in user_url
+            or user_url.strip().startswith("@")
+            or ("douyin.com" not in user_url and "/user/" not in user_url)
+        )
+        if is_tiktok:
+            return await self.crawl_tiktok_profile(user_url, max_videos=max_videos)
+
         match = re.search(r"/user/([A-Za-z0-9_-]+)", user_url)
         if not match:
-            self.last_error = f"Link profile không đúng định dạng Douyin (thiếu /user/...): {user_url}"
+            self.last_error = f"Link profile không đúng định dạng Douyin (thiếu /user/...) hoặc TikTok (@username): {user_url}"
             return []
 
         sec_uid = match.group(1)
-        logger.info(f"Crawling user profile: {sec_uid} (max {max_videos} videos)")
+        logger.info(f"Crawling Douyin user profile: {sec_uid} (max {max_videos} videos)")
 
         results = []
         max_cursor = 0
@@ -696,8 +946,9 @@ class DouyinCrawler:
                                 try:
                                     from uploader.google_drive_uploader import GoogleDriveUploader
                                     uploader = GoogleDriveUploader(self.current_username or "default")
-                                    drive_download_id = uploader.upload_file(download_path, delete_after=True, folder_name=video_data.get("author", "Unknown"))
-                                    download_path = "" # Không còn file local
+                                    if uploader.token_path.exists():
+                                        drive_download_id = uploader.upload_file(download_path, delete_after=True, folder_name=video_data.get("author", "Unknown"))
+                                        download_path = "" # Không còn file local
                                 except Exception as e:
                                     logger.error(f"Lỗi upload Drive khi crawl profile: {e}")
                                     

@@ -306,11 +306,11 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         t_box = ctk.CTkFrame(hdr_frame, fg_color="transparent")
         t_box.pack(side="left")
         ctk.CTkLabel(
-            t_box, text="🔍  Crawl Video từ Douyin",
+            t_box, text="🔍  Crawl Video từ Douyin & TikTok",
             font=("Segoe UI", 22, "bold"), text_color=TEXT_MAIN,
         ).pack(anchor="w")
         ctk.CTkLabel(
-            t_box, text="Tải video sạch không logo/watermark từ Douyin (TikTok Trung Quốc) theo link hoặc cả kênh",
+            t_box, text="Tải video sạch không logo/watermark từ Douyin (TikTok TQ) & TikTok quốc tế/VN theo link hoặc cả kênh",
             font=("Segoe UI", 11), text_color=TEXT_MUTED,
         ).pack(anchor="w", pady=(1, 0))
         
@@ -387,9 +387,9 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         self._frame_profile.grid_columnconfigure(0, minsize=120)
 
         ctk.CTkLabel(self._frame_profile, text="Profile URL:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=0, column=0, sticky="w", padx=16, pady=4)
-        self._entry_profile = ctk.CTkEntry(self._frame_profile, placeholder_text="https://www.douyin.com/user/MS4wLjABAAAA...", font=("Segoe UI", 12), fg_color=BG_DARK, border_color=BORDER)
+        self._entry_profile = ctk.CTkEntry(self._frame_profile, placeholder_text="https://www.tiktok.com/@user hoặc https://www.douyin.com/user/...", font=("Segoe UI", 12), fg_color=BG_DARK, border_color=BORDER)
         self._entry_profile.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=4)
-        ctk.CTkLabel(self._frame_profile, text="⚠️ Lưu ý: Chỉ dán link web dạng https://www.douyin.com/user/... (Không nhập mã số hay Douyin ID ngắn)", font=("Segoe UI", 10, "italic"), text_color=WARNING, anchor="w").grid(row=1, column=1, sticky="w", padx=(0, 16), pady=(2, 4))
+        ctk.CTkLabel(self._frame_profile, text="💡 Hỗ trợ: Profile TikTok (https://www.tiktok.com/@...) & Douyin (https://www.douyin.com/user/...)", font=("Segoe UI", 10, "italic"), text_color=TEXT_MUTED, anchor="w").grid(row=1, column=1, sticky="w", padx=(0, 16), pady=(2, 4))
 
         ctk.CTkLabel(self._frame_profile, text="Số lượng:", font=("Segoe UI", 12, "bold"), text_color=TEXT_DIM).grid(row=2, column=0, sticky="w", padx=16, pady=4)
         self._spin_count = ctk.CTkEntry(self._frame_profile, width=80, font=("Segoe UI", 12), fg_color=BG_DARK, border_color=BORDER)
@@ -474,14 +474,19 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
     @staticmethod
     def _extract_douyin_urls(raw_text: str) -> list[str]:
         """
-        Trích xuất tất cả Douyin URL từ đoạn text bất kỳ.
+        Trích xuất tất cả Douyin/TikTok URL từ đoạn text bất kỳ.
         Hỗ trợ:
           - https://v.douyin.com/xxxxx/
           - https://www.douyin.com/video/123456
           - https://www.douyin.com/jingxuan?modal_id=123456
-          - Paste cả đoạn text chia sẻ từ app Douyin
+          - https://www.douyin.com/user/...
+          - https://www.tiktok.com/@username/video/123456
+          - https://www.tiktok.com/@username
+          - https://vt.tiktok.com/xxxxx/
+          - https://vm.tiktok.com/xxxxx/
+          - Paste cả đoạn text chia sẻ từ app Douyin hoặc TikTok
         """
-        pattern = r'https?://(?:v\.douyin\.com/[A-Za-z0-9_\-/]+|(?:www\.)?douyin\.com/(?:video/\d+|[^\s]+?modal_id=\d+|user/[A-Za-z0-9_\-]+))'
+        pattern = r'https?://(?:v\.douyin\.com/[A-Za-z0-9_\-/]+|(?:www\.)?douyin\.com/(?:video/\d+|[^\s]+?modal_id=\d+|user/[A-Za-z0-9_\-]+)|(?:vt|vm)\.tiktok\.com/[A-Za-z0-9_\-/]+|(?:www\.)?tiktok\.com/(?:@[A-Za-z0-9_.-]+(?:/video/\d+)?|[^\s]+))'
         found = re.findall(pattern, raw_text)
         # Loại bỏ trùng lặp, giữ thứ tự
         seen, result = set(), []
@@ -596,8 +601,8 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         crawler.current_username = auth_client.user_info.get("username") if auth_client.user_info else None
         
         # Tự động phân loại Profile URL và Video URL
-        profile_urls = [u for u in urls if "user/" in u or ("modal_id=" not in u and "video/" not in u and "v.douyin.com" not in u)]
-        video_urls = [u for u in urls if u not in profile_urls]
+        video_urls = [u for u in urls if "/video/" in u or "modal_id=" in u or "/photo/" in u or "vt.tiktok.com" in u or "vm.tiktok.com" in u or "v.douyin.com" in u]
+        profile_urls = [u for u in urls if u not in video_urls]
         
         self._log(f"Đọc {len(urls)} URLs từ file {Path(file_path).name}...", "INFO")
         total_crawled = 0
@@ -630,6 +635,19 @@ class CrawlTab(ctk.CTkFrame, TaskMixin):
         super()._on_task_done()
         self.after(0, lambda: self._btn_crawl.configure(state="normal"))
         self.after(0, lambda: self._status_badge.set("Xong", SUCCESS) if not getattr(self, "cancel_flag", False) else self._status_badge.set("Đã dừng", DANGER))
+        # Tự động nạp video mới sang tab Process và cập nhật Dashboard
+        try:
+            if hasattr(self, "app") and hasattr(self.app, "_tab_frames"):
+                if len(self.app._tab_frames) > 2:
+                    proc_tab = self.app._tab_frames[2]
+                    if hasattr(proc_tab, "_load_videos") and not getattr(proc_tab, "is_running", False):
+                        proc_tab.after(0, proc_tab._load_videos)
+                if len(self.app._tab_frames) > 0:
+                    dash_tab = self.app._tab_frames[0]
+                    if hasattr(dash_tab, "refresh_stats"):
+                        dash_tab.after(0, lambda: dash_tab.refresh_stats(silent=True))
+        except Exception:
+            pass
 
 
 def show_rename_author_dialog(parent, opt_widget, reload_callback):
@@ -1216,6 +1234,9 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
 
     def _load_videos(self):
         """Hiển thị danh sách video đã tải vào scrollable frame."""
+        # Giữ lại các video đã được tích chọn trước đó (nếu có)
+        prev_checked = {vid for vid, var in getattr(self, "_checkboxes", {}).items() if var.get()}
+        
         # Xóa các checkbox cũ
         for widget in self._video_list_frame.winfo_children():
             widget.destroy()
@@ -1257,6 +1278,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         
         if not videos:
             ctk.CTkLabel(self._video_list_frame, text="Không có video nào đang chờ xử lý.", text_color=TEXT_DIM).pack(pady=20)
+            self._update_limit_state()
             return
 
         for video in videos:
@@ -1268,7 +1290,7 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
                                  border_width=1, border_color=BORDER)
             card.pack(fill="x", pady=4, padx=10)
             
-            var = ctk.BooleanVar(value=False) # Không chọn mặc định
+            var = ctk.BooleanVar(value=(vid in prev_checked)) # Giữ trạng thái chọn nếu có
             self._checkboxes[vid] = var
             
             # Checkbox bên trái
@@ -1958,6 +1980,19 @@ class ProcessTab(ctk.CTkFrame, TaskMixin):
         self.is_running = False
         self.after(0, lambda: self._btn_process.configure(state="normal", text="▶  Bắt đầu Xử lý", fg_color=ACCENT, hover_color=ACCENT_HOVER))
         self.after(0, lambda: self._status_badge.set("Xong", SUCCESS))
+        # Tự động nạp video đã xử lý sang tab Upload và cập nhật Dashboard
+        try:
+            if hasattr(self, "app") and hasattr(self.app, "_tab_frames"):
+                if len(self.app._tab_frames) > 3:
+                    up_tab = self.app._tab_frames[3]
+                    if hasattr(up_tab, "_load_videos") and not getattr(up_tab, "is_running", False):
+                        up_tab.after(0, up_tab._load_videos)
+                if len(self.app._tab_frames) > 0:
+                    dash_tab = self.app._tab_frames[0]
+                    if hasattr(dash_tab, "refresh_stats"):
+                        dash_tab.after(0, lambda: dash_tab.refresh_stats(silent=True))
+        except Exception:
+            pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1971,6 +2006,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self._video_accounts = {}
         self._video_accounts_yt = {}
         self._video_accounts_fb = {}
+        self._custom_captions = {}
         self._saved_assigned_accounts = {}
         self._current_session_id = None
         self._build()
@@ -2377,6 +2413,19 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
 
     def _load_videos(self):
         """Hiển thị danh sách video đã processed vào scrollable frame."""
+        # Giữ lại trạng thái checkbox và caption đang soạn thảo dở trước đó
+        prev_unchecked = {vid for vid, var in getattr(self, "_checkboxes", {}).items() if not var.get()}
+        prev_captions = {}
+        for vid, tb in getattr(self, "_custom_captions", {}).items():
+            try:
+                if hasattr(tb, "winfo_exists") and tb.winfo_exists():
+                    prev_captions[vid] = tb.get("1.0", "end-1c")
+            except Exception:
+                pass
+        prev_tt = {vid: opt.get() for vid, opt in getattr(self, "_video_accounts", {}).items() if hasattr(opt, "winfo_exists") and opt.winfo_exists()}
+        prev_yt = {vid: opt.get() for vid, opt in getattr(self, "_video_accounts_yt", {}).items() if hasattr(opt, "winfo_exists") and opt.winfo_exists()}
+        prev_fb = {vid: opt.get() for vid, opt in getattr(self, "_video_accounts_fb", {}).items() if hasattr(opt, "winfo_exists") and opt.winfo_exists()}
+
         for widget in self._video_list_frame.winfo_children():
             widget.destroy()
         self._checkboxes.clear()
@@ -2418,7 +2467,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
                                  border_width=1, border_color=BORDER)
             card.pack(fill="x", pady=6, padx=10)
             
-            var = ctk.BooleanVar(value=True)
+            var = ctk.BooleanVar(value=(vid not in prev_unchecked))
             self._checkboxes[vid] = var
             
             # --- ROW 1: Header (Checkbox, ID, Size, Xem) ---
@@ -2498,7 +2547,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             accounts = self._get_tiktok_accounts()
             opt_acc = ctk.CTkOptionMenu(acc_bar, values=accounts, font=("Segoe UI", 11), width=120, height=26, fg_color=BG_CARD, button_color=BORDER, button_hover_color=BG_DARK)
             opt_acc.pack(side="left", padx=(0, 14), pady=4)
-            saved_tt = saved_acc.get("tt")
+            saved_tt = prev_tt.get(vid) or saved_acc.get("tt")
             if saved_tt and saved_tt in accounts:
                 opt_acc.set(saved_tt)
             else:
@@ -2512,7 +2561,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             yt_accounts = self._get_youtube_accounts()
             opt_acc_yt = ctk.CTkOptionMenu(acc_bar, values=yt_accounts, font=("Segoe UI", 11), width=120, height=26, fg_color=BG_CARD, button_color=BORDER, button_hover_color=BG_DARK)
             opt_acc_yt.pack(side="left", padx=(0, 14), pady=4)
-            saved_yt = saved_acc.get("yt")
+            saved_yt = prev_yt.get(vid) or saved_acc.get("yt")
             if saved_yt and saved_yt in yt_accounts:
                 opt_acc_yt.set(saved_yt)
             else:
@@ -2526,7 +2575,7 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             fb_accounts = self._get_facebook_accounts()
             opt_acc_fb = ctk.CTkOptionMenu(acc_bar, values=fb_accounts, font=("Segoe UI", 11), width=120, height=26, fg_color=BG_CARD, button_color=BORDER, button_hover_color=BG_DARK)
             opt_acc_fb.pack(side="left", padx=(0, 10), pady=4)
-            saved_fb = saved_acc.get("fb")
+            saved_fb = prev_fb.get(vid) or saved_acc.get("fb")
             if saved_fb and saved_fb in fb_accounts:
                 opt_acc_fb.set(saved_fb)
             else:
@@ -2553,10 +2602,13 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
             row3 = ctk.CTkFrame(card, fg_color="transparent")
             row3.pack(fill="x", padx=10, pady=(2, 5))
             
-            # Ưu tiên lấy custom_caption trong DB
-            title = video.get("custom_caption")
-            if not title:
-                title = uploader_dummy._generate_caption(video)
+            # Ưu tiên text đang gõ dở trước đó, rồi đến custom_caption trong DB, rồi đến caption tạo tự động
+            if vid in prev_captions and prev_captions[vid].strip():
+                title = prev_captions[vid]
+            else:
+                title = video.get("custom_caption")
+                if not title:
+                    title = uploader_dummy._generate_caption(video)
                 
             textbox = ctk.CTkTextbox(row3, font=("Segoe UI", 13), text_color=TEXT_MAIN, fg_color=BG_DARK, border_color=BORDER, height=60, wrap="word")
             textbox.insert("1.0", title)
@@ -2906,6 +2958,15 @@ class UploadTab(ctk.CTkFrame, TaskMixin):
         self.is_running = False
         self.after(0, lambda: self._btn_upload.configure(text="▶  Bắt đầu Upload", state="normal", fg_color="#e74c3c", hover_color="#c0392b"))
         self.after(0, lambda: self._status_badge.set("Xong", SUCCESS) if not getattr(self, "cancel_flag", False) else self._status_badge.set("Đã dừng", DANGER))
+        # Tự động nạp lại danh sách video còn lại sau upload và cập nhật Dashboard
+        self.after(0, self._load_videos)
+        try:
+            if hasattr(self, "app") and hasattr(self.app, "_tab_frames") and len(self.app._tab_frames) > 0:
+                dash_tab = self.app._tab_frames[0]
+                if hasattr(dash_tab, "refresh_stats"):
+                    dash_tab.after(0, lambda: dash_tab.refresh_stats(silent=True))
+        except Exception:
+            pass
 
     def _log(self, msg: str, level: str = "INFO"):
         """Ghi log hiển thị UI và đồng thời lưu vào file log của phiên (không bị trùng lặp)."""
@@ -8106,6 +8167,8 @@ class SettingsTab(ctk.CTkFrame):
                 return "🔑 LOGIN", ACCENT_BG, "#C4B5FD", False
             elif action_up == "RESET_HWID":
                 return "🔓 RESET_HWID", "#0C4A6E", "#38BDF8", False
+            elif action_up == "UNINSTALL":
+                return "🗑️ UNINSTALL", "#450A0A", "#F87171", True
             else:
                 return f"ℹ️ {action_up}", "#1E293B", "#CBD5E1", False
 
@@ -8294,7 +8357,7 @@ class SettingsTab(ctk.CTkFrame):
         ctk.CTkLabel(row_filter, text="⚡ Hành động:", font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(side="left", padx=(0, 5))
         opt_action = ctk.CTkOptionMenu(
             row_filter,
-            values=["Tất cả Action", "⚠️ Chỉ xem LỖI / 0 video", "UPLOAD", "PROCESS", "CRAWL", "LOGIN", "RESET_HWID"],
+            values=["Tất cả Action", "⚠️ Chỉ xem LỖI / 0 video", "UPLOAD", "PROCESS", "CRAWL", "LOGIN", "RESET_HWID", "UNINSTALL"],
             width=175, height=30, font=("Segoe UI", 11), fg_color=BG_DARK, button_color=BORDER, corner_radius=8
         )
         opt_action.pack(side="left", padx=(0, 12))
@@ -9696,15 +9759,50 @@ class App(ctk.CTk):
     def _show_tab(self, idx: int):
         for frame in self._tab_frames:
             frame.grid_remove()
-        self._tab_frames[idx].grid()
-        if idx == 3 and len(self._tab_frames) > 3:
-            upload_tab = self._tab_frames[3]
-            if hasattr(upload_tab, "_refresh_accounts"):
-                upload_tab._refresh_accounts()
-            if hasattr(upload_tab, "_refresh_youtube_accounts"):
-                upload_tab._refresh_youtube_accounts()
-            if hasattr(upload_tab, "_refresh_facebook_accounts"):
-                upload_tab._refresh_facebook_accounts()
+        target_frame = self._tab_frames[idx]
+        target_frame.grid()
+
+        # Tự động nạp và làm mới dữ liệu khi chuyển sang tab tương ứng
+        if idx == 0:  # Dashboard
+            if hasattr(target_frame, "refresh_stats"):
+                try:
+                    target_frame.refresh_stats(silent=True)
+                except Exception:
+                    pass
+        elif idx == 2:  # Process (Tự động hiển thị video vừa crawl về)
+            if hasattr(target_frame, "_load_videos") and not getattr(target_frame, "is_running", False):
+                try:
+                    target_frame._load_videos()
+                except Exception:
+                    pass
+        elif idx == 3:  # Upload (Tự động hiển thị video vừa process xong)
+            if hasattr(target_frame, "_load_videos") and not getattr(target_frame, "is_running", False):
+                try:
+                    target_frame._load_videos()
+                except Exception:
+                    pass
+            if hasattr(target_frame, "_refresh_accounts"):
+                target_frame._refresh_accounts()
+            if hasattr(target_frame, "_refresh_youtube_accounts"):
+                target_frame._refresh_youtube_accounts()
+            if hasattr(target_frame, "_refresh_facebook_accounts"):
+                target_frame._refresh_facebook_accounts()
+        elif idx == 5:  # Accounts
+            if hasattr(target_frame, "_load_accounts"):
+                try:
+                    target_frame._load_accounts()
+                except Exception:
+                    pass
+            if hasattr(target_frame, "_load_yt_accounts"):
+                try:
+                    target_frame._load_yt_accounts()
+                except Exception:
+                    pass
+            if hasattr(target_frame, "_load_fb_accounts"):
+                try:
+                    target_frame._load_fb_accounts()
+                except Exception:
+                    pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

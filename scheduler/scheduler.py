@@ -119,8 +119,8 @@ class AutoScheduler:
         try:
             if self.douyin_urls:
                 # Phân loại URL: profile vs video
-                profile_urls = [u for u in self.douyin_urls if "/user/" in u]
-                video_urls = [u for u in self.douyin_urls if "/video/" in u or "v.douyin.com" in u or "modal_id=" in u]
+                video_urls = [u for u in self.douyin_urls if "/video/" in u or "modal_id=" in u or "/photo/" in u or "vt.tiktok.com" in u or "vm.tiktok.com" in u or "v.douyin.com" in u]
+                profile_urls = [u for u in self.douyin_urls if u not in video_urls]
 
                 # Crawl profiles
                 for url in profile_urls:

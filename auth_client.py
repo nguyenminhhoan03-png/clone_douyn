@@ -645,16 +645,43 @@ class AuthClient:
     # ── TELEMETRY ────────────────────────────────────────────────────────────
     def send_telemetry(self, action_type: str, details: str = None):
         """Gửi log hoạt động ngầm lên server (Non-blocking)"""
-        if not self.token: return
+        headers = {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+
+        uname = self.user_info.get("username") if self.user_info else "Guest"
+        hwid = self.get_hwid()
 
         def _do_send():
             try:
                 requests.post(f"{API_BASE_URL}/api/telemetry", json={
                     "action_type": action_type,
-                    "details": details
-                }, headers={"Authorization": f"Bearer {self.token}"}, timeout=5)
-            except:
+                    "details": details or "",
+                    "username": uname,
+                    "hwid": hwid
+                }, headers=headers, timeout=5)
+            except Exception:
                 pass # Bỏ qua mọi lỗi để không ảnh hưởng app chính
+                
+        import threading
+        threading.Thread(target=_do_send, daemon=True).start()
+
+    def send_uninstall_telemetry(self, reason: str = None, details: str = None):
+        """Gửi sự kiện gỡ cài đặt app lên Server Telemetry (Non-blocking)"""
+        uname = self.user_info.get("username") if self.user_info else "Anonymous"
+        hwid = self.get_hwid()
+
+        def _do_send():
+            try:
+                requests.post(f"{API_BASE_URL}/api/telemetry/uninstall", json={
+                    "action_type": "UNINSTALL",
+                    "username": uname,
+                    "hwid": hwid,
+                    "reason": reason or "",
+                    "details": details or "Người dùng gỡ cài đặt app"
+                }, timeout=5)
+            except Exception:
+                pass
                 
         import threading
         threading.Thread(target=_do_send, daemon=True).start()
